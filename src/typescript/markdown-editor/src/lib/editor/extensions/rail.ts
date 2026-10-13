@@ -14,7 +14,7 @@
  */
 import { Extension, type Editor } from '@tiptap/core'
 import type { SidebarMount } from './sidebar'
-import { scrollerOf } from '../ui/layout'
+import { resolveMount, scrollerOf } from '../ui/layout'
 
 interface Joined {
     panels: number
@@ -34,10 +34,8 @@ const CHEVRON =
  * take it out.
  */
 export function mountInRail(panel: HTMLElement, mount: SidebarMount | undefined, editorRoot: HTMLElement | null): () => void {
-    let rail: HTMLElement | null = null
-    if (mount instanceof HTMLElement) rail = mount
-    else if (typeof mount === 'function' && editorRoot) rail = mount(editorRoot) ?? null
-    else if (editorRoot?.parentElement) {
+    let rail = resolveMount(mount, editorRoot)
+    if (!rail && editorRoot?.parentElement) {
         const parent = editorRoot.parentElement
         rail = [...parent.children].find((el): el is HTMLElement => el.classList.contains('ezco-mde-rail') && el.nextElementSibling === editorRoot) ?? null
         if (!rail) {

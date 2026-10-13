@@ -3,9 +3,24 @@
  * is mounted, and what scrolls the note.
  */
 
-/** Where a piece of chrome goes: an element, or a function given the
- *  editor's root that returns one (or nothing, for the default place). */
+/** Where a piece of chrome goes: an element to put it in, or a function
+ *  given the editor's root that returns one. A function that returns
+ *  nothing, like no mount at all, leaves the piece in its default place
+ *  (the one its options describe): the function is never given the piece,
+ *  so it cannot have mounted it itself. `resolveMount` reads it. */
 export type Mount = HTMLElement | ((editorRoot: HTMLElement) => HTMLElement | null | void)
+
+/** The element `mount` names for a piece of chrome, or null for its
+ *  default place: no mount, a function that returned nothing, or no `root`
+ *  to call it with. */
+export function resolveMount(mount: Mount | undefined, root: HTMLElement | null): HTMLElement | null {
+    if (mount instanceof HTMLElement) return mount
+    if (typeof mount === 'function' && root) {
+        const el = mount(root)
+        return el instanceof HTMLElement ? el : null
+    }
+    return null
+}
 
 /** The nearest ancestor of `el` that scrolls, or null for the page itself.
  *  Judged by `overflow-y` alone (not by whether there is anything to

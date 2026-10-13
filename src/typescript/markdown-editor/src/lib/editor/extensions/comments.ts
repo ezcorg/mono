@@ -30,7 +30,7 @@ import { basename, dirname, joinPath, normalizePath, type FileOperations, type V
 import { findTextFragment, formatReference, formatTextFragment, parseTextFragment, referenceKey, referencesIn, textFragmentFor, type CommentIndex, type CommentRef, type Reaction, type Reactions, type Wikilink } from '@joinezco/vault'
 import { docText, findBlockId, findFragment, findPin, locateTextFragment, textOffset, type DocText } from './fragment'
 import { documentId } from './front-matter'
-import { loadedDocumentMeta, type FileSystemStorage } from './filesystem'
+import { loadedDocumentMeta, openNotePath, persistenceOf } from './filesystem'
 
 // ── What the plugin knows ───────────────────────────────────────────────────
 
@@ -262,11 +262,6 @@ function anchorFor(tr: Transaction, range: Range, note: string, flat: DocText, t
     return { target: note, fragment: id, alias: null }
 }
 
-function openPath(editor: Editor): string | null {
-    const path = ((editor.storage as any).persistence as FileSystemStorage | undefined)?.options?.filepath
-    return path ? normalizePath(path) : null
-}
-
 /** The comment at `id`, wherever it is in the tree. */
 export function commentAt(comments: CommentInfo[], id: string): CommentInfo | null {
     for (const c of comments) {
@@ -341,7 +336,7 @@ export type WebAnnotation = Record<string, unknown>
 function annotationsOf(editor: Editor, comments: CommentInfo[]): WebAnnotation[] {
     const flat = docText(editor.state.doc)
     const noteId = documentId(editor)
-    const source = noteId ? `urn:ezco:note:${noteId}` : openPath(editor) ?? 'urn:ezco:note'
+    const source = noteId ? `urn:ezco:note:${noteId}` : openNotePath(editor) ?? 'urn:ezco:note'
     const quote = (from: number, to: number) => {
         const start = textOffset(flat, from)
         const end = textOffset(flat, to)
@@ -485,7 +480,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
         const index = () => this.options.index
         const reactions = () => this.options.reactions
         const refresh = () => this.storage.refresh()
-        const persistence = () => (editor.storage as any).persistence as FileSystemStorage | undefined
+        const persistence = () => persistenceOf(editor)
         const files = (): FileOperations | undefined => {
             const codeblock = editor.extensionManager.extensions.find((e) => e.name === 'ezcodeBlock')
             return (codeblock?.options as { files?: FileOperations } | undefined)?.files
@@ -605,7 +600,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     if (!author() || state.selection.empty) return false
                     const { from, to } = state.selection
                     const sheet = margin()?.sheet
-                    const note = openPath(editor)
+                    const note = openNotePath(editor)
                     if (sheet && note) {
                         // A comment is being written in full: the selection
                         // is quoted into it (a pin, if one is needed, saved
@@ -629,7 +624,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
             addComment:
                 ({ body, ranges, open }) =>
                 ({ state, tr, dispatch }) => {
-                    const note = openPath(editor)
+                    const note = openNotePath(editor)
                     if (!author() || !note || (!body.trim() && !open)) return false
                     const chosen = (ranges ?? (state.selection.empty ? [] : [{ from: state.selection.from, to: state.selection.to }])).filter((r) => r.to > r.from)
                     if (!dispatch) return true
@@ -683,7 +678,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
             anchorComment:
                 (id, range) =>
                 ({ state, tr, dispatch }) => {
-                    const note = openPath(editor)
+                    const note = openNotePath(editor)
                     const c = find(state, id)
                     const chosen = range ?? (state.selection.empty ? null : { from: state.selection.from, to: state.selection.to })
                     if (!author() || !note || !c || !chosen) return false
@@ -801,10 +796,10 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     let token = 0
                     let destroyed = false
                     const read = async () => {
-                        const path = openPath(editor)
+                        const path = openNotePath(editor)
                         const ix = options.index
                         const mine = ++token
-                        const fs = ((editor.storage as any).persistence as FileSystemStorage | undefined)?.options?.fs
+                        const fs = persistenceOf(editor)?.options.fs
                         const gathered = ix && path ? await gather(path, ix, options.reactions, fs, new Map(), new Set([path])) : []
                         if (mine !== token || destroyed) return
                         const found = gathered
@@ -817,7 +812,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     // is saved (its file is then what the fragment is made of).
                     const reanchor = async () => {
                         const ix = options.index
-                        const note = openPath(editor)
+                        const note = openNotePath(editor)
                         if (!ix || !options.author || !note) return
                         const state = commentsKey.getState(view.state)
                         const flat = docText(view.state.doc)
@@ -830,7 +825,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                         }
                     }
                     storage.refresh = read
-                    const persistence = (editor.storage as any).persistence as FileSystemStorage | undefined
+                    const persistence = persistenceOf(editor)
                     const offFile = persistence?.subscribe?.((event) => {
                         if (event.type === 'load') void read()
                         if (event.type === 'save') void reanchor().then(read)

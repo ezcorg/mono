@@ -19,7 +19,7 @@
 import { Editor, Extension } from '@tiptap/core'
 import { FileType, basename, dirname, extname, isHidden, joinPath, normalizePath, type FileOperations, type VfsInterface } from '@joinezco/storage'
 import type { SidebarMount } from './sidebar'
-import type { FileSystemStorage } from './filesystem'
+import { openNotePath, persistenceOf } from './filesystem'
 import { mountInRail } from './rail'
 
 export interface FileTreeOptions {
@@ -128,7 +128,7 @@ class FileTreeView {
         this.mount(options.mount)
         this.setShown(!!options.open, false)
 
-        const persistence = this.persistence()
+        const persistence = persistenceOf(this.editor)
         if (persistence) {
             this.cleanups.push(
                 persistence.subscribe((event) => {
@@ -140,7 +140,7 @@ class FileTreeView {
             )
         }
         if (options.subscribe) this.cleanups.push(options.subscribe(() => this.schedule()))
-        const current = this.currentPath()
+        const current = openNotePath(this.editor)
         if (current) this.reveal(current)
         else void this.refresh()
     }
@@ -155,7 +155,7 @@ class FileTreeView {
         this.status.hidden = !shown
         this.actions.hidden = !shown
         if (shown && read) {
-            const current = this.currentPath()
+            const current = openNotePath(this.editor)
             if (current) this.reveal(current)
             else void this.refresh()
         }
@@ -167,21 +167,12 @@ class FileTreeView {
         // first, when the tree had not been read yet).
         this.focusOnDraw = !this.shown
         this.setShown(!this.shown)
-        if (this.shown) this.focusRow(this.active ?? this.currentPath() ?? this.visible()[0]?.path ?? '')
+        if (this.shown) this.focusRow(this.active ?? openNotePath(this.editor) ?? this.visible()[0]?.path ?? '')
         else if (hadFocus) this.editor.commands.focus()
     }
 
     private get fs(): VfsInterface | undefined {
-        return this.persistence()?.options.fs
-    }
-
-    private persistence(): FileSystemStorage | undefined {
-        return (this.editor.storage as any).persistence as FileSystemStorage | undefined
-    }
-
-    private currentPath(): string | null {
-        const path = this.persistence()?.options.filepath
-        return path ? normalizePath(path) : null
+        return persistenceOf(this.editor)?.options.fs
     }
 
     private ignored(path: string): boolean {
@@ -255,7 +246,7 @@ class FileTreeView {
         // being typed in (and its blur would end the edit). The next draw
         // after the edit shows whatever changed meanwhile.
         if (this.renaming && this.list.querySelector('.ezco-mde-files-rename')) return
-        const current = this.currentPath()
+        const current = openNotePath(this.editor)
         const rows: HTMLElement[] = []
         const walk = (folder: string, depth: number) => {
             for (const entry of this.children.get(folder) ?? []) {
@@ -348,7 +339,7 @@ class FileTreeView {
             this.focusRow(entry.path)
             return
         }
-        await this.persistence()?.loadFile(entry.path)
+        await persistenceOf(this.editor)?.loadFile(entry.path)
     }
 
     /** The entries as shown, in order. */
@@ -455,8 +446,8 @@ class FileTreeView {
             this.cancelEdit(entry.path)
             return
         }
-        const persistence = this.persistence()
-        const current = this.currentPath()
+        const persistence = persistenceOf(this.editor)
+        const current = openNotePath(this.editor)
         const opened = current === entry.path || (entry.folder && !!current?.startsWith(`${entry.path}/`))
         try {
             if (opened) await persistence?.flushPendingSave()
@@ -477,7 +468,7 @@ class FileTreeView {
         const files = this.options.files
         if (!files) return
         try {
-            if (this.currentPath() === path) await this.persistence()?.close({ discard: true })
+            if (openNotePath(this.editor) === path) await persistenceOf(this.editor)?.close({ discard: true })
             await files.remove(path)
             this.say(`Deleted ${basename(path)}.`)
         } catch (err) {
@@ -510,7 +501,7 @@ class FileTreeView {
         await files.create(path, '')
         if (folder) this.open.add(folder)
         // The name field keeps focus (the editor taking it would end the edit).
-        await this.persistence()?.loadFile(path, { focus: false })
+        await persistenceOf(this.editor)?.loadFile(path, { focus: false })
         this.startRename(path)
     }
 

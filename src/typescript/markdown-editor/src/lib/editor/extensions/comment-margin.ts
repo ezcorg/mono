@@ -61,8 +61,8 @@ import { ContextMenu, isSeparator, type ContextMenuEntry, type ContextMenuItem }
 import { CHEVRON_DOWN_ICON, CLOSE_ICON, FACE_ICON, FILE_ICON, stroke, svg } from '../ui/icons'
 import { readKept, writeKept } from '../ui/kept'
 import { settingsOf, type SettingsStorage } from '../settings'
-import { scrollerOf, type Mount } from '../ui/layout'
-import type { FileSystemStorage } from './filesystem'
+import { resolveMount, scrollerOf, type Mount } from '../ui/layout'
+import { persistenceOf } from './filesystem'
 
 export type CommentLayout = 'float' | 'column' | 'panel'
 
@@ -1222,8 +1222,7 @@ class Margin {
             return
         }
         const root = (this.view.dom.closest('.ezco-mde') as HTMLElement | null) ?? this.view.dom
-        const mount = this.options.mount
-        let host = mount instanceof HTMLElement ? mount : typeof mount === 'function' ? mount(root) ?? null : null
+        let host = resolveMount(this.options.mount, root)
         if (!host) {
             // No column from the host: one of the margin's own, right of the note.
             const content = this.view.dom.closest('.ezco-mde-content') as HTMLElement | null
@@ -1586,11 +1585,7 @@ class Margin {
 
     /** The open note's path (drafts are kept per note). */
     notePath(): string | null {
-        return this.persistence()?.options?.filepath ?? null
-    }
-
-    private persistence(): FileSystemStorage | undefined {
-        return (this.editor.storage as any).persistence as FileSystemStorage | undefined
+        return persistenceOf(this.editor)?.options.filepath ?? null
     }
 
     private files(): FileOperations | undefined {
@@ -1613,7 +1608,7 @@ class Margin {
             return
         }
         void this.closeSheet()
-        const fs = this.persistence()?.options.fs
+        const fs = persistenceOf(this.editor)?.options.fs
         if (!fs) return
         const sheet = new Sheet({
             host: this.editor,
@@ -1624,7 +1619,7 @@ class Margin {
                 void this.closeSheet()
                 const c = this.comments.comments().find((x) => x.ref.source === path)
                 if (c) this.editor.commands.openCommentAsNote(c.id)
-                else void this.persistence()?.loadFile(path)
+                else void persistenceOf(this.editor)?.loadFile(path)
             },
             remove: async () => {
                 await this.files()?.remove(path)

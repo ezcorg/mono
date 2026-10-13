@@ -10,12 +10,13 @@
  * and whether it auto-hides are all configurable.
  */
 import { Extension } from '@tiptap/core'
-import { isPageScroller, scrollContainerOf, type Mount } from '../ui/layout'
+import { isPageScroller, resolveMount, scrollContainerOf, type Mount } from '../ui/layout'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { ToolbarCore, type ToolbarHost, type HostCommand } from '@joinezco/codeblock'
 import type { FileOperations, FileSearch, VfsInterface } from '@joinezco/storage'
 import type { SlashCommand } from './slash-commands'
 import { revealFragment } from './fragment'
+import { persistenceOf } from './filesystem'
 import { applySettingsEntry, confirmSettingsInput, settingsEntries, settingsOf, FILE_KEY } from '../settings'
 import type { Scope } from '@joinezco/config'
 
@@ -39,9 +40,8 @@ export interface ToolbarOptions {
      * Where to render the toolbar. It always lives *outside* the editor
      * body; this only controls which element it lands in:
      *  - `HTMLElement` → the toolbar is appended into it.
-     *  - function → called with the editor's root element; return a
-     *    container to append into, or mount the node yourself and return
-     *    nothing.
+     *  - function → called with the editor's root element; returns the
+     *    container to append into, or nothing for the default place.
      *  - `undefined` (default) → inserted as the sibling immediately
      *    before the editor's root element (i.e. above and outside it). For
      *    the auto-hide behaviour to work it should land inside the editor's
@@ -211,7 +211,7 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                                         if (!path) return
                                         // Out of the settings mode (as Escape would), then the file.
                                         core.input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
-                                        await (editor.storage as any).persistence?.loadFile?.(path)
+                                        await persistenceOf(editor)?.loadFile(path)
                                     })
                                     return
                                 }
@@ -242,7 +242,7 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                             // it counting as an edit — all in the right order, so the
                             // new file's content can't be written to the old file's
                             // path (the autosave file-navigation race).
-                            const persistence = (extension.editor.storage as any).persistence
+                            const persistence = persistenceOf(extension.editor)
                             if (typeof persistence?.loadFile === 'function') {
                                 persistence.loadFile(path).then(reveal, (err: unknown) => {
                                     console.warn(`[Toolbar] Failed to open ${path}:`, err)
@@ -271,15 +271,15 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                             // links reads them. The persistence layer knows which
                             // view holds the file (a code file's is not the prose
                             // document) and writes nothing for an image.
-                            await (extension.editor.storage as any).persistence?.save?.()
+                            await persistenceOf(extension.editor)?.save()
                         },
                         async closeFile() {
-                            await (extension.editor.storage as any).persistence?.close?.({ discard: true })
+                            await persistenceOf(extension.editor)?.close({ discard: true })
                         },
                         getDocContent() {
                             // A code file's text is in the code view, not the
                             // (emptied) prose document.
-                            const codeView = (extension.editor.storage as any).persistence?.codeView
+                            const codeView = persistenceOf(extension.editor)?.codeView
                             if (codeView) return codeView.state.doc.toString()
                             try {
                                 return (extension.editor.storage as any).markdown.getMarkdown()
@@ -297,16 +297,14 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                             // filepath, so after creating/opening a file the
                             // displayed path reverts to the original on the next
                             // input reset (e.g. clicking into the editor to type).
-                            const persistence = (extension.editor.storage as any).persistence
-                            return persistence?.options?.filepath ?? extension.options.filepath ?? null
+                            return persistenceOf(extension.editor)?.options.filepath ?? extension.options.filepath ?? null
                         },
                     } satisfies ToolbarHost
                     const core = new ToolbarCore(host)
                     toolbarInputs.set(editor, core.input)
                     // Show the open file however it was opened (a link, the file
                     // tree, the backlinks), not only from the toolbar itself.
-                    const persistence = (editor.storage as any).persistence
-                    const unsubscribe: () => void = persistence?.subscribe?.((event: { type: string; path: string }) => {
+                    const unsubscribe: () => void = persistenceOf(editor)?.subscribe((event) => {
                         if (event.type === 'load' && document.activeElement !== core.input) core.setFilePath(event.path)
                     }) ?? (() => {})
 
@@ -355,13 +353,9 @@ export const Toolbar = Extension.create<ToolbarOptions>({
                     // `options.element`, into which ProseMirror is mounted).
                     const editorRoot = editorView.dom.parentElement as HTMLElement | null
 
-                    if (mount instanceof HTMLElement) {
-                        mount.appendChild(core.dom)
-                    } else if (typeof mount === 'function' && editorRoot) {
-                        const container = mount(editorRoot)
-                        // A returned element is a container to append into; a
-                        // void return means the callback mounted it itself.
-                        if (container instanceof HTMLElement) container.appendChild(core.dom)
+                    const container = resolveMount(mount, editorRoot)
+                    if (container) {
+                        container.appendChild(core.dom)
                     } else if (editorRoot?.parentElement) {
                         // Default: above + outside the editor's root element
                         // (and inside the scroll container, so it can stick +

@@ -5,7 +5,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { caretRect, menuPopover, type Popover } from '../ui/popover'
 import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 import { foldsOf, type Fold } from './folding'
-import type { Mount } from '../ui/layout'
+import { resolveMount, type Mount } from '../ui/layout'
 
 /** Where the block-action indicator should mount (same shape as the toolbar /
  *  sidebar `mount`). */
@@ -22,22 +22,10 @@ export interface BlockActionsOptions {
      *
      * The mount should be a sibling laid out in the same row + scroll container
      * as the editor, so the button's vertical position tracks the active block.
+     * An element, or a function of the editor's root returning one (returning
+     * nothing keeps the overlay).
      */
     mount?: BlockActionsMount
-}
-
-/** Resolve a `mount` option to a concrete element (or null for the default
- *  in-gutter overlay behavior). */
-function resolveBlockActionsMount(
-    mount: BlockActionsMount | undefined,
-    editorRoot: HTMLElement | null,
-): HTMLElement | null {
-    if (mount instanceof HTMLElement) return mount
-    if (typeof mount === 'function' && editorRoot) {
-        const el = mount(editorRoot)
-        return el instanceof HTMLElement ? el : null
-    }
-    return null
 }
 
 interface BlockAction {
@@ -674,10 +662,7 @@ class BlockActionsView {
 
         // With a `mount`, the button lives in its own column; otherwise it
         // overlays the editor's left gutter (the original behavior).
-        const mountEl = resolveBlockActionsMount(
-            options.mount,
-            view.dom.parentElement as HTMLElement | null,
-        )
+        const mountEl = resolveMount(options.mount, view.dom.parentElement as HTMLElement | null)
         this.columnMode = !!mountEl
         this.wrapper = mountEl ?? (view.dom.parentElement as HTMLElement) ?? view.dom
         const computed = getComputedStyle(this.wrapper)

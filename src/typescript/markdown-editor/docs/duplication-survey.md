@@ -61,6 +61,19 @@ suites around it and the demo looked at.
   walked the tokens. The seven `const esc = md.utils.escapeHtml` lines
   stay: `markdown-it` is tiptap-markdown's dependency, not importable
   here, and a one-line indirection would be no shorter.
+- **The persistence cast** (2026-10-13): `persistenceOf(editor)` and
+  `openNotePath(editor)` in `extensions/filesystem.ts` (the two
+  `openPath`s gone, the three sites that never normalised still read the
+  path as it is). Fifteen files; no `(storage as any).persistence` left
+  outside tests. The other storage casts (`comments`, `markdown`,
+  `blockActions`, …) stay: each would want a helper of its own.
+- **Mount resolution** (2026-10-13): `resolveMount(mount, root)` in
+  `ui/layout.ts`, used by the toolbar, the links panel, the rail (so the
+  outline and the file tree), the block actions and the margin. A mount
+  function returning nothing means the default place, as the `Mount` type
+  always said: the "mounted it itself" reading was never attainable (a
+  mount function is given the editor's root, never the piece), and left
+  the toolbar and links panel detached, and a rail panel in `body`.
 - **Dependencies**: `react`, `react-dom` and `multimatch` are only the
   demo's and the Vite config's, so they are devDependencies now;
   `@tiptap/react`, `vite-plugin-node-polyfills` and
@@ -85,11 +98,7 @@ Worth doing, each a contained refactor with tests around it:
    and the `[[` note menu each hand-roll "trigger character, range, tippy,
    arrow keys", and the slash and wikilink menus build identical rows and
    empty states. One `ui/suggestion-menu.ts` would hold them.
-4. **Mount resolution**: five copies resolve a `Mount`; they disagree on
-   what a function returning nothing means (`toolbar.ts` and
-   `links-panel.ts`: "mounted it itself"; the others: "no mount"). A
-   shared `resolveMount` must pick one meaning, so this is a behaviour
-   decision, not only a merge.
+4. *Mount resolution: done, above.*
 5. **rAF throttling**: six "schedule a layout pass" copies with their
    cancel-on-destroy; a `rafThrottle(fn)` returning `{ schedule, cancel }`.
    Likewise the `ResizeObserver` presence guard (six sites) and the
@@ -97,11 +106,7 @@ Worth doing, each a contained refactor with tests around it:
    (`comment-sheet.ts`, `comment-margin.ts`), and the sheet and the
    overlaid panel's wake/rest/away logic with `REST_AFTER` in both.
 6. *markdown-it setup: done, above.*
-7. **The persistence cast**: `(editor.storage as any).persistence` at about
-   25 sites in 14 files, and the open note's path derived from it in seven
-   places (two functions both named `openPath`). A module augmentation of
-   Tiptap's `Storage` for `persistence`, or a `persistenceOf(editor)` and
-   `openNotePath(editor)` pair in `filesystem.ts`.
+7. *The persistence cast: done, above.*
 8. **Bylines**: `@author` or the bare name is formatted in four places;
    export `byline` from `comment-render.ts` beside `when()`.
 9. *Hand positioning: done, with the popovers above.*

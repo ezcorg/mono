@@ -20,7 +20,7 @@
 import { createDocument, type Editor } from '@tiptap/core'
 import { closeHistory } from '@tiptap/pm/history'
 import { normalizePath } from '@joinezco/storage'
-import type { FileSystemStorage } from './filesystem'
+import { openNotePath, persistenceOf, type FileSystemStorage } from './filesystem'
 
 /** A place in the text: LSP's, 0-based, characters in UTF-16 code units. */
 export interface TextPosition {
@@ -58,10 +58,10 @@ export interface OpenDocuments {
 }
 
 export function openDocuments(editor: Editor): OpenDocuments {
-    const persistence = () => (editor.storage as any).persistence as FileSystemStorage | undefined
+    const persistence = () => persistenceOf(editor)
     const isOpen = (path: string) => {
-        const open = persistence()?.options.filepath
-        return !!open && normalizePath(open) === normalizePath(path)
+        const open = openNotePath(editor)
+        return !!open && open === normalizePath(path)
     }
     const textOf = (storage: FileSystemStorage) =>
         storage.codeView ? storage.codeView.state.doc.toString() : ((editor.storage as any).markdown.getMarkdown() as string)

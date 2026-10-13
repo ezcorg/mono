@@ -4,9 +4,10 @@
  * a URL a browser can fetch) and shown through object URLs.
  */
 import type { Editor } from '@tiptap/core'
-import { dirname, extname, joinPath, normalizePath, type VfsInterface } from '@joinezco/storage'
+import { dirname, extname, joinPath, type VfsInterface } from '@joinezco/storage'
 import { decodeDestination, type LinkResolution, type LinkSyntax } from '@joinezco/vault'
 import type { WikilinkStorage } from './wikilink'
+import { openNotePath, persistenceOf } from './filesystem'
 
 const MIME: Record<string, string> = {
     png: 'image/png',
@@ -39,8 +40,7 @@ export function isUrl(src: string): boolean {
 
 /** The open note's vault path, and the vault. */
 export function vaultOf(editor: Editor): { fs?: VfsInterface; path: string | null } {
-    const options = (editor.storage as any).persistence?.options
-    return { fs: options?.fs, path: options?.filepath ? normalizePath(options.filepath) : null }
+    return { fs: persistenceOf(editor)?.options.fs, path: openNotePath(editor) }
 }
 
 /**

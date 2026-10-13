@@ -31,8 +31,8 @@ export interface SidebarOptions {
      * Where to render the outline. It always lives *outside* the editor body;
      * this controls which element it lands in:
      *  - `HTMLElement` → the sidebar is appended into it.
-     *  - function → called with the editor's root element; return a container
-     *    to append into, or mount the node yourself and return nothing.
+     *  - function → called with the editor's root element; returns the
+     *    container to append into, or nothing for the default place.
      *  - `undefined` (default) → inserted as the sibling immediately *before*
      *    the editor's root element. Reads as a left column when the host lays
      *    the sidebar + editor out in a flex row.

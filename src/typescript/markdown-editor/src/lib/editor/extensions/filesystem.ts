@@ -10,7 +10,7 @@ import {
     type FileEvent,
     type FileVersions,
 } from '@joinezco/codeblock'
-import { dirname, type VfsInterface } from '@joinezco/storage'
+import { dirname, normalizePath, type VfsInterface } from '@joinezco/storage'
 import { Compartment, EditorState, type Extension as CMExtension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { isDarkMode } from './codeblock'
@@ -184,6 +184,19 @@ function setDocument(editor: Editor, content: string): void {
         })
         .setContent(content)
         .run()
+}
+
+/** The editor's filesystem (`FileSystem`'s storage, `editor.storage.persistence`),
+ *  or undefined in an editor made without one. */
+export function persistenceOf(editor: Editor): FileSystemStorage | undefined {
+    return (editor.storage as unknown as Record<string, unknown>).persistence as FileSystemStorage | undefined
+}
+
+/** The open note's vault path (normalized), or null when no file is open
+ *  or the editor has no filesystem. */
+export function openNotePath(editor: Editor): string | null {
+    const path = persistenceOf(editor)?.options.filepath
+    return path ? normalizePath(path) : null
 }
 
 export const FileSystem = Extension.create<FileSystemOptions>({

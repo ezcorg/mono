@@ -21,11 +21,11 @@ import { Editor, InputRule, Node, mergeAttributes } from '@tiptap/core'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import tippy, { type Instance as TippyInstance } from 'tippy.js'
-import { normalizePath } from '@joinezco/storage'
 import { formatWikilink, isNote, matchWikilinkAt, parseWikilink, type LinkResolution, type LinkResolver, type LinkSuggestion, type LinkSyntax, type Wikilink as WikilinkParts } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { setupOnce } from './markdown-it'
 import { revealFragment } from './fragment'
+import { openNotePath, persistenceOf } from './filesystem'
 
 export interface WikilinkOptions {
     /** Resolves links against the vault. Supplied by the host. */
@@ -70,12 +70,6 @@ export function wikilinkLabel({ target, fragment, alias }: WikilinkParts): strin
         }
     }
     return target ? `${target} › ${frag}` : frag
-}
-
-/** The open note's vault path, as the filesystem extension knows it. */
-function openPath(editor: Editor): string | null {
-    const path = (editor.storage as any).persistence?.options?.filepath as string | undefined
-    return path ? normalizePath(path) : null
 }
 
 /** The parts of a link node's link (an embed's too). */
@@ -213,7 +207,7 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
 
         storage.resolveTarget = (target, syntax) => {
             if (!resolver) return Promise.resolve(undefined)
-            const from = openPath(editor)
+            const from = openNotePath(editor)
             const key = `${syntax}\u0000${from ?? ''}\u0000${target}`
             let pending = cache.get(key)
             if (!pending) {
@@ -226,7 +220,7 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
         storage.resolve = async (target) => (await storage.resolveTarget(target, 'wikilink')) ?? null
 
         storage.follow = async (target, fragment, syntax = 'wikilink') => {
-            const from = openPath(editor)
+            const from = openNotePath(editor)
             if (!target.trim()) return revealFragment(editor, fragment)
             if (!resolver) return false
             const resolution = await storage.resolveTarget(target, syntax)
@@ -246,7 +240,7 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
                 revealFragment(editor, fragment)
                 return true
             }
-            const persistence = (editor.storage as any).persistence
+            const persistence = persistenceOf(editor)
             if (typeof persistence?.loadFile !== 'function' || !persistence.options?.fs) return false
             await persistence.loadFile(resolution.path, { create: !resolution.exists })
             if (!resolution.exists) invalidate()
@@ -438,7 +432,7 @@ class SuggestView {
         this.query = m[1]
         this.selected = 0
         const mine = ++this.token
-        const from = openPath(this.editor)
+        const from = openNotePath(this.editor)
         void this.resolver
             .suggest!(m[1], from, 8)
             .catch(() => [] as LinkSuggestion[])

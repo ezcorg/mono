@@ -33,7 +33,7 @@ import { isNote } from '@joinezco/vault'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
 import { setupOnce } from './markdown-it'
 import { codeblockRegistry, isDarkMode, measureBaseFontPx } from './codeblock'
-import type { FileSystemStorage } from './filesystem'
+import { persistenceOf } from './filesystem'
 
 export interface FrontMatterOptions {
     /** Give a note opened without an `id:` a new one. */
@@ -282,7 +282,7 @@ export const FrontMatter = Node.create<FrontMatterOptions, FrontMatterStorage>({
             settings.subscribe(sync)
         }
         const assignId = this.options.assignId
-        const persistence = (this.editor.storage as any).persistence as FileSystemStorage | undefined
+        const persistence = persistenceOf(this.editor)
         if (!assignId || !persistence) return
         const editor = this.editor
         const type = this.type
@@ -400,7 +400,7 @@ export const FrontMatter = Node.create<FrontMatterOptions, FrontMatterStorage>({
                 { key: 'Mod-Shift-z', run: () => editor.commands.redo() },
                 { key: 'Mod-y', run: () => editor.commands.redo() },
             ]
-            const persistence = (editor.storage as any).persistence as FileSystemStorage | undefined
+            const persistence = persistenceOf(editor)
             const base = measureBaseFontPx(view.dom as HTMLElement)
             const cm = new EditorView({
                 state: CMState.create({

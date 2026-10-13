@@ -20,7 +20,8 @@ import { Editor, Extension } from '@tiptap/core'
 import { basename, dirname, normalizePath } from '@joinezco/storage'
 import { type LinkIndex, type LinkRef } from '@joinezco/vault'
 import type { SidebarMount } from './sidebar'
-import type { FileSystemStorage } from './filesystem'
+import { openNotePath, persistenceOf } from './filesystem'
+import { resolveMount } from '../ui/layout'
 import type { WikilinkStorage } from './wikilink'
 
 export interface LinksPanelOptions {
@@ -92,7 +93,7 @@ class LinksPanelView {
         this.dom.append(this.backlinkTitle, this.backlinkList, this.danglingSection)
         this.mount(options.mount)
 
-        const persistence = this.persistence()
+        const persistence = persistenceOf(this.editor)
         if (persistence) this.cleanups.push(persistence.subscribe(() => this.schedule()))
         if (index.subscribe) this.cleanups.push(index.subscribe(() => this.schedule()))
         this.setShown(!!options.open)
@@ -110,23 +111,11 @@ class LinksPanelView {
         if (this.shown) this.dom.scrollIntoView({ block: 'nearest' })
     }
 
-    private persistence(): FileSystemStorage | undefined {
-        return (this.editor.storage as any).persistence as FileSystemStorage | undefined
-    }
-
-    private currentPath(): string | null {
-        const path = this.persistence()?.options.filepath
-        return path ? normalizePath(path) : null
-    }
-
     private mount(mount: SidebarMount | undefined) {
         const editable = this.editor.view.dom as HTMLElement
-        const root = editable.parentElement
-        if (mount instanceof HTMLElement) mount.appendChild(this.dom)
-        else if (typeof mount === 'function' && root) {
-            const container = mount(root)
-            if (container instanceof HTMLElement) container.appendChild(this.dom)
-        } else editable.after(this.dom)
+        const container = resolveMount(mount, editable.parentElement)
+        if (container) container.appendChild(this.dom)
+        else editable.after(this.dom)
     }
 
     /** Coalesce a burst of triggers (a save and the index's notice of it)
@@ -142,7 +131,7 @@ class LinksPanelView {
 
     async refresh(): Promise<void> {
         if (!this.shown) return
-        const path = this.currentPath()
+        const path = openNotePath(this.editor)
         const mine = ++this.token
         if (!path) {
             this.dom.classList.add('ezco-mde-links--empty')
@@ -223,7 +212,7 @@ class LinksPanelView {
 
     /** Open a note that links here, and show the first link back. */
     private async open(source: string, from: string) {
-        const persistence = this.persistence()
+        const persistence = persistenceOf(this.editor)
         if (!persistence) return
         await persistence.loadFile(source)
         const wikilink = (this.editor.storage as any).wikilink as WikilinkStorage | undefined
@@ -241,7 +230,7 @@ class LinksPanelView {
     }
 
     private async create(target: string) {
-        await this.persistence()?.loadFile(target, { create: true })
+        await persistenceOf(this.editor)?.loadFile(target, { create: true })
     }
 
     destroy() {

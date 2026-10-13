@@ -1,7 +1,7 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, InputRule } from '@tiptap/core';
 import type { NodeType, Node as PMNode } from '@tiptap/pm/model';
-import { fileReadMeta } from './filesystem';
+import { fileReadMeta, persistenceOf } from './filesystem';
 import { basicSetup, codeblock, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, formatLineRange, lineRange, regionField, setThemeEffect, type FileVersions } from '@joinezco/codeblock'
 import { basename, dirname, joinPath, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage'
 import { browserVfs } from '@joinezco/storage/browser'
@@ -782,10 +782,10 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // Use the editor's filesystem if available (so codeblocks can resolve
             // file references seeded into the same filesystem), otherwise fall back
             // to a standalone worker.
-            const editorFs = editor.storage.persistence?.options?.fs;
+            const editorFs = persistenceOf(editor)?.options.fs;
             // And its version log, when the host gave one: a file's lines are
             // saved on the version they were read as.
-            const versions: FileVersions | undefined = editorFs ? editor.storage.persistence?.options?.versions : undefined;
+            const versions: FileVersions | undefined = editorFs ? persistenceOf(editor)?.options.versions : undefined;
             const fsPromise = editorFs ? Promise.resolve(editorFs) : getFileSystemWorker();
             const { search, files } = this.options;
             // The filesystem may arrive after the view is gone (a note closed,
@@ -798,7 +798,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 // file beside the note, written from the fence (the note is the
                 // source of truth) before the fence opens it.
                 const at = getPos();
-                shadow = this.options.standIns && editorFs && at !== undefined ? shadowPath(view.state.doc, at, node, editor.storage.persistence?.options?.filepath) : null;
+                shadow = this.options.standIns && editorFs && at !== undefined ? shadowPath(view.state.doc, at, node, persistenceOf(editor)?.options.filepath) : null;
                 if (shadow) {
                     try {
                         await fs.writeFile(shadow, node.textContent);
@@ -970,11 +970,11 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
         if (!this.options.standIns) return;
         const editor = this.editor;
         const type = this.type;
-        const persistence = (editor.storage as any).persistence as { options?: { fs?: VfsInterface; filepath?: string }; subscribe?: (l: (e: { type: string; path: string }) => void) => () => void } | undefined;
+        const persistence = persistenceOf(editor);
         // Stand-ins a loaded note has no fence for any more go when it opens.
-        const off = persistence?.subscribe?.((event) => {
-            const fs = persistence.options?.fs;
-            if (event.type !== 'load' || !fs || persistence.options?.filepath !== event.path) return;
+        const off = persistence?.subscribe((event) => {
+            const fs = persistence.options.fs;
+            if (event.type !== 'load' || !fs || persistence.options.filepath !== event.path) return;
             void removeStaleStandIns(fs, event.path, editor.state.doc, type).catch(() => {});
         });
         if (off) standInCleanups.set(editor, off);

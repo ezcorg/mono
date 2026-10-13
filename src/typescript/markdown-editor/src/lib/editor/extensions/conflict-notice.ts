@@ -6,7 +6,7 @@
  * is opened.
  */
 import { Extension } from '@tiptap/core'
-import type { FileEvent, FileSystemStorage } from './filesystem'
+import { persistenceOf, type FileEvent } from './filesystem'
 
 const cleanups = new WeakMap<object, () => void>()
 
@@ -15,7 +15,7 @@ export const ConflictNotice = Extension.create({
 
     onCreate() {
         const editor = this.editor
-        const persistence = (editor.storage as any).persistence as FileSystemStorage | undefined
+        const persistence = persistenceOf(editor)
         if (!persistence || typeof document === 'undefined') return
 
         const dom = document.createElement('div')

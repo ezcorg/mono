@@ -16,6 +16,7 @@
 import { Extension, type Editor } from '@tiptap/core'
 import { Config, defaultsOf, deviceId, fromZod, z, type ConfigFiles, type Format, type Scope } from '@joinezco/config'
 import { localFiles } from './settings-memory'
+import { persistenceOf } from './extensions/filesystem'
 
 export const EditorSettingsSchema = z.object({
     editor: z
@@ -180,7 +181,7 @@ export const Settings = Extension.create<SettingsOptions, SettingsStorage>({
         const storage = this.storage
         const options = this.options
         storage.chromeScope = options.chromeScope ?? 'device'
-        const fs = options.fs ?? ((this.editor.storage as Record<string, any>).persistence?.options?.fs as ConfigFiles | undefined)
+        const fs = options.fs ?? (persistenceOf(this.editor)?.options.fs as ConfigFiles | undefined)
         const notify = () => (storage as SettingsStorage & { notify(): void }).notify()
         storage.ready = (async () => {
             const files: ConfigFiles = fs ?? localFiles()

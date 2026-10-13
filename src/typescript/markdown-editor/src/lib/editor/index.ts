@@ -8,7 +8,7 @@ import { StyleModule } from 'style-mod';
 
 import { ExtendedCodeblock } from './extensions/codeblock';
 import { ExtendedTaskItem } from './extensions/taskitem';
-import { FileSystem, FileSystemOptions, type FileSystemStorage } from './extensions/filesystem';
+import { FileSystem, FileSystemOptions, persistenceOf, type FileSystemStorage } from './extensions/filesystem';
 import { ConflictNotice } from './extensions/conflict-notice';
 import { ProseAI } from './extensions/prose-ai';
 import type { FileVersions } from '@joinezco/codeblock';
@@ -345,7 +345,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
     const openInHost = async (resolution: LinkResolution, fragment: string | null, inner: Editor) => {
         const host = hostOf(inner);
         if (options.links?.open) return options.links.open(resolution, fragment, host ?? inner);
-        const p = (host?.storage as any)?.persistence as FileSystemStorage | undefined;
+        const p = host ? persistenceOf(host) : undefined;
         if (!host || typeof p?.loadFile !== 'function') return;
         if (normalizePath(p.options.filepath ?? '') !== normalizePath(resolution.path)) await p.loadFile(resolution.path, { create: !resolution.exists });
         if (fragment) revealFragment(host, fragment);

@@ -17,6 +17,7 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { PROSE_ACTIONS, completeText, type Inference, type ProseAction } from '../inference'
 import { caretRect, popover, type Popover } from '../ui/popover'
+import { persistenceOf } from './filesystem'
 
 export interface ProseAIOptions {
     /** The model. Without one, no action is offered. */
@@ -260,7 +261,7 @@ class Session {
                     before: doc.textBetween(0, target.from, '\n\n'),
                     after: doc.textBetween(target.to, doc.content.size, '\n\n'),
                     note: markdown.getMarkdown(),
-                    path: (this.editor.storage as any).persistence?.options?.filepath ?? null,
+                    path: persistenceOf(this.editor)?.options.filepath ?? null,
                     instruction: this.instruction,
                 }),
                 {
