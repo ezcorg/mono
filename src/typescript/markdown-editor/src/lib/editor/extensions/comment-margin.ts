@@ -7,13 +7,14 @@
  * ⌘⇧M, and ask for it again from a bubble's menu. With no room beside the note, the
  * panel asked for slides over the note's right edge instead, as the sheet
  * does, and rests at the edge when the pointer leaves it. Otherwise nothing
- * shows beside the note: commented text is marked, and clicking it (or
- * `focusComment`) opens that one comment over the note's edge, under its
- * text (above it when there is no room under); Escape, Close in its
- * menu, or a click elsewhere closes it (`layout: 'float'`). Or every
- * comment stands in a column beside the note, each level with its text
- * (`layout: 'column'`; floating after all where the note would be too
- * narrow).
+ * shows beside the note: commented text is marked, and the comment's mark
+ * in the annotation column (comment-gutter.ts) opens its comments over the
+ * note's edge, under their text (above it when there is no room under),
+ * one under the other where they share a line; the mark again, Escape or
+ * Close in a card's menu closes it, a click elsewhere in the note closes
+ * them all (`layout: 'float'`). Or every comment stands in a column beside
+ * the note, each level with its text (`layout: 'column'`; floating after
+ * all where the note would be too narrow).
  *
  * A comment is a bubble: who and when, its text as the note shows text (a
  * read-only editor of the note's make, so a fence in a fence shows as the
@@ -88,6 +89,8 @@ export interface CommentMarginStorage {
     /** Every comment in a panel beside the note, or back to how the host
      *  had them. */
     togglePanel: () => boolean
+    /** Whether the comments float over the note (nothing beside it shows them). */
+    floating: () => boolean
 }
 
 declare module '@tiptap/core' {
@@ -438,7 +441,7 @@ class Card {
                 this.render()
                 return
             }
-            this.margin.close()
+            this.margin.close(this.margin.floating ? this.id : undefined)
         })
     }
 
@@ -830,7 +833,7 @@ class Card {
             const last: ContextMenuItem[] = []
             if (!this.margin.floating) last.push({ label: 'Hide comments panel', icon: PANEL_ICON, onSelect: () => this.margin.togglePanel() })
             else last.push({ label: 'Show in comments panel', icon: PANEL_ICON, onSelect: () => this.margin.togglePanel() })
-            if (this.margin.floating) last.push({ label: 'Close', icon: CLOSE_ICON, onSelect: () => this.margin.close() })
+            if (this.margin.floating) last.push({ label: 'Close', icon: CLOSE_ICON, onSelect: () => this.margin.close(this.id) })
             if (last.length) groups.push(last)
         }
         return groups.flatMap((group, i) => (i ? [SEPARATOR, ...group] : group))
@@ -1166,6 +1169,7 @@ class Margin {
         storage.open = (path) => this.openSheet(path)
         storage.sheet = null
         storage.togglePanel = () => this.togglePanel()
+        storage.floating = () => this.floating
         this.update()
     }
 
@@ -1430,9 +1434,10 @@ class Margin {
     }
 
     /** As the note scrolls, in a panel: every card steps out by how near
-     *  the reading line is to its text (the one looked at all the way), and
-     *  the comment whose text is nearest the line, among those in view, is
-     *  the current one (not while the scroll is the editor's own: an
+     *  the reading line is to its text (by that alone: a click on a card
+     *  takes the note to its text, and the scroll does the rest), and the
+     *  comment whose text is nearest the line, among those in view, is the
+     *  current one (not while the scroll is the editor's own: an
      *  alignment). Anchored to their text, the cards are still. */
     private spy() {
         if (!this.panel || this.dom.hidden || !this.view.dom.isConnected) return
@@ -1462,7 +1467,7 @@ class Margin {
                 near = Math.max(0, 1 - away / reach)
                 if (!(bottom < frameTop || top > frameTop + frameHeight) && (!best || away < best.away)) best = { id: c.id, away }
             }
-            card.setNear(c.id === state.active ? 1 : near)
+            card.setNear(near)
         }
         if (best && Date.now() >= this.quietUntil) this.setCurrent(best.id)
     }
@@ -1542,10 +1547,12 @@ class Margin {
         target.addEventListener('scroll', this.onScroll, { passive: true })
     }
 
-    /** Done looking: no card, the caret back in the note. */
-    close() {
-        this.editor.commands.focusComment(null)
-        this.editor.commands.focus()
+    /** Done looking: the card closed (`id`, over the note), or every one;
+     *  the caret back in the note when none is left. */
+    close(id?: string) {
+        if (id) this.editor.commands.toggleComments([id])
+        else this.editor.commands.focusComment(null)
+        if (!this.comments.open().length) this.editor.commands.focus()
     }
 
     /** The open note's path (drafts are kept per note). */
@@ -1634,9 +1641,9 @@ class Margin {
         this.over.hidden = !this.draft
         const resolved = state.comments.filter((c) => c.resolved).length
         const visible = this.floating
-            ? state.comments.filter((c) => c.id === state.active)
+            ? state.comments.filter((c) => state.open.includes(c.id))
             : state.comments.filter((c) => !c.resolved || this.showResolved || c.id === state.active)
-        this.dom.hidden = this.floating ? !state.active : !state.comments.length
+        this.dom.hidden = this.floating ? !state.open.length : !state.comments.length
         if ((!this.floating || this.dom.hidden) && !this.draft) this.ungrow()
         this.dom.classList.toggle('is-floating', this.floating)
         this.dom.classList.toggle('is-panel', this.panel)
@@ -1765,8 +1772,18 @@ class Margin {
         if (this.floating) {
             // Over the note. Each card under its text, where it stays: what
             // the frame cannot show of it is scrolled to, never the card
-            // moved.
+            // moved. Cards whose texts share a line (one mark opens them
+            // all) stand one under the other.
             for (const p of placed) p.top = this.under(p.dom, p.range, box, scroller)
+            placed.sort((a, b) => a.top - b.top || (a.range?.from ?? 0) - (b.range?.from ?? 0))
+            let floor = -Infinity
+            for (const p of placed) {
+                if (p.top < floor) {
+                    p.top = floor
+                    p.dom.style.top = `${Math.round(p.top)}px`
+                }
+                floor = p.top + p.height + GAP
+            }
             this.list.style.minHeight = ''
             this.keepFloatingInView(placed.filter((p) => p.fixed).map((p) => ({ id: p.id, dom: p.dom, height: p.height })), scroller)
             return
@@ -1867,6 +1884,7 @@ class Margin {
         this.storage.sheet = null
         this.storage.open = () => {}
         this.storage.togglePanel = () => false
+        this.storage.floating = () => true
         this.dom.remove()
         this.over.remove()
         this.column?.remove()
@@ -1881,7 +1899,7 @@ export const CommentMargin = Extension.create<CommentMarginOptions, CommentMargi
     },
 
     addStorage() {
-        return { open: () => {}, sheet: null, togglePanel: () => false }
+        return { open: () => {}, sheet: null, togglePanel: () => false, floating: () => true }
     },
 
     addCommands() {

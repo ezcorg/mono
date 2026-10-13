@@ -201,6 +201,17 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde--code-file .ezco-mde-gutter': {
         display: 'none',
     },
+    // The annotation column (comment-gutter.ts), right of the note: what is
+    // said about a line from beside it (a comment's mark on the line its
+    // text starts on). As wide as a mark; `position: relative` for the marks.
+    '.ezco-mde-annotations': {
+        flex: 'none',
+        width: '32px',
+        position: 'relative',
+    },
+    '.ezco-mde--code-file .ezco-mde-annotations': {
+        display: 'none',
+    },
     // A file shown as code has nothing beside it (no gutter, no comments)
     // and no measure to keep: it takes the editor's whole width.
     '.ezco-mde--code-file .ezco-mde-body-host': {
@@ -819,7 +830,13 @@ export const styleModule: StyleModule = new StyleModule({
     // JS); clicking anywhere on the button opens the action menu (so
     // the whole indicator area is interactive, not just the icon).
     '.ezco-mde-block-action-btn': {
-        width: '34px',
+        // The glyphs and the indicator's own star are centred on one axis,
+        // 17px in from the indicator's line, which stands 12px from the text
+        // (8px, and the note's 4px): a glyph's edge (most are 8 to 14px
+        // wide) is about as far from the line as the line is from the text.
+        // The width and `padding-right` put the content box's centre there;
+        // block-actions.ts puts the glyphs' column there (`right: 13px`).
+        width: '32px',
         display: 'flex',
         'align-items': 'flex-start',
         'justify-content': 'center',
@@ -839,8 +856,8 @@ export const styleModule: StyleModule = new StyleModule({
         // the block's bottom right up until detachment, giving a
         // cramped "icon flush against the next block" feel.
         'padding-bottom': '7px',
-        'padding-right': '8px',
-        'padding-left': '2px',
+        'padding-right': '4px',
+        'padding-left': 0,
         background: 'transparent',
         color: 'var(--ezco-mde-block-action-btn-color)',
         border: 'none',
@@ -958,12 +975,6 @@ export const styleModule: StyleModule = new StyleModule({
     // own glyph would slide between lines as the caret moves).
     '.ezco-mde-block-icon.is-active': {
         opacity: 0.9,
-    },
-    // A block whose first line a comment's mark stands on (comment-gutter.ts)
-    // gives the line to the mark, active or not.
-    '.ezco-mde-block-icon.is-marked, .ezco-mde-block-icon.is-marked.is-active': {
-        opacity: 0,
-        'pointer-events': 'none',
     },
     '.ezco-mde-block-action-btn:not([data-block-type="spanning"]) > .ezco-mde-block-action-btn-icon': {
         visibility: 'hidden',
@@ -2295,20 +2306,20 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment.is-active.ezco-mde-comment-stack': {
         background: 'color-mix(in srgb, var(--ezco-mde-comment-color) 60%, transparent)',
     },
-    // A resolved comment's text reads as text again: its mark in the gutter
-    // (comment-gutter.ts) is what keeps it findable, and the panel's "Show
-    // resolved".
+    // A resolved comment's text reads as text again: its mark beside the
+    // note (comment-gutter.ts) is what keeps it findable, and the panel's
+    // "Show resolved".
     '.ezco-mde-comment.is-resolved:not(.is-active)': {
         background: 'transparent',
         'border-bottom': 'none',
     },
-    // A comment's mark in the gutter (comment-gutter.ts): a speech bubble in
-    // the comment colour, in the glyph column (the block's glyph gives the
-    // line to it), on the first line of the comment's text. The comment
-    // looked at has the fuller bubble, a resolved one an empty, grey one.
+    // A comment's mark in the annotation column (comment-gutter.ts): a
+    // speech bubble in the comment colour on the first line of the
+    // comment's text. The comment looked at, or open over the note, has
+    // the fuller bubble, a resolved one an empty, grey one.
     '.ezco-mde-comment-mark': {
         position: 'absolute',
-        right: '14px',
+        left: '2px',
         width: '28px',
         'box-sizing': 'border-box',
         display: 'flex',
@@ -2331,18 +2342,18 @@ export const styleModule: StyleModule = new StyleModule({
         fill: 'color-mix(in srgb, var(--ezco-mde-comment-color) 22%, transparent)',
         transition: 'fill 120ms ease-out',
     },
-    '.ezco-mde-comment-mark:hover, .ezco-mde-comment-mark:focus-visible, .ezco-mde-comment-mark.is-active': {
+    '.ezco-mde-comment-mark:hover, .ezco-mde-comment-mark:focus-visible, .ezco-mde-comment-mark.is-active, .ezco-mde-comment-mark.is-open': {
         opacity: 1,
         outline: 'none',
     },
-    '.ezco-mde-comment-mark.is-active > svg': {
+    '.ezco-mde-comment-mark.is-active > svg, .ezco-mde-comment-mark.is-open > svg': {
         fill: 'color-mix(in srgb, var(--ezco-mde-comment-color) 55%, transparent)',
     },
-    '.ezco-mde-comment-mark.is-resolved:not(.is-active)': {
+    '.ezco-mde-comment-mark.is-resolved:not(.is-active):not(.is-open)': {
         color: 'var(--ezco-mde-block-action-btn-color)',
         opacity: 0.5,
     },
-    '.ezco-mde-comment-mark.is-resolved:not(.is-active) > svg': {
+    '.ezco-mde-comment-mark.is-resolved:not(.is-active):not(.is-open) > svg': {
         fill: 'transparent',
     },
     // Text a comment is being written about: the accent. A draft's, the
@@ -2457,17 +2468,17 @@ export const styleModule: StyleModule = new StyleModule({
     // takes the note there, level with the bubble. In a panel (a list of
     // its own) each card steps out towards the text by how near the note's
     // reading line is to its text (`--ezco-mde-comment-near`, 0 to 1, set
-    // as the note scrolls; the one looked at all the way), and the current
-    // one (the one looked at, or the one whose text is being read past)
-    // takes the accent's hairline. Anchored to their text, the cards are
-    // still: they stand where their text is.
+    // as the note scrolls and by nothing else, so one card steps out at a
+    // time), and the current one (the one looked at, or the one whose text
+    // is being read past) takes the accent's hairline. Anchored to their
+    // text, the cards are still: they stand where their text is.
     '.ezco-mde-comment-margin:not(.is-floating) .ezco-mde-comment-bubble.is-anchor': {
         cursor: 'pointer',
     },
     // (The classes in this order: the panel's own card rule, further on,
     // has them the other way round, and the two keys must differ.)
     '.is-panel.ezco-mde-comment-margin .ezco-mde-comment-card': {
-        transform: 'translateX(calc(-8px * var(--ezco-mde-comment-near, 0)))',
+        transform: 'translateX(calc(-32px * var(--ezco-mde-comment-near, 0)))',
     },
     '.ezco-mde-comment-margin.is-panel .ezco-mde-comment-card.is-current .ezco-mde-comment-bubble.is-anchor': {
         'border-color': 'color-mix(in srgb, var(--ezco-mde-accent) 45%, transparent)',

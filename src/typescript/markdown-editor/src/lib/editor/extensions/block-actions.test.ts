@@ -421,7 +421,23 @@ describe('Block actions', () => {
         await frames()
         expect(glyphs(container).map((g) => g.classList.contains('is-active'))).toEqual(glyphs(container).map((_, i) => i === 1))
         await waitFor(() => parseFloat(getComputedStyle(glyphs(container)[1]).opacity) > 0.8, 2000)
-        expect(getComputedStyle(container.querySelector('.ezco-mde-block-action-btn-icon') as HTMLElement).visibility).toBe('hidden')
+        const indicator = container.querySelector('.ezco-mde-block-action-btn') as HTMLElement
+        expect(getComputedStyle(indicator.querySelector('.ezco-mde-block-action-btn-icon') as HTMLElement).visibility).toBe('hidden')
+        // The indicator's line stands between the glyph and the text, as far
+        // from the glyph's edge as from the text (within a pixel or two, a
+        // glyph being as wide as its drawing), and the glyphs are centred on
+        // the indicator's own centre (where its star stands for a span).
+        await waitFor(() => indicator.style.opacity === '1', 2000)
+        const line = indicator.getBoundingClientRect().right - parseFloat(getComputedStyle(indicator).borderRightWidth)
+        const drawn = (pilcrow.querySelector('svg') as SVGElement).getBoundingClientRect()
+        const toLine = line - drawn.right
+        const toText = text.left - indicator.getBoundingClientRect().right
+        expect(toText).toBeGreaterThan(4)
+        expect(Math.abs(toLine - toText)).toBeLessThan(2.5)
+        const mid = (r: DOMRect) => r.left + r.width / 2
+        const content = indicator.getBoundingClientRect()
+        const inner = { left: content.left + parseFloat(getComputedStyle(indicator).paddingLeft), right: line - parseFloat(getComputedStyle(indicator).paddingRight) }
+        expect(Math.abs(mid(pilcrow.getBoundingClientRect()) - (inner.left + inner.right) / 2)).toBeLessThan(1)
         // Clicking the list's glyph makes the list active and opens its menu.
         glyphs(container)[2].click()
         await frames()

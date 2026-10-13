@@ -253,11 +253,13 @@
   display: flex;
 }
 
-/* Editor element fills the inset body; its own padding lives on .ezco-mde
-   (top/bottom only — horizontal insets come from .mac-body) so the focus
-   ring hugs the text and the left text column aligns with the gutter. */
+/* Editor element fills the inset body; its vertical padding lives here
+   (horizontal insets come from .mac-body, and the note keeps the editor's
+   own 4px before its text, which the block indicator's spacing is set
+   against) so the focus ring hugs the text. */
 .mac-body .ezco-mde-body {
-  padding: 10px 0;
+  padding-top: 10px;
+  padding-bottom: 10px;
   outline: none;
 }
 

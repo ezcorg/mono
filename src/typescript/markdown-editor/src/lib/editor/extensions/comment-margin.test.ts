@@ -38,7 +38,7 @@ const FILES: Record<string, string> = Object.fromEntries([
 
 type Layout = 'float' | 'column' | 'panel'
 
-async function open(width: number, layout: Layout | undefined, files = FILES, author: string | null = 'theo') {
+async function open(width: number, layout: Layout | undefined, files = FILES, author: string | null = 'theo', openOnClick = false) {
     const vault = await Vault.open(memoryVfs(files), { watch: false, identity: author ?? undefined })
     // Alice's fourth is resolved (by theo, whoever is looking).
     const resolver = author === 'theo' ? vault : await Vault.open(vault.fs, { watch: false, identity: 'theo' })
@@ -53,7 +53,7 @@ async function open(width: number, layout: Layout | undefined, files = FILES, au
         links: { resolver: vault.links, index: vault.links },
         search: vault.search,
         files: vault.files,
-        comments: { author: author ?? undefined, index: vault.comments, reactions: vault.reactions, margin: layout ? { layout } : {} },
+        comments: { author: author ?? undefined, index: vault.comments, reactions: vault.reactions, openOnClick, margin: layout ? { layout } : {} },
     })
     created.push({ editor, container, vault })
     const comments = (editor.storage as any).comments as CommentsStorage
@@ -137,6 +137,10 @@ const menuLabels = async (message: HTMLElement) => {
 }
 /** How many groups the last menu read had (the lines between them, plus one). */
 let menuGroups = 0
+/** The marks in the annotation column beside the note. */
+const marks = (c: HTMLElement) => [...(c.querySelector('.ezco-mde-annotations') as HTMLElement).querySelectorAll<HTMLElement>('.ezco-mde-comment-mark')]
+/** The mark on the line comment `id` starts on. */
+const markOfIn = (c: HTMLElement, id: string) => marks(c).find((m) => (JSON.parse(m.dataset.comments!) as string[]).includes(id))!
 const clickText = async (editor: MarkdownEditor, comments: CommentsStorage, id: string) => {
     const r = comments.comments().find((c) => c.id === id)!.target.range!
     const at = editor.view.coordsAtPos(r.from + 2)
@@ -150,7 +154,7 @@ async function write(field: HTMLElement, text: string) {
 }
 
 describe('Comments float over the note', () => {
-    it('show nothing until commented text is clicked, then the one comment by its text, and close on Escape', async () => {
+    it('show nothing until a comment’s mark is clicked, then the comment by its text, and close on Escape; a click on the text only places the caret', async () => {
         const { editor, container, comments } = await open(1100, 'float')
         expect(container.querySelector('.ezco-mde-comments')).toBeNull()
         expect(margin(container).hidden).toBe(true)
@@ -158,10 +162,39 @@ describe('Comments float over the note', () => {
         const noteWidth = editor.view.dom.getBoundingClientRect().width
         expect(noteWidth).toBeGreaterThan(700)
 
+        // A click on commented text: the caret goes there and nothing opens.
+        const first = idOf(comments, 'First.')
+        await clickText(editor, comments, first)
+        await new Promise((r) => setTimeout(r, 300))
+        expect(comments.active()).toBeNull()
+        expect(visibleCards(container)).toEqual([])
+        expect(editor.state.selection.from).toBeGreaterThanOrEqual(comments.comments().find((c) => c.id === first)!.target.range!.from)
+        // The second and third start on one line: its mark opens them both,
+        // one under the other; the first clicked (`toggleComments` would
+        // take either) is looked at.
         const second = idOf(comments, 'Second, a longer comment that wraps onto a few lines in the margin to take room.')
-        await clickText(editor, comments, second)
-        await waitFor(() => comments.active() === second, 2000)
+        const third = idOf(comments, 'Third, same line.')
+        await waitFor(() => marks(container).length === 3, 3000)
+        const markOf = (id: string) => markOfIn(container, id)
+        expect(markOf(second)).toBe(markOf(third))
+        markOf(second).click()
+        await waitFor(() => visibleCards(container).length === 2, 2000)
+        await frames()
+        expect(comments.open().sort()).toEqual([second, third].sort())
+        // (The one whose text starts first on the line is looked at.)
+        expect(comments.active()).toBe((JSON.parse(markOf(second).dataset.comments!) as string[])[0])
+        expect(markOf(second).classList.contains('is-open')).toBe(true)
+        const [upper, lower] = visibleCards(container).map((c) => c.getBoundingClientRect()).sort((a, b) => a.top - b.top)
+        expect(lower.top).toBeGreaterThanOrEqual(upper.bottom)
+        // The mark again closes them both; Close in a card's menu, that card.
+        markOf(second).click()
+        await waitFor(() => visibleCards(container).length === 0 && comments.active() === null, 2000)
+        markOf(second).click()
+        await waitFor(() => visibleCards(container).length === 2, 2000)
+        await viaMenu(messageOf(card(container, third), third), 'Close')
         await waitFor(() => visibleCards(container).length === 1, 2000)
+        expect(comments.open()).toEqual([second])
+        await waitFor(() => comments.active() === second, 2000)
         await frames()
         const box = visibleCards(container)[0].getBoundingClientRect()
         const text = comments.comments().find((c) => c.id === second)!.target.range!
@@ -209,6 +242,11 @@ describe('Comments float over the note', () => {
         await waitFor(() => comments.active() === null, 2000)
         expect(margin(container).hidden).toBe(true)
         expect(editor.isFocused).toBe(true)
+        // Open again, a click elsewhere in the note closes what is open.
+        markOf(second).click()
+        await waitFor(() => visibleCards(container).length === 2, 2000)
+        await userEvent.click(editor.view.dom.querySelector('h1') as HTMLElement)
+        await waitFor(() => comments.active() === null && visibleCards(container).length === 0, 2000)
     })
 
     it('keeps a resolved comment findable in the note, and reopens it', async () => {
@@ -228,9 +266,9 @@ describe('Comments float over the note', () => {
         expect(Number(getComputedStyle(container.querySelector('.ezco-mde-selection-menu-btn') as HTMLElement).zIndex)).toBeGreaterThan(401)
     })
 
-    it('tells overlapping comments apart, and looks at each in turn when their overlap is clicked', async () => {
+    it('tells overlapping comments apart, and, asked to open comments on a click, looks at each in turn when their overlap is clicked', async () => {
         const files = { ...FILES, ...Object.fromEntries([comment('dave', '07', 'Paragraph 2 says something', 'Overlapping.')]) }
-        const { editor, container, comments } = await open(900, 'float', files)
+        const { editor, container, comments } = await open(900, 'float', files, 'theo', true)
         await waitFor(() => comments.comments().length === 5, 3000)
         const overlap = editor.view.dom.querySelector('.ezco-mde-comment-stack') as HTMLElement
         expect(overlap?.textContent).toBe('Paragraph 2 says')
@@ -338,7 +376,12 @@ describe('A column of comments', () => {
     it('brings the card being looked at to its text, the others out of its way', async () => {
         const { editor, container, comments } = await open(1100, 'column')
         const third = idOf(comments, 'Third, same line.')
-        await clickText(editor, comments, third)
+        await waitFor(() => marks(container).length === 3, 3000)
+        // Beside the note, the mark looks at the comment (the second and
+        // third share the line: the one after the one looked at).
+        markOfIn(container, third).click()
+        await waitFor(() => comments.active() !== null, 2000)
+        if (comments.active() !== third) markOfIn(container, third).click()
         await waitFor(() => comments.active() === third, 2000)
         await waitFor(() => Math.abs(card(container, third).getBoundingClientRect().top - anchorTop(editor, comments, third)) < 2, 2000)
         expect(card(container, third).classList.contains('is-active')).toBe(true)
@@ -944,11 +987,12 @@ describe('What a comment shows', () => {
         // The head stays while the list scrolls.
         expect(getComputedStyle(margin(container).querySelector('.ezco-mde-comment-list') as HTMLElement).overflowY).toBe('auto')
         expect(getComputedStyle(margin(container)).overflowY).not.toBe('auto')
-        // The comment looked at is the current one, stepped out all the way
-        // from the others.
+        // The comment looked at is the current one. Looking at it does not
+        // step its card out: only the note's scroll does that (so a card
+        // clicked and one read past are never both stepped out).
         expect(card(container, third).classList.contains('is-current')).toBe(true)
-        await waitFor(() => shift(card(container, third)) < -7, 2000)
-        expect(shift(card(container, idOf(comments, 'First.')))).toBeGreaterThanOrEqual(shift(card(container, third)))
+        await frames()
+        expect(shift(card(container, third))).toBe(0)
         // As the note is read past commented text, that comment is the current one.
         const done = idOf(comments, 'Done already.')
         await viaHeadMenu(container, 'Show resolved (1)')
@@ -959,12 +1003,14 @@ describe('What a comment shows', () => {
         container.dispatchEvent(new Event('scroll'))
         await waitFor(() => card(container, done).classList.contains('is-current'), 2000)
         expect(container.querySelectorAll('.ezco-mde-comment-card.is-current').length).toBe(1)
-        // Its text at the reading line, the card has stepped out all the way;
-        // the note scrolled on, it steps back in by how far the text is.
-        await waitFor(() => shift(card(container, done)) < -7, 2000)
+        // Its text at the reading line, the card has stepped out all the way
+        // (32px); the others, far from the line, not at all; the note
+        // scrolled on, it steps back in by how far the text is.
+        await waitFor(() => shift(card(container, done)) < -31, 2000)
+        expect(shift(card(container, third))).toBe(0)
         container.scrollTop -= frame.height * 0.2
         container.dispatchEvent(new Event('scroll'))
-        await waitFor(() => shift(card(container, done)) > -7 && shift(card(container, done)) < -1, 2000)
+        await waitFor(() => shift(card(container, done)) > -31 && shift(card(container, done)) < -1, 2000)
         container.scrollTop = 0
         container.dispatchEvent(new Event('scroll'))
         await waitFor(() => !card(container, done).classList.contains('is-current'), 2000)
@@ -1037,38 +1083,38 @@ describe('What a comment shows', () => {
         expect(localStorage.getItem('ezco-mde-comments-anchored')).toBe('0')
     })
 
-    it('marks each comment’s first line in the gutter with a bubble the block’s glyph gives way to; a click looks at the comment, or at each in turn', async () => {
+    it('marks each comment’s first line with a bubble in the column beside the note, level with the line; beside a panel a click looks at the comment, or at each in turn', async () => {
         const { editor, container, comments } = await open(1100, 'panel')
         await waitFor(() => margin(container).classList.contains('is-panel'), 2000)
-        const gutter = container.querySelector('.ezco-mde-gutter') as HTMLElement
-        const marks = () => [...gutter.querySelectorAll<HTMLElement>('.ezco-mde-comment-mark')]
         // Four comments on three lines: the second and third start on the
         // same paragraph (one mark for both); the fourth is resolved, and
         // marked still, its text no longer highlighted.
-        await waitFor(() => marks().length === 3, 3000)
+        await waitFor(() => marks(container).length === 3, 3000)
         const first = idOf(comments, 'First.')
         const second = idOf(comments, 'Second, a longer comment that wraps onto a few lines in the margin to take room.')
         const third = idOf(comments, 'Third, same line.')
         const done = idOf(comments, 'Done already.')
-        const markOf = (id: string) => marks().find((m) => (JSON.parse(m.dataset.comments!) as string[]).includes(id))!
+        const markOf = (id: string) => markOfIn(container, id)
         expect(markOf(third)).toBeDefined()
         expect(markOf(third)).toBe(markOf(second))
         expect(markOf(done).classList.contains('is-resolved')).toBe(true)
         expect(markOf(first).classList.contains('is-resolved')).toBe(false)
         expect(markOf(first).querySelector('svg')).not.toBeNull()
-        // On the first line of its text, in the glyph column, the glyph of
-        // the paragraph (whose first line it is) gone from under it.
+        expect(markOf(third).title).toBe('2 comments')
+        // The column stands right of the note, before the panel, and the
+        // mark on the first line of its comment's text.
+        const column = container.querySelector('.ezco-mde-annotations') as HTMLElement
+        const note = editor.view.dom.getBoundingClientRect()
+        expect(column.getBoundingClientRect().left).toBeGreaterThanOrEqual(note.right - 1)
+        expect(column.getBoundingClientRect().right).toBeLessThanOrEqual(margin(container).getBoundingClientRect().left + 1)
         const lineOf = (id: string) => editor.view.coordsAtPos(comments.comments().find((c) => c.id === id)!.target.range!.from, 1)
         const box = markOf(first).getBoundingClientRect()
         expect(box.top + box.height / 2).toBeGreaterThan(lineOf(first).top)
         expect(box.top + box.height / 2).toBeLessThan(lineOf(first).bottom)
-        const glyphs = [...gutter.querySelectorAll<HTMLElement>('.ezco-mde-block-icon')]
-        const covered = glyphs.filter((g) => g.classList.contains('is-marked'))
-        expect(covered.length).toBe(3)
-        expect(covered.every((g) => parseFloat(getComputedStyle(g).opacity) === 0)).toBe(true)
-        const paragraph = glyphs.find((g) => Math.abs(g.getBoundingClientRect().top + g.getBoundingClientRect().height / 2 - (box.top + box.height / 2)) < 2)!
-        expect(paragraph.classList.contains('is-marked')).toBe(true)
-        expect(box.left + box.width / 2).toBeCloseTo(paragraph.getBoundingClientRect().left + paragraph.getBoundingClientRect().width / 2, 0)
+        expect(box.left).toBeGreaterThanOrEqual(column.getBoundingClientRect().left)
+        expect(box.right).toBeLessThanOrEqual(column.getBoundingClientRect().right)
+        // The block glyphs in the gutter are untouched by the marks.
+        expect(container.querySelectorAll('.ezco-mde-gutter .ezco-mde-comment-mark').length).toBe(0)
         // A click looks at the comment; on a line two start on, at each in turn.
         markOf(first).click()
         await waitFor(() => comments.active() === first, 2000)

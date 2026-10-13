@@ -65,11 +65,17 @@ demo. So, for any change that shows:
   layout (`.ezco-mde-comment-over`), the panel's settings live in its
   head's chevron as switches (`checked` menu items; the head has no ×),
   anchored cards are still (no scroll translation) under a sticky head,
-  and a comment's gutter mark is a bubble icon that takes the block
-  glyph's place on its line (`coverGlyphs`). See the README.
+  a panel's cards step out by the note's scroll alone (never because one
+  was clicked), and a comment's mark is a bubble icon in the annotation
+  column right of the note (`.ezco-mde-annotations`, `comment-gutter.ts`),
+  the only way to a comment when nothing beside the note shows them: a
+  click opens every comment on that line over the note, a second closes
+  them; a click on commented text only places the caret unless the host
+  sets `comments.openOnClick`. See the README.
 - Lists: every kind round-trips as written (markers, numbers, letters,
   delimiters); a marker typed at the start of an item retypes the item
-  (`lists.ts`).
+  (`lists.ts`); Backspace in an empty item removes that item and nothing
+  else (`ListItemBackspace`): taking items out of a list is ⇧Tab's job.
 
 ## Gotchas that cost a round each
 
@@ -111,3 +117,14 @@ demo. So, for any change that shows:
 - `frames()` in `comment-margin.test.ts` waits on every animation in the
   cards; with a composer open one never ends. Wait for a measurable state
   (the card's `style.top`) instead.
+- Tiptap 3.31's list keymap (priority 101) lifts an empty item on
+  Backspace, dragging the items after it along and out of the list a level
+  per press; `ListItemBackspace` (priority 110) runs first. Tiptap's `Link`
+  is inclusive whenever `autolink` is on (typing after a pasted URL extends
+  it): `ExtendedLink` sets `inclusive: false`.
+- The demo's `App.css` once zeroed the note's 4px left padding, so spacing
+  judged in the demo differed from the library's. Measure in the demo and
+  in a test, and keep the demo on the library's paddings.
+- Comment ids in a mark's `data-comments` are in text order: on a line two
+  comments start on, the one whose text starts first comes first, and is
+  the one a toggle looks at.

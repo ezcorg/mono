@@ -5,6 +5,12 @@ import { InputRule } from "@tiptap/core";
 const LINK_INPUT_REGEX = /\[([^[]+)]\((\S+)\)$/;
 
 export const ExtendedLink = Link.extend({
+    // Not inclusive: a link ends where its text ends. Tiptap makes the mark
+    // inclusive whenever `autolink` is on, so that what is typed right after
+    // a link (a pasted URL, say) goes on being the link, space and all; the
+    // autolink plugin marks a URL typed as a word on its own either way.
+    inclusive: false,
+
     addOptions() {
         return {
             ...(this.parent?.() as LinkOptions),

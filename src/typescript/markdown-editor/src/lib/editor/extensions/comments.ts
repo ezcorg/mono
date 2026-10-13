@@ -74,7 +74,11 @@ export interface CommentInfo {
 
 interface CommentsState {
     comments: CommentInfo[]
+    /** The comment looked at. */
     active: string | null
+    /** The comments open over the note (where nothing beside the note
+     *  shows them): the one looked at is among them. */
+    open: string[]
     /** Text chosen for a comment not yet written. */
     draft: { ranges: Range[] } | null
     decorations: DecorationSet
@@ -83,7 +87,10 @@ interface CommentsState {
 interface CommentsMeta {
     /** What the index found (a read). */
     found?: CommentInfo[]
+    /** Look at a comment (opened too), or at none (every one closed). */
     active?: string | null
+    /** Open these comments over the note, or, all of them open, close them. */
+    toggle?: string[]
     draft?: { ranges: Range[] } | null
 }
 
@@ -197,6 +204,11 @@ function decorate(doc: PMNode, comments: CommentInfo[], active: string | null, d
         if (r.to > r.from) decorations.push(Decoration.inline(r.from, r.to, { class: 'ezco-mde-comment is-draft' }))
     }
     return DecorationSet.create(doc, decorations)
+}
+
+/** `open` with `id` among them. */
+function opened(open: string[], id: string): string[] {
+    return open.includes(id) ? open : [...open, id]
 }
 
 /** The stretches covered by two or more of `ranges`. */
@@ -367,12 +379,18 @@ export interface CommentsOptions {
     index?: CommentIndex
     /** Reactions and resolution, per identity (a vault's `reactions`). */
     reactions?: Reactions
+    /** A click on commented text looks at its comment (each in turn where
+     *  comments overlap). Off by default: the comment's mark beside the
+     *  note is the way to it, and a click on the text only places the caret. */
+    openOnClick?: boolean
 }
 
 export interface CommentsStorage {
     /** Every comment about the open note, threaded. */
     comments: () => CommentInfo[]
     active: () => string | null
+    /** The comments open over the note. */
+    open: () => string[]
     draft: () => { ranges: Range[] } | null
     focus: (id: string | null) => void
     exportAnnotations: () => WebAnnotation[]
@@ -417,6 +435,9 @@ declare module '@tiptap/core' {
              *  an orphaned one is anchored again. */
             anchorComment: (id: string, range?: Range) => ReturnType
             focusComment: (id: string | null) => ReturnType
+            /** Open these comments over the note (the first looked at), or,
+             *  all of them open already, close them. */
+            toggleComments: (ids: string[]) => ReturnType
         }
     }
 }
@@ -425,13 +446,14 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
     name: 'comments',
 
     addOptions() {
-        return { author: undefined, index: undefined, reactions: undefined }
+        return { author: undefined, index: undefined, reactions: undefined, openOnClick: false }
     },
 
     addStorage() {
         return {
             comments: () => [],
             active: () => null,
+            open: () => [],
             draft: () => null,
             focus: () => {},
             exportAnnotations: () => [],
@@ -446,6 +468,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
         const state = () => commentsKey.getState(editor.state)
         this.storage.comments = () => state()?.comments ?? []
         this.storage.active = () => state()?.active ?? null
+        this.storage.open = () => state()?.open ?? []
         this.storage.draft = () => state()?.draft ?? null
         this.storage.focus = (id) => {
             editor.commands.focusComment(id)
@@ -680,6 +703,13 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                     dispatch?.(tr.setMeta(commentsKey, { active: id } satisfies CommentsMeta))
                     return true
                 },
+            toggleComments:
+                (ids) =>
+                ({ tr, dispatch }) => {
+                    if (!ids.length) return false
+                    dispatch?.(tr.setMeta(commentsKey, { toggle: ids } satisfies CommentsMeta))
+                    return true
+                },
         }
     },
 
@@ -697,7 +727,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
             new Plugin<CommentsState>({
                 key: commentsKey,
                 state: {
-                    init: (_, state) => ({ comments: [], active: null, draft: null, decorations: DecorationSet.create(state.doc, []) }),
+                    init: (_, state) => ({ comments: [], active: null, open: [], draft: null, decorations: DecorationSet.create(state.doc, []) }),
                     apply(tr, value, old, state) {
                         const meta = tr.getMeta(commentsKey) as CommentsMeta | undefined
                         // Unchanged (a selection moved): the same value, which is
@@ -707,7 +737,7 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                         // at the comment.
                         if (!meta && !tr.docChanged) {
                             const hit = tr.selectionSet && !value.active && !tr.selection.eq(old.selection) ? exactly(value.comments, tr.selection) : null
-                            return hit ? { ...value, active: hit.id, decorations: decorate(state.doc, value.comments, hit.id, value.draft) } : value
+                            return hit ? { ...value, active: hit.id, open: opened(value.open, hit.id), decorations: decorate(state.doc, value.comments, hit.id, value.draft) } : value
                         }
                         let draft = value.draft
                         if (draft && tr.docChanged) {
@@ -724,20 +754,35 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                               ? place(state.doc, value.comments, read, read ? undefined : { comments: value.comments, mapping: tr.mapping })
                               : value.comments
                         let active = meta && 'active' in meta ? meta.active ?? null : value.active
+                        // Looked at: open too; at none: every one closed.
+                        let open = meta && 'active' in meta ? (meta.active ? opened(value.open, meta.active) : []) : value.open
+                        if (meta?.toggle) {
+                            const all = meta.toggle.every((id) => open.includes(id))
+                            open = all ? open.filter((id) => !meta.toggle!.includes(id)) : [...open, ...meta.toggle.filter((id) => !open.includes(id))]
+                            active = all ? (active && open.includes(active) ? active : open[0] ?? null) : meta.toggle[0]
+                        }
+                        open = open.filter((id) => commentAt(comments, id))
                         if (active && !commentAt(comments, active)) active = null
                         // Read with the comment's text already selected (its link
                         // followed before the index answered): look at it.
                         if (!active && meta?.found) active = exactly(comments, tr.selection)?.id ?? null
-                        return { comments, active, draft, decorations: decorate(state.doc, comments, active, draft) }
+                        if (active && !open.includes(active)) open = [...open, active]
+                        return { comments, active, open, draft, decorations: decorate(state.doc, comments, active, draft) }
                     },
                 },
                 props: {
                     decorations: (state) => commentsKey.getState(state)?.decorations,
                     // A click on commented text looks at its comment (the caret
-                    // still goes where it was clicked).
+                    // still goes where it was clicked), when the host asks for
+                    // that; a click elsewhere closes what is open over the note.
                     handleClick(view, pos) {
                         const state = commentsKey.getState(view.state)
                         if (!state) return false
+                        if (!options.openOnClick) {
+                            const on = state.comments.some((c) => c.target.range && !c.target.whole && c.target.range.from <= pos && pos <= c.target.range.to)
+                            if (!on && state.active) view.dispatch(view.state.tr.setMeta(commentsKey, { active: null } satisfies CommentsMeta))
+                            return false
+                        }
                         // Every comment on the clicked spot, the narrowest first;
                         // where one of them is looked at already, the next.
                         const size = (c: CommentInfo) => c.target.range!.to - c.target.range!.from

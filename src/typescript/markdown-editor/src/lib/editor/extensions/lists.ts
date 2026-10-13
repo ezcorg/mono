@@ -1,5 +1,5 @@
 import { Node, Extension, mergeAttributes, InputRule } from '@tiptap/core'
-import { Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state'
+import { Plugin, PluginKey, Selection, TextSelection, type Transaction } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 import { findWrapping } from '@tiptap/pm/transform'
 import type { Node as PMNode, ResolvedPos } from '@tiptap/pm/model'
@@ -626,5 +626,70 @@ export const OrderedListStart = Extension.create({
                 },
             }),
         ]
+    },
+})
+
+/** The item types a list holds (a plain or a task item). */
+const ITEM_TYPES = new Set(['listItem', 'taskItem'])
+
+/**
+ * Backspace in an empty list item takes the item away and nothing else:
+ * the caret goes to the end of the line before it, and the items after it
+ * stay where they are, at their depth. (Tiptap's list keymap lifts the
+ * item instead, which makes the items after it the lifted item's own, and
+ * lifting again puts them out of their list: a level lost for every
+ * Backspace. Taking an item out of a list stays an act of its own: ⇧Tab,
+ * or Outdent.) An empty item that holds a list of its own (Enter at the end
+ * of an item that has one leaves the list in the new item) joins the item
+ * before it, which gets the list back. The first item of a list that has
+ * nothing before it, or holds a list, is lifted as before.
+ */
+export const ListItemBackspace = Extension.create({
+    name: 'listItemBackspace',
+    // Above Tiptap's list keymap (101), which would lift the item.
+    priority: 110,
+
+    addKeyboardShortcuts() {
+        return {
+            Backspace: ({ editor }) => {
+                if (editor.commands.undoInputRule()) return true
+                const { state } = editor
+                const { $from, empty } = state.selection
+                if (!empty || $from.depth < 2 || $from.parent.content.size || $from.parentOffset) return false
+                const itemDepth = $from.depth - 1
+                const item = $from.node(itemDepth)
+                // The empty paragraph is the item's first child.
+                if (!ITEM_TYPES.has(item.type.name) || $from.index(itemDepth) !== 0) return false
+                const holdsList = item.childCount > 1
+                const start = $from.before(itemDepth)
+                const end = $from.after(itemDepth)
+                const tr = state.tr
+                if ($from.index(itemDepth - 1) > 0) {
+                    // An item before it in the list.
+                    if (holdsList) {
+                        // Joined to the item before; the empty paragraph (now
+                        // right before the join) goes.
+                        tr.join(start)
+                        tr.delete(start - 1, start + 1)
+                        tr.setSelection(Selection.near(tr.doc.resolve(start - 1), -1))
+                    } else {
+                        tr.delete(start, end)
+                        tr.setSelection(Selection.near(tr.doc.resolve(start), -1))
+                    }
+                } else {
+                    // The first item of a list in an item (the parent's text
+                    // is the line before): the item goes, or the whole list
+                    // when it is the only one.
+                    const listDepth = itemDepth - 1
+                    if (holdsList || listDepth < 1 || !ITEM_TYPES.has($from.node(listDepth - 1).type.name)) return false
+                    const only = $from.node(listDepth).childCount === 1
+                    const from = only ? $from.before(listDepth) : start
+                    tr.delete(from, only ? $from.after(listDepth) : end)
+                    tr.setSelection(Selection.near(tr.doc.resolve(from), -1))
+                }
+                editor.view.dispatch(tr.scrollIntoView())
+                return true
+            },
+        }
     },
 })

@@ -37,11 +37,12 @@ from the start says so (`fileTree: { open: true }`,
 share folds away on the chevron in its corner, or ⌘⌥B. The note's text keeps
 to a column of some seventy-five characters (`--ezco-mde-measure`); the row
 of rail, gutter, column and comments is centred as one in a wider host, so
-the gutter stays at the text's edge. The note's comments take what is past
-the column, in a panel beside the note, and float over the note's edge, one
-at a time on a click on commented text, where there is no such room (or
-when the panel has been put away); asked for all the same, the panel slides
-over the note's edge instead.
+the gutter stays at the text's edge. Right of the note stands the
+annotation column, with a mark on the first line of each comment's text.
+The note's comments take what is past that, in a panel beside the note,
+and float over the note's edge, opened from their marks, where there is no
+such room (or when the panel has been put away); asked for all the same,
+the panel slides over the note's edge instead.
 
 With `fs` alone the editor keeps a vault of its own over it, so wikilinks,
 search and renames work without the host building one.
@@ -88,14 +89,18 @@ the overlap is marked deeper, and clicking it looks at each in turn. A
 comment on the whole of a document (a reply quotes the whole of the comment
 it answers) highlights nothing and sits at the top.
 
-Each comment is marked in the gutter too: a speech bubble in the comment
-colour on the first line of its text, in the glyph column (the block's own
-glyph gives it the line; empty and grey for a resolved comment, whose text
-reads as text again; a click on it looks at the comment, or at each in turn
-where two start on one line). Clicking a
-highlight opens the comment as a bubble over the note's edge, under its
-text (the note scrolls to show the whole bubble, its end extended for one
-under the last lines; the bubble never moves off its text): who and when, and
+Each comment is marked in the annotation column right of the note too: a
+speech bubble in the comment colour on the first line of its text (empty
+and grey for a resolved comment, whose text reads as text again; one mark
+for a line two comments start on). The mark is the way to the comment: with
+nothing beside the note showing the comments, a click on it opens every
+comment on that line as a bubble over the note's edge, under its text (one
+under the other where they share a line; the note scrolls to show the
+whole bubble, its end extended for one under the last lines; the bubble
+never moves off its text), and a second click closes them. A click on the
+highlighted text only places the caret, unless the host asks for more
+(`comments: { openOnClick: true }` looks at the comment clicked, or at each
+in turn where comments overlap). A bubble shows who and when, and
 its text shown exactly as the note shows text (a read-only editor of the
 note's make, so a fence named by a file holds the file's lines, fences
 inside it included). Under the text, in the bubble, are its reactions,
@@ -112,15 +117,17 @@ written goes last in the frame. A reply's own answers stay behind its own
 count. [−] after any byline collapses that message and everything under it
 to the byline; [+] brings it back. Nothing holds the bubbles: they stand on
 the note, and a bubble never runs past the note's frame (what is more
-scrolls inside it). Escape, Close or a click elsewhere closes it. With
-room past the note's text column, every comment shows from the start in a
-panel beside the note, a list that scrolls on its own under a fixed head.
-There a bubble is the way to its text: a click on it (its text included)
-takes the note to it, the text's first line level with the top of the
-bubble (the list meeting it where the note cannot). As the note scrolls,
-each bubble steps out towards the text by how near the reading line is to
-its lines, and the one nearest is the current one, with the accent's
-hairline. The chevron in the panel's head holds its settings, as switches:
+scrolls inside it). Escape or Close closes the bubble, a click elsewhere in
+the note every one. With room past the note's text column, every comment
+shows from the start in a panel beside the note, a list that scrolls on
+its own under a fixed head; there the mark looks at its comment (at each in
+turn where two share the line). A bubble in the panel is the way to its
+text: a click on it (its text included) takes the note to it, the text's
+first line level with the top of the bubble (the list meeting it where the
+note cannot). As the note scrolls, each bubble steps out towards the text
+(32px at most) by how near the reading line is to its lines, and by that
+alone, so one steps out at a time; the one nearest is the current one, with
+the accent's hairline. The chevron in the panel's head holds its settings, as switches:
 "Anchor comments to text" keeps every bubble level with its lines instead,
 still, scrolling with the note under a head that stays at the top of the
 frame (the choice is kept), "Show resolved" brings the resolved ones back,
@@ -215,7 +222,14 @@ in only when accepted.
   text, opening at the match); ⇧⌘P, or `>` first: the editor's commands.
 - `/`: slash commands; `:` then two letters: emoji; `[[`: link to a note.
 - ⌘/Ctrl+Enter or a click: follow a link. Backspace after a wikilink: edit its
-  source.
+  source. A link ends with its text: what is typed after a pasted URL is
+  text; "Link" in the selection menu takes the link off what is selected.
+- `` ` `` around text makes it code, the closing one first or last: with a
+  lone backtick after the caret, a backtick typed closes the pair around
+  what is between. Over a selection, `` ` `` makes it code and `[` brackets it.
+- In a list, Backspace in an empty item takes the item away and nothing
+  else (the items after it keep their place and depth; ⇧Tab takes items
+  out of a list). Enter in an empty item leaves the list.
 - ⌘⇧E / Ctrl+Shift+E: show or hide the file tree (nothing of it shows until
   then; `fileTree: { open: true }` starts it open). In it: arrows, Enter, F2
   to rename, Delete (asks first), Escape to close it and return to the note.

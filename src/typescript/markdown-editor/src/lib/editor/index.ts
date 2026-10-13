@@ -25,7 +25,7 @@ import { BlockActions, BlockActionsOptions } from './extensions/block-actions';
 import { Folding } from './extensions/folding';
 import { SelectionMenu } from './extensions/selection-menu';
 import { Sidebar, SidebarOptions } from './extensions/sidebar';
-import { BulletList, OrderedList, OrderedListStart, DashListKeymap } from './extensions/lists';
+import { BulletList, OrderedList, OrderedListStart, DashListKeymap, ListItemBackspace } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
 import type { WikilinkOptions } from './extensions/wikilink';
@@ -171,14 +171,18 @@ export interface CommentsSetupOptions {
     /** Reactions and resolution, per identity (a vault's `reactions`); the
      *  editor's own vault's, as `author`, when it made one. */
     reactions?: Reactions;
+    /** A click on commented text looks at its comment (off by default:
+     *  the comment's mark in the column beside the note is the way to it,
+     *  and a click on the text only places the caret). */
+    openOnClick?: boolean;
     /** How comments are shown, or `false` for not at all (a host showing
      *  them its own way reads them from `editor.storage.comments`).
-     *  `layout: 'float'` (the default) shows nothing beside the note: the
-     *  comment whose text is clicked opens over the note's edge, by its
-     *  text. `layout: 'column'` keeps every comment in a column beside the
-     *  note, level with its text; `layout: 'panel'` in a list beside the
-     *  note that scrolls on its own (`createEditor` makes the column;
-     *  `mount` puts it elsewhere). */
+     *  `layout: 'float'` shows nothing beside the note: a comment opens
+     *  over the note's edge, by its text, from its mark. `layout: 'column'`
+     *  keeps every comment in a column beside the note, level with its
+     *  text; `layout: 'panel'` (the default) in a list beside the note
+     *  that scrolls on its own (`createEditor` makes the column; `mount`
+     *  puts it elsewhere). */
     margin?: { mount?: SidebarOptions['mount']; layout?: CommentLayout } | false;
 }
 
@@ -391,6 +395,7 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         OrderedList,
         OrderedListStart,
         DashListKeymap,
+        ListItemBackspace,
         // Real header anchors: each heading gets a slug `id` (DOM-only, via
         // decorations — never serialized), so an outline can link to `#id`.
         HeadingAnchors,
@@ -458,9 +463,9 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         // highlighted, and a margin to read and write them in.
         ...(options.comments !== false
             ? [
-                Comments.configure({ author: options.comments?.author, index: services.comments, reactions: services.reactions }),
-                // Each comment's mark in the gutter, when there is a gutter.
-                ...(blockActions !== false ? [CommentMarks] : []),
+                Comments.configure({ author: options.comments?.author, index: services.comments, reactions: services.reactions, openOnClick: options.comments?.openOnClick ?? false }),
+                // Each comment's mark in the annotation column beside the note.
+                CommentMarks,
                 ...(options.comments?.margin !== false
                     ? [
                         CommentMargin.configure({
@@ -514,6 +519,7 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
     let navHost: HTMLElement | undefined
     let gutter: HTMLElement | undefined
     let bodyHost: HTMLElement | undefined
+    let annotations: HTMLElement | undefined
     let commentsHost: HTMLElement | undefined
     if (userEl && typeof document !== 'undefined') {
         const make = (cls: string) => {
@@ -530,13 +536,16 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         // (a built one keeps its 48px even when empty).
         if (options.blockActions !== false) gutter = make('ezco-mde-gutter')
         bodyHost = make('ezco-mde-body-host')
-        // A column for comments, right of the note: the panel that scrolls
-        // on its own (the default, when there is room past the note's text
+        // The annotation column right of the note (comment-gutter.ts): each
+        // comment's mark on the line its text starts on.
+        if (options.comments !== false) annotations = make('ezco-mde-annotations')
+        // A column for comments, right of that: the panel that scrolls on
+        // its own (the default, when there is room past the note's text
         // column) or a column level with the text. With `layout: 'float'`
         // comments float over the note's edge and take no room.
         const layout = options.comments !== false && options.comments?.margin !== false ? options.comments?.margin?.layout ?? 'panel' : undefined
         if (layout === 'column' || layout === 'panel') commentsHost = make('ezco-mde-comments')
-        content.append(...[navHost, gutter, bodyHost, commentsHost].filter((el): el is HTMLElement => !!el))
+        content.append(...[navHost, gutter, bodyHost, annotations, commentsHost].filter((el): el is HTMLElement => !!el))
         wrapper.append(toolbarSlot, content)
         userEl.appendChild(wrapper)
     }
@@ -649,7 +658,7 @@ export type { ExtendedCodeblockOptions } from './extensions/codeblock';
 export { ExtendedTaskItem } from './extensions/taskitem';
 export type { ExtendedTaskItemOptions } from './extensions/taskitem';
 export { Paragraph } from './extensions/paragraph';
-export { BulletList, OrderedList, OrderedListStart, DashListKeymap, retypeListItem, orderedLabel, letterIndex } from './extensions/lists';
+export { BulletList, OrderedList, OrderedListStart, DashListKeymap, retypeListItem, orderedLabel, letterIndex, ListItemBackspace } from './extensions/lists';
 export type { ListTarget } from './extensions/lists';
 export { HeadingAnchors } from './extensions/heading-anchors';
 export { InlineCodeExit } from './extensions/inline-code';

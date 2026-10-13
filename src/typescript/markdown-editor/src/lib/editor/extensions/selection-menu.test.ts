@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { AllSelection } from '@tiptap/pm/state'
 import { MarkdownEditor } from '../index'
-import { createTestContainer, createTestEditor, cleanupEditor } from '../../../test/utils'
+import { createTestContainer, createTestEditor, cleanupEditor, waitFor } from '../../../test/utils'
 
 const tick = (ms = 60) => new Promise((r) => setTimeout(r, ms))
 
@@ -52,6 +52,35 @@ describe('Selection menu', () => {
         editor.commands.setTextSelection(3)
         await tick()
         expect(btnOpacity(container)).toBe('0')
+    })
+
+    it('gives way to the comment composer: Comment chosen, the button goes and the composer stands by the selection', async () => {
+        const container = createTestContainer(`sel-${created.length}`)
+        const editor = await createTestEditor(container, { content: '# Title\n\nHello world paragraph.', comments: { author: 'theo' } })
+        created.push({ editor, container })
+        editor.view.focus()
+        editor.commands.setTextSelection({ from: 10, to: 21 })
+        const btn = container.querySelector('.ezco-mde-selection-menu-btn') as HTMLElement
+        await waitFor(() => btn.style.opacity === '1')
+        btn.click()
+        await waitFor(() => !!document.querySelector('.ezco-mde-selection-menu'))
+        const item = [...document.querySelectorAll<HTMLElement>('.ezco-mde-selection-menu .ezco-mde-context-menu-item')].find((i) => i.textContent?.trim().endsWith('Comment'))
+        expect(item).toBeDefined()
+        item!.click()
+        await waitFor(() => !document.querySelector('.ezco-mde-selection-menu'))
+        await waitFor(() => !!container.querySelector('.ezco-mde-comment-over .ezco-mde-comment-card'))
+        await waitFor(() => btn.style.opacity === '0')
+        const composer = container.querySelector('.ezco-mde-comment-over .ezco-mde-comment-card') as HTMLElement
+        await waitFor(() => composer.style.top !== '')
+        // The composer by the end of the selection, where the button was,
+        // which it does not cover since the button is gone.
+        const end = editor.view.coordsAtPos(21, -1)
+        expect(composer.getBoundingClientRect().top).toBeGreaterThanOrEqual(end.bottom)
+        expect(composer.getBoundingClientRect().top - end.bottom).toBeLessThan(16)
+        editor.commands.cancelComment()
+        editor.commands.focus()
+        editor.commands.setTextSelection({ from: 10, to: 21 })
+        await waitFor(() => btn.style.opacity === '1')
     })
 
     it('anchors at the end of the text on select-all (not the editor corner)', async () => {

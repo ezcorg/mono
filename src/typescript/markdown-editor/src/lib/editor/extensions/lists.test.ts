@@ -155,6 +155,84 @@ describe('Typing list markers', () => {
     })
 })
 
+describe('Backspace in an empty item', () => {
+    /** The caret at the end of the text node `text`. */
+    const endOf = (editor: MarkdownEditor, text: string) => {
+        let at = -1
+        editor.state.doc.descendants((n, pos) => {
+            if (at < 0 && n.isText && n.text === text) at = pos + n.nodeSize
+        })
+        return at
+    }
+    /** The Markdown as lines, an empty item's trailing space left off. */
+    const lines = (editor: MarkdownEditor) => md(editor).split('\n').map((l) => l.replace(/\s+$/, ''))
+
+    it('takes the item away and leaves the items after it where they are, the caret at the end of the one before', async () => {
+        const { editor } = await typing('- A\n  - A1\n  - A2\n- B\n')
+        editor.commands.focus(endOf(editor, 'A1'))
+        await userEvent.keyboard('{Enter}')
+        expect(lines(editor)).toEqual(['- A', '  - A1', '  -', '  - A2', '- B'])
+        await userEvent.keyboard('{Backspace}')
+        // A2 is still A's, at its depth; the caret is after A1.
+        expect(lines(editor)).toEqual(['- A', '  - A1', '  - A2', '- B'])
+        expect(editor.state.selection.from).toBe(endOf(editor, 'A1'))
+        // Typed into, then emptied: the same.
+        await userEvent.keyboard('{Enter}X{Backspace}{Backspace}')
+        expect(lines(editor)).toEqual(['- A', '  - A1', '  - A2', '- B'])
+        // At the top level too.
+        editor.commands.focus(endOf(editor, 'B'))
+        await userEvent.keyboard('{Enter}')
+        expect(lines(editor)).toEqual(['- A', '  - A1', '  - A2', '- B', '-'])
+        await userEvent.keyboard('{Backspace}')
+        expect(lines(editor)).toEqual(['- A', '  - A1', '  - A2', '- B'])
+        expect(editor.state.selection.from).toBe(endOf(editor, 'B'))
+    })
+
+    it('gives an item its list back when Enter at its end had moved the list into a new item', async () => {
+        const { editor } = await typing('- A\n  - A1\n  - A2\n- B\n')
+        editor.commands.focus(endOf(editor, 'A'))
+        await userEvent.keyboard('{Enter}')
+        expect(lines(editor)).toEqual(['- A', '-', '  - A1', '  - A2', '- B'])
+        await userEvent.keyboard('{Backspace}')
+        expect(lines(editor)).toEqual(['- A', '  - A1', '  - A2', '- B'])
+        expect(editor.state.selection.from).toBe(endOf(editor, 'A'))
+    })
+
+    it('takes away the first item of a nested list, or the list when it is the only one; the first item of a top-level list is lifted', async () => {
+        const { editor } = await typing('- A\n- B\n')
+        editor.commands.focus(endOf(editor, 'A'))
+        // Tab after Enter: an empty first item in a new nested list, the
+        // only one; Backspace takes the list away, the caret after A.
+        await userEvent.keyboard('{Enter}{Tab}')
+        expect(lines(editor)).toEqual(['- A', '  -', '- B'])
+        await userEvent.keyboard('{Backspace}')
+        expect(lines(editor)).toEqual(['- A', '- B'])
+        expect(editor.state.selection.from).toBe(endOf(editor, 'A'))
+        // An empty first item before others in a nested list (Enter at the
+        // start of the first): the item goes, the others stay nested.
+        const nested = await typing('- A\n  - A1\n  - A2\n- B\n')
+        nested.editor.commands.focus(endOf(nested.editor, 'A1') - 2)
+        await userEvent.keyboard('{Enter}')
+        expect(lines(nested.editor)).toEqual(['- A', '  -', '  - A1', '  - A2', '- B'])
+        let emptyAt = -1
+        nested.editor.state.doc.descendants((n, pos) => {
+            if (emptyAt < 0 && n.type.name === 'paragraph' && !n.content.size) emptyAt = pos + 1
+        })
+        nested.editor.commands.focus(emptyAt)
+        expect(nested.editor.state.selection.$from.parent.content.size).toBe(0)
+        await userEvent.keyboard('{Backspace}')
+        expect(lines(nested.editor)).toEqual(['- A', '  - A1', '  - A2', '- B'])
+        expect(nested.editor.state.selection.from).toBe(endOf(nested.editor, 'A'))
+        // The first item of the top-level list, emptied: lifted to a
+        // paragraph, the rest of the list as it was.
+        const lone = await typing('- \n- B\n- C\n')
+        lone.editor.commands.focus(3)
+        await userEvent.keyboard('{Backspace}')
+        expect(shape(lone.editor)).toEqual(['paragraph', 'ul[dash]'])
+        expect(lines(lone.editor).filter(Boolean)).toEqual(['- B', '- C'])
+    })
+})
+
 describe('The block menu', () => {
     it('offers letters for numbers and numbers for letters', () => {
         const { editor } = open('1. one\n2. two')

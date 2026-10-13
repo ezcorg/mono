@@ -5,7 +5,6 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import tippy, { Instance as TippyInstance } from 'tippy.js'
 import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
 import { foldsOf, type Fold } from './folding'
-import { coverGlyphs } from './comment-gutter'
 import type { Mount } from '../ui/layout'
 
 /** Where the block-action indicator should mount (same shape as the toolbar /
@@ -866,15 +865,16 @@ class BlockActionsView {
             icon.classList.toggle('is-fold', !!entry.fold)
             icon.classList.toggle('is-active', !entry.fold && activeShown && entry.pos === this.activePos)
             icon.classList.toggle('is-spanned', !!span && entry.pos >= span.from && entry.pos <= span.to)
+            // In the column, centred where the indicator's star is (17px in
+            // from its line, which stands as far from the glyph's edge as
+            // from the text; see `.ezco-mde-block-action-btn` in styles.ts).
             if (this.columnMode) {
-                if (icon.style.right !== '14px') {
-                    icon.style.right = '14px'
+                if (icon.style.right !== '13px') {
+                    icon.style.right = '13px'
                     icon.style.left = 'auto'
                 }
-            } else if (icon.style.left !== '-42px') icon.style.left = '-42px'
+            } else if (icon.style.left !== '-41px') icon.style.left = '-41px'
         })
-        // A glyph on a line a comment's mark stands on gives way to it.
-        coverGlyphs(this.wrapper)
     }
 
     /** A glyph clicked: a fold's opens the fold; a block's makes the block

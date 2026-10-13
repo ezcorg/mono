@@ -94,10 +94,16 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
             label: 'Link',
             icon: '🔗',
             isActive: (e) => e.isActive('link'),
-            // Open the inline link editor (LinkMenu) rather than a blocking
-            // window.prompt. Falls back to focusing the editor if the
-            // LinkMenu extension isn't installed.
+            // A selection that is all link: the link taken off it (and off
+            // it alone: the rest of a link that reaches past the selection
+            // stays a link). Otherwise the inline link editor (LinkMenu)
+            // rather than a blocking window.prompt; the editor is focused
+            // all the same when the LinkMenu extension isn't installed.
             run: (e) => {
+                if (e.isActive('link')) {
+                    e.chain().focus().unsetMark('link').run()
+                    return
+                }
                 e.chain().focus().run()
                 const linkView = (e.storage as Record<string, any>).linkMenu?.view
                 if (linkView?.startEdit) linkView.startEdit()
@@ -292,6 +298,9 @@ class SelectionMenuView {
     private shouldShow(): boolean {
         const { selection } = this.view.state
         if (selection.empty) return false
+        // A comment being written on the selection: its composer stands
+        // where the button would, and takes the button's place.
+        if ((this.editor.storage as Record<string, any>).comments?.draft?.()) return false
         // Select-all (Cmd/Ctrl-A) yields an `AllSelection`, NOT a
         // `TextSelection` — which is why select-all never used to surface this
         // menu. It spans the whole document, so the per-textblock checks below
