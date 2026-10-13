@@ -32,7 +32,7 @@ type Layout = 'float' | 'column' | 'panel'
 /** The settings of an editor: what it keeps its panel's choices in. */
 const settingsOf = (editor: MarkdownEditor) => settingsOfEditor(editor)!
 
-async function open(width: number, layout: Layout | undefined, files = FILES, author: string | null = 'theo', openOnClick = false, on?: VfsInterface) {
+async function open(width: number, layout: Layout | undefined, files = FILES, author: string | null = 'theo', openOnClick = false, on?: VfsInterface, inline?: boolean) {
     const vault = await Vault.open(on ?? memoryVfs(files), { watch: false, identity: author ?? undefined })
     // Alice's fourth is resolved (by theo, whoever is looking). (On a
     // filesystem opened before, it is already: a toggle would undo it.)
@@ -47,7 +47,7 @@ async function open(width: number, layout: Layout | undefined, files = FILES, au
         autoSave: true,
         size: { width, height: 700, scroll: true },
         services: ['resolver', 'index', 'search', 'files', 'comments'],
-        comments: { author: author ?? undefined, openOnClick, margin: layout ? { layout } : {} },
+        comments: { author: author ?? undefined, openOnClick, margin: { ...(layout ? { layout } : {}), ...(inline === undefined ? {} : { inline }) } },
     })
     await waitFor(() => made.comments.comments().some((c) => c.resolved), 3000)
     await frames()
@@ -64,8 +64,11 @@ const frames = async (n = 3) => {
 const margin = (c: HTMLElement) => (c.querySelector('.ezco-mde-comment-margin') ?? document.querySelector('.ezco-mde-comment-overlay-frame .ezco-mde-comment-margin')) as HTMLElement
 const within = (c: HTMLElement): HTMLElement => margin(c) ?? c
 const idOf = (comments: CommentsStorage, body: string) => comments.comments().find((c) => c.body === body)!.id
-const card = (c: HTMLElement, id: string) => within(c).querySelector(`.ezco-mde-comment-card[data-comment="${id}"]`) as HTMLElement
-const visibleCards = (c: HTMLElement) => [...within(c).querySelectorAll<HTMLElement>('.ezco-mde-comment-card')].filter((e) => !e.hidden && !margin(c).hidden)
+/** The cards standing within the note (comment-inline.ts), in their boxes. */
+const inlineCards = (c: HTMLElement) => [...c.querySelectorAll<HTMLElement>('.ezco-mde-body > .ezco-mde-comment-inline > .ezco-mde-comment-card, .ezco-mde-body .ezco-mde-comment-inline > .ezco-mde-comment-card')].filter((e) => !e.hidden)
+const card = (c: HTMLElement, id: string) =>
+    (within(c).querySelector(`.ezco-mde-comment-card[data-comment="${id}"]`) ?? inlineCards(c).find((e) => e.dataset.comment === id) ?? null) as HTMLElement
+const visibleCards = (c: HTMLElement) => [...[...within(c).querySelectorAll<HTMLElement>('.ezco-mde-comment-card')].filter((e) => !e.hidden && !margin(c).hidden), ...inlineCards(c)]
 const anchorTop = (editor: MarkdownEditor, comments: CommentsStorage, id: string) => editor.view.coordsAtPos(comments.comments().find((c) => c.id === id)!.anchor!).top
 const overlap = (a: DOMRect, b: DOMRect) => a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5
 const messageOf = (el: HTMLElement, id: string) => el.querySelector(`.ezco-mde-comment-message[data-comment="${id}"]`) as HTMLElement
@@ -166,7 +169,11 @@ describe('Comments float over the note', () => {
         expect(box.top - end).toBeLessThan(12)
         expect(box.right).toBeLessThanOrEqual(container.getBoundingClientRect().right)
         expect(editor.view.dom.getBoundingClientRect().width).toBe(noteWidth)
-        // Over the note, the bubble is lifted by the chrome's shadow and points
+        // Within the note, under its text, in the note's flow (the margin
+        // has nothing to show): the test below measures what moves.
+        expect(editor.view.dom.contains(visibleCards(container)[0])).toBe(true)
+        expect(margin(container).hidden).toBe(true)
+        // The bubble is lifted by the chrome's shadow and points
         // at the text; the card around it is nothing.
         const bubble = visibleCards(container)[0].querySelector('.ezco-mde-comment-bubble.is-anchor') as HTMLElement
         expect(getComputedStyle(bubble).boxShadow).not.toBe('none')
@@ -293,8 +300,10 @@ describe('The panel, by default', () => {
         expect(margin(narrow.container).classList.contains('is-panel')).toBe(true)
         expect(visibleCards(narrow.container).length).toBe(3)
         expect(narrow.editor.view.dom.getBoundingClientRect().width).toBeGreaterThan(400)
-        const over = margin(narrow.container).getBoundingClientRect()
         const frame = narrow.container.getBoundingClientRect()
+        // (Slid in from the edge: a transition.)
+        await waitFor(() => Math.abs(margin(narrow.container).getBoundingClientRect().right - frame.right) < 1, 2000)
+        const over = margin(narrow.container).getBoundingClientRect()
         expect(over.right).toBeCloseTo(frame.right, 0)
         expect(over.left).toBeGreaterThan(frame.left + 100)
         expect(margin(narrow.container).closest('.ezco-mde-comment-overlay-frame')).not.toBeNull()
@@ -471,6 +480,9 @@ describe('Writing', () => {
         await waitFor(() => comments.active() === null, 2000)
         expect(margin(container).hidden).toBe(true)
         await waitFor(() => editor.isFocused, 2000)
+        // The comment's mark carries the dot of a reply being drafted.
+        await waitFor(() => markOfIn(container, first).classList.contains('has-draft'), 2000)
+        expect(markOfIn(container, first).title).toBe('Comment by @alice')
         editor.commands.focusComment(first)
         await waitFor(() => !!card(container, first), 2000)
         await viaMenu(messageOf(card(container, first), first), 'Reply')
@@ -479,6 +491,7 @@ describe('Writing', () => {
         await waitFor(() => comments.comments().find((c) => c.id === first)!.replies.length === 1, 4000)
         expect(comments.comments().find((c) => c.id === first)!.replies[0].body).toBe('Half a thought and the rest.')
         expect(localStorage.getItem(`ezco-mde-comment-draft:Review.md:${first}:reply`)).toBeNull()
+        await waitFor(() => !markOfIn(container, first).classList.contains('has-draft'), 2000)
         // The reply shows under its comment; nothing more is offered until asked.
         await waitFor(() => !!messageOf(card(container, first), comments.comments().find((c) => c.id === first)!.replies[0].id), 2000)
         expect(composerBlockIn(card(container, first))).toBeNull()
@@ -723,12 +736,13 @@ describe('Writing', () => {
         await viaHeadMenu(container, 'Hide comments panel')
         await waitFor(() => margin(container).classList.contains('is-floating'), 3000)
         expect(container.querySelector('.ezco-mde-comments')).toBeNull()
-        // Back over the note, as wide as the note: the card by its text again.
+        // Back within the note, under its text again.
         expect(margin(container).style.width).toBe('')
+        await waitFor(() => !!card(container, first) && editor.view.dom.contains(card(container, first)), 2000)
         await frames()
         const box = card(container, first).getBoundingClientRect()
         const end = editor.view.coordsAtPos(comments.comments().find((c) => c.id === first)!.target.range!.to, -1)
-        expect(box.left).toBeGreaterThan(end.left - 40)
+        expect(box.top).toBeGreaterThanOrEqual(end.bottom)
         expect(editor.commands.toggleCommentsPanel()).toBe(true)
         await waitFor(() => margin(container).classList.contains('is-panel'), 3000)
     })
@@ -781,13 +795,173 @@ describe('Writing', () => {
         await waitFor(() => comments.comments().find((c) => c.id === first)!.replies.length === 0, 3000)
     })
 
+    it('marks a draft comment on its line, dashed, keeps it there when put down, and brings its composer back from the mark', async () => {
+        const { editor, container, comments } = await open(900, 'float')
+        await waitFor(() => marks(container).length === 3, 3000)
+        const { from, to } = rangeOf(editor, 'number 7')
+        const line = () => editor.view.coordsAtPos(from, 1)
+        const draftMark = () => marks(container).find((m) => m.dataset.kind === 'draft')
+        editor.commands.setTextSelection({ from, to })
+        editor.commands.startComment()
+        await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
+        // Being written: a dashed mark of its own on the text's line, lit.
+        await waitFor(() => !!draftMark(), 2000)
+        expect(draftMark()!.classList.contains('is-draft')).toBe(true)
+        expect(draftMark()!.classList.contains('is-active')).toBe(true)
+        expect(draftMark()!.title).toBe('Your comment, being written')
+        expect(draftMark()!.querySelector('path')?.getAttribute('stroke-dasharray')).not.toBeNull()
+        const box = draftMark()!.getBoundingClientRect()
+        expect(box.top + box.height / 2).toBeGreaterThan(line().top)
+        expect(box.top + box.height / 2).toBeLessThan(line().bottom)
+        expect(marks(container).length).toBe(4)
+        // In the accent, not the comments' colour.
+        expect(getComputedStyle(draftMark()!).color).not.toBe(getComputedStyle(markOfIn(container, idOf(comments, 'First.'))).color)
+        const field = container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text') as HTMLElement
+        await waitFor(() => document.activeElement === field, 2000)
+        await userEvent.keyboard('Half a comment')
+        await waitFor(() => localStorage.getItem('ezco-mde-comment-draft:Review.md:new:') === 'Half a comment', 2000)
+        expect(localStorage.getItem('ezco-mde-comment-draft:Review.md:new:at')).toBe(':~:text=number%207')
+        // Put down: the composer goes, the mark stays, unlit, with the draft.
+        tool(container.querySelector('.ezco-mde-comment-card.is-draft') as HTMLElement, 'Cancel').click()
+        await waitFor(() => !container.querySelector('.ezco-mde-comment-card.is-draft'), 2000)
+        await waitFor(() => !!draftMark() && !draftMark()!.classList.contains('is-active'), 2000)
+        expect(draftMark()!.title).toBe('Your draft comment')
+        expect(editor.view.dom.querySelector('.ezco-mde-comment.is-draft')).toBeNull()
+        // The mark brings the composer back, on its words, with what was typed.
+        draftMark()!.click()
+        await waitFor(() => !!container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
+        expect(container.querySelector('.ezco-mde-comment.is-draft')?.textContent).toBe('number 7')
+        await waitFor(() => (container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text') as HTMLElement).textContent === 'Half a comment', 2000)
+        await waitFor(() => draftMark()?.classList.contains('is-active') === true, 2000)
+        // Pressed again while open, the composer takes the focus back.
+        ;(editor.view.dom as HTMLElement).focus()
+        draftMark()!.click()
+        await waitFor(() => document.activeElement === container.querySelector('.ezco-mde-comment-card.is-draft .ezco-mde-comment-text'), 2000)
+        // Posted, the draft's mark is a comment's, and nothing is kept.
+        await userEvent.keyboard(', finished.')
+        await userEvent.keyboard('{Control>}{Enter}{/Control}')
+        await waitFor(() => comments.comments().some((c) => c.author === 'theo'), 4000)
+        await waitFor(() => !draftMark() && marks(container).length === 4, 3000)
+        expect(localStorage.getItem('ezco-mde-comment-draft:Review.md:new:')).toBeNull()
+        expect(localStorage.getItem('ezco-mde-comment-draft:Review.md:new:at')).toBeNull()
+        const mine = comments.comments().find((c) => c.author === 'theo')!
+        expect(mine.body).toBe('Half a comment, finished.')
+        expect(markOfIn(container, mine.id).dataset.kind).toBe('comments')
+    })
+
     it('names a second comment made in the same minute after its author too', () => {
         expect(authorOf('comments/Review/theo 2026-09-27 00.25 2.md')).toEqual({ author: 'theo', time: '2026-09-27T00:25' })
     })
 })
 
+describe('Within the note', () => {
+    const paragraphOf = (editor: MarkdownEditor, text: string) => {
+        const { node } = editor.view.domAtPos(rangeOf(editor, text).from)
+        return (node instanceof HTMLElement ? node : node.parentElement!).closest('p') as HTMLElement
+    }
+
+    it('stands an open comment within the note under its text, moving what follows down, and leaves the Markdown alone', async () => {
+        const { editor, container, comments } = await open(900, 'float')
+        await waitFor(() => marks(container).length === 3, 3000)
+        const first = idOf(comments, 'First.')
+        const markdown = getMarkdownContent(editor)
+        const p2 = paragraphOf(editor, 'Paragraph 2 says')
+        const p3 = paragraphOf(editor, 'Paragraph 3 says')
+        const gap = p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom
+        markOfIn(container, first).click()
+        await waitFor(() => visibleCards(container).length === 1, 2000)
+        await frames()
+        const box = card(container, first).parentElement as HTMLElement
+        // In a box of the note's own, right after the paragraph, before the next.
+        expect(box.classList.contains('ezco-mde-comment-inline')).toBe(true)
+        expect(box.parentElement).toBe(editor.view.dom)
+        expect(box.previousElementSibling).toBe(p2)
+        expect(box.nextElementSibling).toBe(p3)
+        expect(box.getAttribute('contenteditable')).toBe('false')
+        const b = box.getBoundingClientRect()
+        expect(b.top).toBeGreaterThanOrEqual(p2.getBoundingClientRect().bottom)
+        expect(p3.getBoundingClientRect().top).toBeGreaterThanOrEqual(b.bottom)
+        // What follows moved down by the box: nothing is covered.
+        expect(p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom).toBeGreaterThan(gap + b.height - 1)
+        for (const p of editor.view.dom.querySelectorAll(':scope > p')) expect(overlap(p.getBoundingClientRect(), b)).toBe(false)
+        expect(b.width).toBeLessThanOrEqual(480)
+        expect(getComputedStyle(card(container, first)).position).toBe('relative')
+        // The card is the chrome's, not the note's: its own face, at the chrome's size.
+        expect(getComputedStyle(box).fontSize).toBe('13px')
+        expect(getComputedStyle(card(container, first).querySelector('.ezco-mde-comment-bubble') as HTMLElement).boxShadow).not.toBe('none')
+        // The note's text is as it was, and so is its Markdown.
+        expect(getMarkdownContent(editor)).toBe(markdown)
+        expect(editor.state.doc.textContent).not.toContain('First.')
+        expect(markOfIn(container, first).classList.contains('is-open')).toBe(true)
+        // Escape in the card: the box goes, the paragraphs close up, the note has the focus.
+        card(container, first).focus()
+        await userEvent.keyboard('{Escape}')
+        await waitFor(() => comments.active() === null && !editor.view.dom.querySelector('.ezco-mde-comment-inline'), 3000)
+        expect(p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom).toBeCloseTo(gap, 0)
+        expect(getMarkdownContent(editor)).toBe(markdown)
+        await waitFor(() => editor.isFocused, 2000)
+    })
+
+    it('opens two comments on a line one under the other within the note, and a click elsewhere closes them', async () => {
+        const { editor, container, comments } = await open(900, 'float')
+        await waitFor(() => marks(container).length === 3, 3000)
+        const second = idOf(comments, 'Second, a longer comment that wraps onto a few lines in the margin to take room.')
+        markOfIn(container, second).click()
+        await waitFor(() => visibleCards(container).length === 2, 2000)
+        await frames()
+        const [upper, lower] = visibleCards(container).map((c) => c.getBoundingClientRect()).sort((a, b) => a.top - b.top)
+        expect(lower.top).toBeGreaterThanOrEqual(upper.bottom)
+        const p3 = paragraphOf(editor, 'Paragraph 3 says')
+        const p4 = paragraphOf(editor, 'Paragraph 4 says')
+        expect(upper.top).toBeGreaterThanOrEqual(p3.getBoundingClientRect().bottom)
+        expect(p4.getBoundingClientRect().top).toBeGreaterThanOrEqual(lower.bottom)
+        await userEvent.click(editor.view.dom.querySelector('h1') as HTMLElement)
+        await waitFor(() => comments.active() === null && visibleCards(container).length === 0, 3000)
+        expect(editor.view.dom.querySelector('.ezco-mde-comment-inline')).toBeNull()
+    })
+
+    it('writes a reply within the note without touching the note', async () => {
+        const { editor, container, comments } = await open(900, 'float')
+        const first = idOf(comments, 'First.')
+        const markdown = getMarkdownContent(editor)
+        editor.commands.focusComment(first)
+        await waitFor(() => !!card(container, first), 2000)
+        expect(editor.view.dom.contains(card(container, first))).toBe(true)
+        tool(messageOf(card(container, first), first), 'Reply').click()
+        const field = () => composerIn(messageOf(card(container, first), first))!
+        await waitFor(() => !!field() && document.activeElement === field(), 2000)
+        await userEvent.keyboard('From within the note.')
+        await waitFor(() => field().textContent === 'From within the note.', 2000)
+        expect(getMarkdownContent(editor)).toBe(markdown)
+        expect(editor.state.doc.textContent).not.toContain('From within')
+        await userEvent.keyboard('{Control>}{Enter}{/Control}')
+        await waitFor(() => comments.comments().find((c) => c.id === first)!.replies.length === 1, 4000)
+        expect(comments.comments().find((c) => c.id === first)!.replies[0].body).toBe('From within the note.')
+        expect(getMarkdownContent(editor)).toBe(markdown)
+    })
+
+    it('floats over the note instead where the host asks, and comes within it when the reader does', async () => {
+        const { editor, container, comments } = await open(900, 'float', FILES, 'theo', false, undefined, false)
+        const first = idOf(comments, 'First.')
+        editor.commands.focusComment(first)
+        await waitFor(() => !!card(container, first), 2000)
+        await frames()
+        expect(margin(container).contains(card(container, first))).toBe(true)
+        expect(editor.view.dom.querySelector('.ezco-mde-comment-inline')).toBeNull()
+        expect(getComputedStyle(card(container, first)).position).toBe('absolute')
+        expect(margin(container).hidden).toBe(false)
+        // The reader's choice is over the host's.
+        await settingsOf(editor).set('comments.inline', true)
+        await waitFor(() => !!card(container, first) && editor.view.dom.contains(card(container, first)), 3000)
+        expect(margin(container).hidden).toBe(true)
+        await settingsOf(editor).set('comments.inline', false)
+        await waitFor(() => !!card(container, first) && margin(container).contains(card(container, first)), 3000)
+        expect(editor.view.dom.querySelector('.ezco-mde-comment-inline')).toBeNull()
+    })
+})
+
 describe('What a comment shows', () => {
-    const openWith = async (files: Record<string, string>, layout: Layout = 'column', width = 1100) => {
+    const openWith = async (files: Record<string, string>, layout: Layout = 'column', width = 1100, inline?: boolean) => {
         const vault = await Vault.open(memoryVfs(files), { watch: false, identity: 'theo' })
         const container = document.createElement('div')
         container.style.cssText = `width: ${width}px; height: 700px; overflow-y: auto;`
@@ -798,7 +972,7 @@ describe('What a comment shows', () => {
             links: { resolver: vault.links, index: vault.links },
             search: vault.search,
             files: vault.files,
-            comments: { author: 'theo', index: vault.comments, reactions: vault.reactions, margin: { layout } },
+            comments: { author: 'theo', index: vault.comments, reactions: vault.reactions, margin: { layout, ...(inline === undefined ? {} : { inline }) } },
         })
         created.push({ editor, container, vault })
         const comments = (editor.storage as any).comments as CommentsStorage
@@ -860,14 +1034,16 @@ describe('What a comment shows', () => {
         expect(more.textContent).toBe('Show more')
     })
 
-    it('keeps a card within the note’s frame, scrolling inside it', async () => {
+    // (Floating over the note, `inline: false`: a card within the note has
+    // the note's own scroll to be seen by.)
+    it('keeps a floating card within the note’s frame, scrolling inside it', async () => {
         const long = Array.from({ length: 80 }, (_, i) => `Reply line ${i + 1}.`).join('\n\n')
         const files = {
             'Review.md': NOTE,
             'comments/Review/alice 2026-09-13 12.09.md': '![[Review#:~:text=Paragraph%201%20says]]\n\nShort.\n',
             'comments/Review/bob 2026-09-13 12.10.md': `![[comments/Review/alice 2026-09-13 12.09#:~:text=Short.]]\n\n${long}\n`,
         }
-        const { editor, container, comments } = await openWith(files, 'float', 900)
+        const { editor, container, comments } = await openWith(files, 'float', 900, false)
         await waitFor(() => comments.comments().length === 1 && comments.comments()[0].replies.length === 1, 5000)
         editor.commands.focusComment(comments.comments()[0].id)
         await waitFor(() => visibleCards(container).length === 1, 2000)
@@ -888,12 +1064,12 @@ describe('What a comment shows', () => {
         expect(inside.scrollHeight).toBeGreaterThan(inside.clientHeight)
     })
 
-    it('scrolls a card under the last lines into view, growing the note’s end for it, and gives the end back', async () => {
+    it('scrolls a floating card under the last lines into view, growing the note’s end for it, and gives the end back', async () => {
         // A comment on the last paragraph: its card has nowhere to be but
         // under the note's end.
         const longer = ['# Review', ...Array.from({ length: 30 }, (_, i) => `Line ${i + 1} of the longer part, nothing to say.`), ...paragraphs].join('\n\n') + '\n'
         const files = { ...FILES, 'Review.md': longer, ...Object.fromEntries([comment('erin', '08', 'Paragraph 12 says', 'At the end.')]) }
-        const { editor, container, comments } = await openWith(files, 'float', 900)
+        const { editor, container, comments } = await openWith(files, 'float', 900, false)
         await waitFor(() => comments.comments().some((c) => c.body === 'At the end.'), 4000)
         const scroller = container
         const last = comments.comments().find((c) => c.body === 'At the end.')!

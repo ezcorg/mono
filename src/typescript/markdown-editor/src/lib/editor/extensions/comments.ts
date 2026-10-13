@@ -20,6 +20,7 @@
  */
 import { Extension, type Editor } from '@tiptap/core'
 import { settingsOf } from '../settings'
+import { clearDraft, draftKey, readDraft, writeDraft } from './comment-render'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { Plugin, PluginKey, TextSelection, type EditorState, type Selection, type Transaction } from '@tiptap/pm/state'
 import type { Mapping } from '@tiptap/pm/transform'
@@ -203,6 +204,61 @@ function decorate(doc: PMNode, comments: CommentInfo[], active: string | null, d
         if (r.to > r.from) decorations.push(Decoration.inline(r.from, r.to, { class: 'ezco-mde-comment is-draft' }))
     }
     return DecorationSet.create(doc, decorations)
+}
+
+// ── A draft's place ─────────────────────────────────────────────────────────
+// What is typed for a new comment is kept in this browser until posted
+// (comment-render.ts); its words are kept with it, as the quote the comment
+// would carry, so the draft is found on its line again once the composer
+// has closed, and opened there.
+
+const DRAFT_TEXT = ''
+const DRAFT_AT = 'at'
+
+export interface KeptDraft {
+    range: Range
+    text: string
+}
+
+/** The note the drafts are keyed by (its path as the host gave it). */
+function draftNote(editor: Editor): string | null {
+    return persistenceOf(editor)?.options.filepath ?? null
+}
+
+/** Keep the words a draft is about (none: forget them). */
+export function keepDraftAnchor(editor: Editor, range: Range | null): void {
+    const key = draftKey(draftNote(editor), 'new', DRAFT_AT)
+    if (!range || range.to <= range.from) return clearDraft(key)
+    const flat = docText(editor.state.doc)
+    const f = textFragmentFor(flat.text, textOffset(flat, range.from), textOffset(flat, range.to))
+    if (f) writeDraft(key, formatTextFragment(f))
+    else clearDraft(key)
+}
+
+/** Where a kept draft was found in a document, by the document: asked on
+ *  every pass of the annotation column, found once per note and draft. */
+const keptIn = new WeakMap<PMNode, { text: string; at: string; found: KeptDraft | null }>()
+
+/** A draft kept for the note, found at its words. */
+export function keptDraft(editor: Editor): KeptDraft | null {
+    const note = draftNote(editor)
+    const text = readDraft(draftKey(note, 'new', DRAFT_TEXT))
+    const at = readDraft(draftKey(note, 'new', DRAFT_AT))
+    if (!text || !at) return null
+    const { doc } = editor.state
+    const hit = keptIn.get(doc)
+    if (hit && hit.text === text && hit.at === at) return hit.found
+    const found = locateTextFragment(doc, at)
+    const kept = found ? { range: { from: found.from, to: found.to }, text } : null
+    keptIn.set(doc, { text, at, found: kept })
+    return kept
+}
+
+/** The draft posted, or given up: nothing kept. */
+export function clearNewDraft(editor: Editor): void {
+    const note = draftNote(editor)
+    clearDraft(draftKey(note, 'new', DRAFT_TEXT))
+    clearDraft(draftKey(note, 'new', DRAFT_AT))
 }
 
 /** `open` with `id` among them. */
@@ -741,7 +797,9 @@ export const Comments = Extension.create<CommentsOptions, CommentsStorage>({
                         // The reader's choice over the host's.
                         if (!(settingsOf(editor)?.chosen('comments.openOnClick') ?? options.openOnClick)) {
                             const on = state.comments.some((c) => c.target.range && !c.target.whole && c.target.range.from <= pos && pos <= c.target.range.to)
-                            if (!on && state.active) view.dispatch(view.state.tr.setMeta(commentsKey, { active: null } satisfies CommentsMeta))
+                            // (The margin closes what stands in the note itself, with its going out.)
+                            const margin = (editor.storage as Record<string, any>).commentMargin as { closeAll?: () => boolean } | undefined
+                            if (!on && state.active && !margin?.closeAll?.()) view.dispatch(view.state.tr.setMeta(commentsKey, { active: null } satisfies CommentsMeta))
                             return false
                         }
                         // Every comment on the clicked spot, the narrowest first;

@@ -32,6 +32,7 @@ export const EditorSettingsSchema = z.object({
             showResolved: z.boolean().default(false).describe('Keep resolved comments in the panel.'),
             openOnClick: z.boolean().default(false).describe('A click on commented text looks at its comment (the mark beside the note always does).'),
             step: z.number().min(0).max(64).default(32).describe('How far a comment in the panel steps out towards its text as the note is read past it, in pixels.'),
+            inline: z.boolean().default(true).describe('Open a comment within the note, under the text it is about, so what follows moves down; off, it floats over the note.'),
         })
         .meta({ title: 'Comments' }),
     frontMatter: z
@@ -77,6 +78,7 @@ export type SettingPath =
     | 'comments.showResolved'
     | 'comments.openOnClick'
     | 'comments.step'
+    | 'comments.inline'
     | 'frontMatter.collapsed'
 
 type At<P extends string> = P extends `${infer H}.${infer R}` ? (H extends keyof EditorSettings ? At2<EditorSettings[H], R> : never) : never

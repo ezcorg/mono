@@ -2331,6 +2331,29 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-mark.is-resolved:not(.is-active):not(.is-open) > svg': {
         fill: 'transparent',
     },
+    // A draft's mark: the bubble dashed, in the accent (as the draft's text
+    // is marked); fuller while its composer is open. A comment with a reply
+    // drafted carries the accent's dot.
+    '.ezco-mde-comment-mark.is-draft': {
+        color: 'var(--ezco-mde-accent)',
+        opacity: 0.9,
+    },
+    '.ezco-mde-comment-mark.is-draft > svg': {
+        fill: 'color-mix(in srgb, var(--ezco-mde-accent) 18%, transparent)',
+    },
+    '.ezco-mde-comment-mark.is-draft.is-active > svg': {
+        fill: 'color-mix(in srgb, var(--ezco-mde-accent) 45%, transparent)',
+    },
+    '.ezco-mde-comment-mark.has-draft::after': {
+        content: '""',
+        position: 'absolute',
+        top: '2px',
+        right: '3px',
+        width: '6px',
+        height: '6px',
+        'border-radius': '50%',
+        background: 'var(--ezco-mde-accent)',
+    },
     // Text a comment is being written about: the accent. A draft's, the
     // accent dashed: only this browser has it.
     '.ezco-mde-comment.is-draft': {
@@ -2494,6 +2517,33 @@ export const styleModule: StyleModule = new StyleModule({
         transition: 'border-color 120ms ease-out',
     },
     '.ezco-mde-comment-margin.is-floating .ezco-mde-comment-bubble': {
+        'box-shadow': 'var(--ezco-mde-bubble-shadow)',
+    },
+    // A comment within the note (comment-inline.ts): its card in a box
+    // that stands in the note's flow after the text's block, in the
+    // chrome's type, as wide as a floating card; the box grows from
+    // nothing as the card comes in from its mark (comment-margin.ts).
+    // (The class doubled: over the body's own block spacing.)
+    '.ezco-mde-body.ezco-mde-body > .ezco-mde-comment-inline, .ezco-mde-body .ezco-mde-comment-inline': {
+        position: 'relative',
+        'box-sizing': 'border-box',
+        margin: '8px 0 12px',
+        'max-width': 'min(480px, 100%)',
+        'font-family': 'var(--ezco-mde-chrome-font)',
+        'font-size': '13px',
+        'line-height': 1.5,
+        color: 'var(--ezco-mde-fg)',
+        'user-select': 'text',
+    },
+    '.ezco-mde-comment-inline > .ezco-mde-comment-card': {
+        position: 'relative',
+        top: 'auto',
+        left: 'auto',
+        right: 'auto',
+        width: '100%',
+        'max-height': 'none',
+    },
+    '.ezco-mde-comment-inline .ezco-mde-comment-bubble': {
         'box-shadow': 'var(--ezco-mde-bubble-shadow)',
     },
     // Collapsed to its byline, everything under it with it; the bubble

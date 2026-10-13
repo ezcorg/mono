@@ -58,6 +58,24 @@ describe('Comments about a note', () => {
         expect([...editor.view.dom.querySelectorAll('.ezco-mde-comment')].map((e) => e.textContent)).toEqual(['brown fox', 'lazy dog'])
     })
 
+    it('find a quoted passage in the prose, not in a fence that holds the same words, and in the fence when only it has them', async () => {
+        // A fence above the paragraph holding the note's own words (a file
+        // that quotes the note, embedded): the comment stays on the prose.
+        const files = {
+            ...FILES,
+            'Animals.md': '# Animals\n\n```txt\nThe quick brown fox jumps over the lazy dog.\ndef add(a, b):\n```\n\n' + NOTE.slice('# Animals\n\n'.length),
+            'comments/Animals/carol 2026-09-13 12.20.md': '![[Animals#:~:text=def%20add]]\nOnly in the code.\n',
+        }
+        const { editor, comments } = await open(files, 'Animals.md', 'theo', (e, c) => e.getText().includes('fox') && c.comments().length === 3)
+        const alice = byAuthor(comments, 'alice')
+        expect(textAt(editor, alice.target.range)).toBe('brown fox')
+        expect(editor.state.doc.resolve(alice.target.range!.from).parent.type.name).toBe('paragraph')
+        expect(alice.target.orphaned).toBe(false)
+        const carol = byAuthor(comments, 'carol')
+        expect(textAt(editor, carol.target.range)).toBe('def add')
+        expect(editor.state.doc.resolve(carol.target.range!.from).parent.type.spec.code).toBe(true)
+    })
+
     it('are resolved by a ✅, and reopened by taking it away', async () => {
         const { editor, comments } = await open()
         editor.commands.resolveComment(byAuthor(comments, 'alice').id)

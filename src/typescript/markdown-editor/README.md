@@ -40,9 +40,10 @@ of rail, gutter, column and comments is centred as one in a wider host, so
 the gutter stays at the text's edge. Right of the note stands the
 annotation column, with a mark on the first line of each comment's text.
 The note's comments take what is past that, in a panel beside the note,
-and float over the note's edge, opened from their marks, where there is no
-such room (or when the panel has been put away); asked for all the same,
-the panel slides over the note's edge instead.
+and open from their marks within the note, each under its text, where
+there is no such room (or when the panel has been put away; the setting
+`comments.inline: false` floats them over the note's edge instead); asked
+for all the same, the panel slides over the note's edge instead.
 
 With `fs` alone the editor keeps a vault of its own over it, so wikilinks,
 search and renames work without the host building one.
@@ -94,10 +95,15 @@ speech bubble in the comment colour on the first line of its text (empty
 and grey for a resolved comment, whose text reads as text again; one mark
 for a line two comments start on). The mark is the way to the comment: with
 nothing beside the note showing the comments, a click on it opens every
-comment on that line as a bubble over the note's edge, under its text (one
-under the other where they share a line; the note scrolls to show the
-whole bubble, its end extended for one under the last lines; the bubble
-never moves off its text), and a second click closes them. A click on the
+comment on that line as a bubble within the note, right under the block
+its text is in, in the note's own flow, so what follows moves down and
+nothing is covered (one under the other where they share a line; the note
+scrolls to show the whole bubble; the bubble grows out of its mark into
+its place and goes back into it, so the eye can follow), and a second
+click closes them. The setting `comments.inline` (off; or the host's
+`comments: { margin: { inline: false } }`) floats the bubbles over the
+note's edge instead, under their text and never off it, the note's end
+extended for one under the last lines. A click on the
 highlighted text only places the caret, unless the host asks for more
 (`comments: { openOnClick: true }` looks at the comment clicked, or at each
 in turn where comments overlap). A bubble shows who and when, and
@@ -116,7 +122,7 @@ shrinks back into the pill when they are folded away; a reply being
 written goes last in the frame. A reply's own answers stay behind its own
 count. [−] after any byline collapses that message and everything under it
 to the byline; [+] brings it back. Nothing holds the bubbles: they stand on
-the note, and a bubble never runs past the note's frame (what is more
+the note (a floating bubble never runs past the note's frame: what is more
 scrolls inside it). Escape or Close closes the bubble, a click elsewhere in
 the note every one. With room past the note's text column, every comment
 shows from the start in a panel beside the note, a list that scrolls on
@@ -149,7 +155,11 @@ beside the note shows the comments, never the composer). A comment, a reply (rig
 answers) or an edit is typed in a bubble, in the editor's own syntax, its
 Cancel and its one filled button in the bubble's foot; ⌘/Ctrl+Enter posts. What is
 typed and not posted is a draft, kept in this browser on its own and back
-in the field when it is opened again. Posting makes the comment's document,
+in the field when it is opened again. A new comment put down with
+something typed keeps a mark of its own on its line, a dashed bubble in
+the accent (lit while its composer is open): a click on it brings the
+composer back on the same words; a comment whose reply is drafted carries
+a dot on its mark. Posting makes the comment's document,
 `comments/<note>/<author> <date> <time>.md`, whose name is read back as
 who and when.
 

@@ -8,11 +8,12 @@
  * panel asked for slides over the note's right edge instead, and rests at
  * the edge when the pointer leaves it. Otherwise nothing
  * shows beside the note: commented text is marked, and the comment's mark
- * in the annotation column (comment-gutter.ts) opens its comments over the
- * note's edge, under their text (above it when there is no room under),
- * one under the other where they share a line; the mark again, Escape or
- * Close in a card's menu closes it, a click elsewhere in the note closes
- * them all (`layout: 'float'`). Or every comment stands in a column beside
+ * in the annotation column (comment-gutter.ts) opens its comments within
+ * the note, each under its text in the note's own flow (comment-inline.ts;
+ * with `comments.inline` off, over the note's edge instead, above the text
+ * when there is no room under), one under the other where they share a
+ * line; the mark again, Escape or Close in a card's menu closes it, a
+ * click elsewhere in the note closes them all (`layout: 'float'`). Or every comment stands in a column beside
  * the note, each level with its text (`layout: 'column'`; floating after
  * all where the note would be too narrow).
  *
@@ -51,8 +52,10 @@ import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { menuPopover } from '../ui/popover'
 import { parseTextFragment, type Reaction } from '@joinezco/vault'
-import { DELETED_BODY, RESOLVED, commentsKey, type CommentInfo, type CommentsStorage } from './comments'
+import { DELETED_BODY, RESOLVED, commentsKey, type CommentInfo, type CommentsStorage, clearNewDraft, keepDraftAnchor } from './comments'
 import { Composer } from './comment-composer'
+import { inlineKey } from './comment-inline'
+import { annotationColumn } from './comment-gutter'
 import { byline, clearDraft, draftKey, readDraft, renderReadOnly, when, writeDraft, type ReadOnlyView } from './comment-render'
 import { openReactionPicker, reactionGrid } from './emoji-picker'
 import { ContextMenu, isSeparator, type ContextMenuEntry, type ContextMenuItem } from '../ui/context-menu'
@@ -76,6 +79,11 @@ export interface CommentMarginOptions {
      *  panel or column floats where there is no room for it. The reader's
      *  choice (the panel shown or put away) is kept over the host's. */
     layout?: CommentLayout
+    /** Where nothing beside the note shows the comments, an open comment
+     *  stands within the note under its text (default), or floats over the
+     *  note's edge (`false`). The reader's choice (`comments.inline`) is
+     *  kept over the host's. */
+    inline?: boolean
     /** The extensions a comment is written and shown with (the note's setup
      *  without its chrome, from `createEditor`); `minimalSetup` without. */
     composer?: () => AnyExtension[]
@@ -87,6 +95,16 @@ export interface CommentMarginStorage {
     togglePanel: () => boolean
     /** Whether the comments float over the note (nothing beside it shows them). */
     floating: () => boolean
+    /** Whether open comments stand within the note (`comments.inline`; over the note floating). */
+    inline: () => boolean
+    /** The box an inline comment's card stands in (comment-inline.ts): the same each time. */
+    inlineBox: (id: string) => HTMLElement
+    /** Focus the composer of the comment being written, if one is. */
+    focusDraft: () => boolean
+    /** Close every open comment, the inline ones going out first; true when there was one. */
+    closeAll: () => boolean
+    /** The inline cards of `ids` gone out, before they are closed. */
+    leaveInline: (ids: string[]) => Promise<void>
 }
 
 declare module '@tiptap/core' {
@@ -912,7 +930,7 @@ class NewComment {
         const key = draftKey(margin.notePath(), 'new', '')
         const ranges = () => ((editor.storage as any).comments.draft() as { ranges: { from: number; to: number }[] } | null)?.ranges ?? []
         const inFull = () => {
-            if (editor.commands.addComment({ body: this.composer.value(), ranges: ranges(), open: true })) clearDraft(key)
+            if (editor.commands.addComment({ body: this.composer.value(), ranges: ranges(), open: true })) clearNewDraft(editor)
         }
         this.composer = new Composer({
             editor,
@@ -920,9 +938,14 @@ class NewComment {
             placeholder: 'Comment…',
             submitLabel: 'Comment',
             initial: readDraft(key) ?? '',
-            onChange: (markdown) => writeDraft(key, markdown),
+            // The words kept with the text, so a draft put down is found on
+            // its line again.
+            onChange: (markdown) => {
+                writeDraft(key, markdown)
+                keepDraftAnchor(editor, markdown.trim() ? ranges()[0] ?? null : null)
+            },
             onSubmit: (body) => {
-                if (editor.commands.addComment({ body, ranges: ranges() })) clearDraft(key)
+                if (editor.commands.addComment({ body, ranges: ranges() })) clearNewDraft(editor)
             },
             onCancel: () => {
                 editor.commands.cancelComment()
@@ -932,6 +955,11 @@ class NewComment {
         const inside = el('div', 'ezco-mde-comment-inside')
         inside.append(composerBlock(this.composer, author, () => [{ label: FILE_LABEL, icon: FILE_ICON, onSelect: inFull }], this.holder))
         this.dom.append(inside)
+        if (readDraft(key)) keepDraftAnchor(editor, ranges()[0] ?? null)
+        this.composer.focus()
+    }
+
+    focus() {
         this.composer.focus()
     }
 
@@ -941,6 +969,9 @@ class NewComment {
         this.dom.remove()
     }
 }
+
+/** How long a card within the note takes to come in from its mark, or go back. */
+const MOTION = 260
 
 // ── The margin ──────────────────────────────────────────────────────────────
 
@@ -953,6 +984,10 @@ class Margin {
     private readonly over: HTMLElement
     private readonly cards = new Map<string, Card>()
     private draft: NewComment | null = null
+    /** The boxes inline cards stand in (comment-inline.ts draws them into
+     *  the note), by comment, kept across redraws; and which cards are in one. */
+    private readonly boxes = new Map<string, HTMLElement>()
+    private readonly inlined = new Set<string>()
     private showResolved = false
     /** How comments are shown now: the host's choice, or the reader's. */
     private layout: CommentLayout
@@ -1077,6 +1112,15 @@ class Margin {
         if (view.dom.parentElement) this.observer?.observe(view.dom.parentElement)
         storage.togglePanel = () => this.togglePanel()
         storage.floating = () => this.floating
+        storage.inline = () => this.inlineNow()
+        storage.inlineBox = (id) => this.box(id)
+        storage.focusDraft = () => {
+            if (!this.draft) return false
+            this.draft.focus()
+            return true
+        }
+        storage.closeAll = () => this.closeAll()
+        storage.leaveInline = (ids) => this.leave(ids)
         this.step()
         this.unsubscribe = this.settings?.subscribe(() => this.settingsChanged()) ?? null
         this.update()
@@ -1114,6 +1158,112 @@ class Margin {
             changed = true
         }
         if (changed) this.relayout()
+        else this.refreshInline()
+    }
+
+    // ── Within the note ──────────────────────────────────────────────────
+
+    /** Whether open comments stand within the note: floating, and asked
+     *  for (the reader's choice over the host's). */
+    private inlineNow(): boolean {
+        return this.floating && (this.settings?.chosen('comments.inline') ?? this.options.inline ?? true)
+    }
+
+    /** The box comment `id`'s card stands in within the note. */
+    private box(id: string): HTMLElement {
+        let box = this.boxes.get(id)
+        if (!box) {
+            box = el('div', 'ezco-mde-comment-inline')
+            box.contentEditable = 'false'
+            box.dataset.comment = id
+            this.boxes.set(id, box)
+        }
+        return box
+    }
+
+    /** The note drawn again with the boxes as they should be now (a layout
+     *  changed): asked for outside the view's own update. */
+    private refreshInline() {
+        queueMicrotask(() => {
+            if (this.view.isDestroyed) return
+            this.view.dispatch(this.view.state.tr.setMeta(inlineKey, true))
+            this.update()
+        })
+    }
+
+    /** The mark of comment `id` in the annotation column, where the eye is
+     *  when its card comes in. */
+    private markRect(id: string): DOMRect | null {
+        for (const mark of annotationColumn(this.view)?.querySelectorAll<HTMLElement>('.ezco-mde-comment-mark') ?? []) {
+            if ((JSON.parse(mark.dataset.comments ?? '[]') as string[]).includes(id)) return mark.getBoundingClientRect()
+        }
+        return null
+    }
+
+    /** From the mark to its place: the whole of the box brought into view
+     *  (the note scrolls for it, as for a floating card), then the box
+     *  opens from nothing to the card's height while the card grows out of
+     *  the mark, so the eye follows. */
+    private enter(id: string, box: HTMLElement, dom: HTMLElement) {
+        requestAnimationFrame(() => {
+            if (!box.isConnected) return
+            const height = box.offsetHeight
+            const still = stillness()
+            this.quietUntil = Date.now() + QUIET
+            box.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' })
+            if (still) return
+            const from = this.markRect(id)
+            const to = dom.getBoundingClientRect()
+            box.style.overflow = 'hidden'
+            box.animate([{ height: '0px' }, { height: `${height}px` }], { duration: MOTION, easing: EASE }).finished.then(() => (box.style.overflow = ''), () => (box.style.overflow = ''))
+            if (from) {
+                const dx = from.left + from.width / 2 - (to.left + to.width / 2)
+                const dy = from.top + from.height / 2 - (to.top + to.height / 2)
+                dom.animate([{ transform: `translate(${dx}px, ${dy}px) scale(0.2)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: MOTION, easing: EASE })
+            }
+        })
+    }
+
+    /** The inline cards of `ids` back into their marks and their boxes
+     *  closed, before the comments are (the boxes go with them). */
+    private leave(ids: string[]): Promise<void> {
+        const going = ids.filter((id) => this.inlined.has(id))
+        if (!going.length || stillness()) return Promise.resolve()
+        const done: Promise<unknown>[] = []
+        for (const id of going) {
+            const box = this.boxes.get(id)
+            const dom = this.cards.get(id)?.dom
+            if (!box || !dom || !box.isConnected) continue
+            const from = this.markRect(id)
+            const to = dom.getBoundingClientRect()
+            box.style.overflow = 'hidden'
+            done.push(box.animate([{ height: `${box.offsetHeight}px` }, { height: '0px' }], { duration: MOTION, easing: EASE, fill: 'forwards' }).finished)
+            if (from) {
+                const dx = from.left + from.width / 2 - (to.left + to.width / 2)
+                const dy = from.top + from.height / 2 - (to.top + to.height / 2)
+                done.push(dom.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${dx}px, ${dy}px) scale(0.2)`, opacity: 0 }], { duration: MOTION, easing: EASE, fill: 'forwards' }).finished)
+            }
+        }
+        return Promise.all(done).then(
+            () => {
+                for (const id of going) {
+                    const box = this.boxes.get(id)
+                    if (box) {
+                        for (const a of box.getAnimations({ subtree: true })) a.cancel()
+                        box.style.overflow = ''
+                    }
+                }
+            },
+            () => undefined,
+        )
+    }
+
+    /** Every open comment closed, the inline ones going out first. */
+    private closeAll(): boolean {
+        const open = this.comments.open()
+        if (!open.length) return false
+        void this.leave(open).then(() => this.editor.commands.focusComment(null))
+        return true
     }
 
     /** The panel's choices, kept: in the settings when the editor has
@@ -1254,6 +1404,7 @@ class Margin {
         this.place()
         this.headKey = ''
         this.update()
+        this.refreshInline()
     }
 
     /** What the head's chevron offers: the settings as switches (anchoring,
@@ -1479,9 +1630,11 @@ class Margin {
     /** Done looking: the card closed (`id`, over the note), or every one;
      *  the caret back in the note when none is left. */
     close(id?: string) {
-        if (id) this.editor.commands.toggleComments([id])
-        else this.editor.commands.focusComment(null)
-        if (!this.comments.open().length) this.editor.commands.focus()
+        void this.leave(id ? [id] : this.comments.open()).then(() => {
+            if (id) this.editor.commands.toggleComments([id])
+            else this.editor.commands.focusComment(null)
+            if (!this.comments.open().length) this.editor.commands.focus()
+        })
     }
 
     /** The open note's path (drafts are kept per note). */
@@ -1544,16 +1697,34 @@ class Margin {
         }
 
         const seen = new Set<string>()
+        const inline = this.inlineNow()
+        let outside = 0
         for (const info of visible) {
             let card = this.cards.get(info.id)
             if (!card) {
                 card = new Card(this, info.id)
                 this.cards.set(info.id, card)
-                this.list.append(card.dom)
                 this.observer?.observe(card.dom)
+            }
+            // Within the note, in its box (comment-inline.ts), or in the margin.
+            const within = inline && !!info.target.range && !info.target.whole
+            const host = within ? this.box(info.id) : this.list
+            if (card.dom.parentElement !== host) {
+                host.append(card.dom)
+                if (within) this.enter(info.id, host, card.dom)
+            }
+            if (within) this.inlined.add(info.id)
+            else {
+                this.inlined.delete(info.id)
+                outside++
             }
             card.update(info, state.active === info.id)
             seen.add(info.id)
+        }
+        // Within the note, nothing floats: the margin is out of the way.
+        if (this.floating && !this.dom.hidden && !outside) {
+            this.dom.hidden = true
+            if (!this.draft) this.ungrow()
         }
         // The comment looked at is the current one; an overlaid panel comes
         // back from the edge to show it.
@@ -1569,6 +1740,7 @@ class Margin {
             this.observer?.unobserve(card.dom)
             card.destroy()
             this.cards.delete(id)
+            this.inlined.delete(id)
         }
         this.schedule()
     }
@@ -1599,6 +1771,7 @@ class Margin {
                 this.place()
                 this.headKey = ''
                 this.update()
+                this.refreshInline()
                 return
             }
         }
@@ -1608,14 +1781,21 @@ class Margin {
         const frameHeight = scroller ? scroller.clientHeight : window.innerHeight
         // Capped to the frame before anything is measured, so a card is
         // placed at its real height.
-        for (const card of this.cards.values()) this.cap(card.dom, this.panel ? null : frameHeight)
+        for (const [id, card] of this.cards) {
+            if (this.inlined.has(id)) {
+                card.dom.style.maxHeight = ''
+                card.dom.classList.remove('is-capped')
+                continue
+            }
+            this.cap(card.dom, this.panel ? null : frameHeight)
+        }
         const box = this.list.getBoundingClientRect()
         const origin = box.top
         type Placed = { id: string; dom: HTMLElement; range: { from: number; to: number } | null; height: number; top: number; fixed: boolean }
         const placed: Placed[] = []
         for (const info of state.comments) {
             const card = this.cards.get(info.id)
-            if (!card || card.dom.hidden) continue
+            if (!card || card.dom.hidden || this.inlined.has(info.id)) continue
             placed.push({ id: info.id, dom: card.dom, range: info.target.whole ? null : info.target.range, height: card.dom.offsetHeight, top: 0, fixed: info.id === state.active && !state.draft })
         }
 
@@ -1750,6 +1930,12 @@ class Margin {
         this.draft?.destroy()
         this.storage.togglePanel = () => false
         this.storage.floating = () => true
+        this.storage.inline = () => false
+        this.storage.closeAll = () => false
+        this.storage.leaveInline = async () => {}
+        this.storage.focusDraft = () => false
+        this.boxes.clear()
+        this.inlined.clear()
         this.dom.remove()
         this.over.remove()
         this.column?.remove()
@@ -1764,7 +1950,7 @@ export const CommentMargin = Extension.create<CommentMarginOptions, CommentMargi
     },
 
     addStorage() {
-        return { togglePanel: () => false, floating: () => true }
+        return { togglePanel: () => false, floating: () => true, inline: () => false, inlineBox: () => document.createElement('div'), focusDraft: () => false, closeAll: () => false, leaveInline: async () => {} }
     },
 
     addCommands() {

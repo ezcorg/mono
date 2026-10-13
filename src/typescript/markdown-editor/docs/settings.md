@@ -57,7 +57,7 @@ Two reading patterns:
   whose default is the editor's (`comments.step`, `editor.font`).
 - `chosen(path) ?? option`: the files' value when there is one, else the
   host's option. For a setting whose default the host gives
-  (`comments.openOnClick`, the panel's layout).
+  (`comments.openOnClick`, `comments.inline`, the panel's layout).
 
 Every setting is reachable three ways, all of them the same files:
 

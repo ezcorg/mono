@@ -74,9 +74,12 @@ demo. So, for any change that shows:
   was clicked), and a comment's mark is a bubble icon in the annotation
   column right of the note (`.ezco-mde-annotations`, `comment-gutter.ts`),
   the only way to a comment when nothing beside the note shows them: a
-  click opens every comment on that line over the note, a second closes
-  them; a click on commented text only places the caret unless the host
-  sets `comments.openOnClick`. See the README.
+  click opens every comment on that line within the note, under its text
+  in the note's flow (`comment-inline.ts`, a widget after the block;
+  `comments.inline` off floats them over the note's edge instead), a
+  second closes them; a draft put down keeps a dashed mark of its own; a
+  click on commented text only places the caret unless the host sets
+  `comments.openOnClick`. See the README.
 - Lists: every kind round-trips as written (markers, numbers, letters,
   delimiters); a marker typed at the start of an item retypes the item
   (`lists.ts`); Backspace in an empty item removes that item and nothing
@@ -162,4 +165,20 @@ demo. So, for any change that shows:
   `@lezer/common`): the codemirror-json-schema fork's own node_modules
   held newer minors, and an extension made by another copy of
   `@codemirror/state` is not recognised by the editor's. Vite's
-  `resolve.dedupe` in both configs is the belt to those braces.
+  `resolve.dedupe` in vitest.config.ts is the belt to those braces.
+- The demo serves the workspace packages as source, so Vite pre-bundles
+  their dependencies as it finds them: a language the code block loads
+  lazily was bundled apart from the CodeMirror the block had already
+  loaded, two `@codemirror/state`, and nothing was highlighted, with no
+  error. `optimizeDeps.include` in vite.config.ts names all of CodeMirror
+  (mirroring vitest.config.ts); after changing either list, or the
+  lockfile, `rm -rf node_modules/.vite` and restart the dev server, and
+  wait for its two reloads before shooting.
+- A ProseMirror plugin that reads another plugin's state in its `apply`
+  must come after it in the state: Tiptap puts a later extension of the
+  same priority *first*, so `CommentInline` is `priority: 90` to follow
+  `Comments`. Read too early, `getState` is the previous transaction's.
+- A quoted passage is looked for in the prose first and only then in
+  code (`locateTextFragment`, `proseOf`): a fence that embeds a file
+  holding the note's own words (the demo's `src/example.ts`) used to take
+  a comment meant for the paragraph.

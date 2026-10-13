@@ -39,6 +39,7 @@ import { FileTree, FileTreeOptions } from './extensions/file-tree';
 import { Comments } from './extensions/comments';
 import { CommentMarks } from './extensions/comment-gutter';
 import { CommentMargin, type CommentLayout } from './extensions/comment-margin';
+import { CommentInline } from './extensions/comment-inline';
 import { RailToggle } from './extensions/rail';
 import { revealFragment } from './extensions/fragment';
 import { fileOperations, normalizePath, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage';
@@ -190,8 +191,10 @@ export interface CommentsSetupOptions {
      *  keeps every comment in a column beside the note, level with its
      *  text; `layout: 'panel'` (the default) in a list beside the note
      *  that scrolls on its own (`createEditor` makes the column; `mount`
-     *  puts it elsewhere). */
-    margin?: { mount?: SidebarOptions['mount']; layout?: CommentLayout } | false;
+     *  puts it elsewhere). `inline: false` floats an open comment over the
+     *  note's edge where nothing beside the note shows them, instead of
+     *  standing it within the note under its text. */
+    margin?: { mount?: SidebarOptions['mount']; layout?: CommentLayout; inline?: boolean } | false;
 }
 
 export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
@@ -494,11 +497,14 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
                         CommentMargin.configure({
                             mount: options.comments?.margin?.mount,
                             layout: options.comments?.margin?.layout ?? 'panel',
+                            inline: options.comments?.margin?.inline,
                             // A comment is written and shown in this editor, in
                             // small: the same syntax and code blocks over the
                             // same files, without the chrome around the note.
                             composer: innerSetup,
                         }),
+                        // A comment opened within the note, under its text (comment-inline.ts).
+                        CommentInline,
                     ]
                     : []),
             ]
@@ -662,6 +668,7 @@ export { Comments, commentsKey, commentAt, authorOf, commentFileName, commentsFo
 export type { CommentsOptions, CommentsStorage, CommentTarget, CommentInfo, WebAnnotation } from './extensions/comments';
 export { CommentMargin, type CommentMarginOptions } from './extensions/comment-margin';
 export { CommentMarks } from './extensions/comment-gutter';
+export { CommentInline } from './extensions/comment-inline';
 export { Callout, CalloutTitle, calloutType } from './extensions/callout';
 export { SourceView } from './extensions/source-view';
 export { MarkdownText } from './extensions/text';

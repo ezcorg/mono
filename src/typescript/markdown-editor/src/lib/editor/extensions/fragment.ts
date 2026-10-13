@@ -90,11 +90,14 @@ export function findPin(doc: PMNode, id: string): { from: number; to: number } |
 export interface DocText {
     text: string
     positions: number[]
+    /** Offsets `[from, to)` of the text that is code (a fence's lines). */
+    code: [number, number][]
 }
 
 export function docText(doc: PMNode): DocText {
     let text = ''
     const positions: number[] = []
+    const code: [number, number][] = []
     let end = -1
     doc.descendants((node, pos) => {
         if (!node.isTextblock) return true
@@ -102,6 +105,7 @@ export function docText(doc: PMNode): DocText {
             text += '\n'
             positions.push(end)
         }
+        if (node.type.spec.code) code.push([text.length, text.length + node.textContent.length])
         node.forEach((child, offset) => {
             const at = pos + 1 + offset
             const piece = child.isText ? child.text ?? '' : ((child.type.spec as { leafText?: (n: PMNode) => string }).leafText?.(child) ?? '')
@@ -111,7 +115,17 @@ export function docText(doc: PMNode): DocText {
         end = pos + node.nodeSize - 1
         return false
     })
-    return { text, positions }
+    return { text, positions, code }
+}
+
+/** `flat`'s text with its code blanked (spaces, so offsets hold): where a
+ *  quote is looked for first, so words a note has in its prose and again
+ *  in a fence (a file that quotes the note, say) are found in the prose. */
+function proseOf(flat: DocText): string | null {
+    if (!flat.code.length) return null
+    let text = flat.text
+    for (const [from, to] of flat.code) text = text.slice(0, from) + ' '.repeat(to - from) + text.slice(to)
+    return text
 }
 
 /** The offset in `docText` of the first character at or after `pos`. */
@@ -145,7 +159,10 @@ export function locateTextFragment(
 ): { from: number; to: number; exact: boolean } | null {
     const f = parseTextFragment(fragment)
     if (!f) return null
-    const match = matchTextFragment(flat.text, f, near === undefined ? undefined : textOffset(flat, near))
+    const at = near === undefined ? undefined : textOffset(flat, near)
+    // In the prose first; in the code only when the prose has no such words.
+    const prose = proseOf(flat)
+    const match = (prose && matchTextFragment(prose, f, at)) || matchTextFragment(flat.text, f, at)
     if (!match || (!approximate && !match.exact)) return null
     return { ...docRange(flat, match.from, match.to), exact: match.exact }
 }
