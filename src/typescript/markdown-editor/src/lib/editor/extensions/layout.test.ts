@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { MarkdownEditor } from '../index'
+import { memoryVfs, type VfsInterface } from '@joinezco/storage'
+import { createEditor, MarkdownEditor } from '../index'
 import {
     createTestContainer,
     createTestEditor,
@@ -98,35 +99,66 @@ describe('MarkdownEditor layout alignment', () => {
         })
 
         it('aligns the spinner right edge with the line-number column right edge', async () => {
-            const cmEditor = await getCodeblockEditor()
-            await waitForRect('.cm-toolbar-state-icon-container', cmEditor)
-            const stateIconContainer = find('.cm-toolbar-state-icon-container', cmEditor)!
+            // The spinner is the one the block's toolbar shows while a file it
+            // opens is read: an editor of its own over a vault whose read of
+            // that file is held until the spinner has been measured.
+            const store = memoryVfs({ 'note.md': '# Layout\n\n```js\nconst a = 1\n```\n', 'src/lib.ts': 'export const x = 1\n' })
+            let release = () => {}
+            const fs: VfsInterface = {
+                ...store,
+                readBytes: (path) =>
+                    path === 'src/lib.ts'
+                        ? new Promise((resolve) => {
+                              release = () => resolve(store.readBytes(path))
+                          })
+                        : store.readBytes(path),
+            }
+            const host = createTestContainer('layout-spinner')
+            const slow = createEditor({ element: host, fs: { fs, filepath: 'note.md' } })
+            try {
+                await waitFor(() => !!host.querySelector('.ezco-mde-body > .cm-editor .cm-toolbar-input'))
+                const cmEditor = host.querySelector('.ezco-mde-body > .cm-editor') as HTMLElement
+                const input = cmEditor.querySelector('.cm-toolbar-input') as HTMLInputElement
+                // The file, picked from the block's toolbar (asked again until
+                // the editor's vault has indexed it).
+                const hit = () => cmEditor.querySelector('.cm-search-result.cm-file-result') as HTMLElement | null
+                for (let i = 0; i < 30 && !hit(); i++) {
+                    input.focus()
+                    input.value = 'src/lib.ts'
+                    input.dispatchEvent(new Event('input', { bubbles: true }))
+                    await new Promise((r) => setTimeout(r, 100))
+                }
+                expect(hit()?.textContent).toContain('src/lib.ts')
+                hit()!.click()
+                await waitForRect('.cm-toolbar-state-icon-container .cm-loading', cmEditor)
+                await waitForRect('.cm-lineNumbers', cmEditor)
+                await new Promise(r => requestAnimationFrame(() => r(null)))
 
-            // Replace the glyph with a spinner element to measure its
-            // resting position — we don't depend on file-load timing.
-            const existing = stateIconContainer.querySelector('.cm-toolbar-state-icon')
-            if (existing) existing.remove()
-            const spinner = document.createElement('div')
-            spinner.className = 'cm-loading'
-            stateIconContainer.appendChild(spinner)
+                // The spinner spins: its box as drawn turns with it, up to
+                // 4px wider at the diagonal. Its resting box is what lines up.
+                const spinner = find<HTMLElement>('.cm-loading', cmEditor)!
+                spinner.getAnimations().forEach((a) => a.cancel())
+                const spinnerRect = spinner.getBoundingClientRect()
+                const lineNumbers = find('.cm-lineNumbers', cmEditor)!.getBoundingClientRect()
 
-            await waitForRect('.cm-loading', cmEditor)
-            await waitForRect('.cm-lineNumbers', cmEditor)
-            await new Promise(r => requestAnimationFrame(() => r(null)))
+                // The spinner sits inside a flex container sized to the FULL
+                // gutter width. `margin-left: auto` pushes it right, and
+                // `margin-right: calc(--cm-gutter-width - --cm-gutter-lineno-width)`
+                // pulls its right edge back off the far gutter edge onto the
+                // line-number column's right edge — so the loading indicator
+                // stays in the same column as the file-type glyph it replaces.
+                // 2px tolerance: `--cm-gutter-lineno-width` is republished from a
+                // ResizeObserver and lags the gutter's min-width widening by a hair
+                // in the headless provider (it lines up exactly once settled).
+                expect(Math.abs(spinnerRect.right - lineNumbers.right)).toBeLessThanOrEqual(2)
 
-            const spinnerRect = spinner.getBoundingClientRect()
-            const lineNumbers = find('.cm-lineNumbers', cmEditor)!.getBoundingClientRect()
-
-            // The spinner sits inside a flex container now sized to the
-            // FULL gutter width. `margin-left: auto` pushes it right, and
-            // `margin-right: calc(--cm-gutter-width - --cm-gutter-lineno-width)`
-            // pulls its right edge back off the far gutter edge onto the
-            // line-number column's right edge — so the loading indicator
-            // stays in the same column as the file-type glyph it replaces.
-            // 2px tolerance: `--cm-gutter-lineno-width` is republished from a
-            // ResizeObserver and lags the gutter's min-width widening by a hair
-            // in the headless provider (it lines up exactly once settled).
-            expect(Math.abs(spinnerRect.right - lineNumbers.right)).toBeLessThanOrEqual(2)
+                // The read done, the spinner goes and the file is in the block.
+                release()
+                await waitFor(() => !cmEditor.querySelector('.cm-loading'), 3000)
+                await waitFor(() => cmEditor.querySelector('.cm-content')?.textContent?.includes('x = 1') ?? false, 3000)
+            } finally {
+                cleanupEditor(slow, host)
+            }
         })
     })
 })

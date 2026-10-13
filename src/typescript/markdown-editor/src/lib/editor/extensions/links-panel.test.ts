@@ -30,6 +30,10 @@ async function open(path: string, files: Record<string, string> = FILES) {
     return { editor, vault, container }
 }
 
+const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
+/** `keys` with Mod held (⌘ on a Mac, Ctrl elsewhere, as `Mod-` resolves). */
+const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
+
 const panel = (container: HTMLElement) => container.querySelector('.ezco-mde-links') as HTMLElement
 const rows = (container: HTMLElement, section: 'back' | 'dangling') =>
     Array.from(
@@ -116,7 +120,7 @@ describe('Links panel', () => {
         await waitFor(() => rows(container, 'back').length === 2, 3000)
         expect(panel(container).hidden).toBe(false)
         editor.commands.focus()
-        await userEvent.keyboard('{Control>}{Shift>}l{/Shift}{/Control}')
+        await userEvent.keyboard(mod('{Shift>}l{/Shift}'))
         await waitFor(() => panel(container).hidden, 2000)
     })
 

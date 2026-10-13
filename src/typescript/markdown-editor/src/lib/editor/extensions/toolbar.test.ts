@@ -24,6 +24,15 @@ const FILES = {
     'notes/plan.md': '# Plan\n\nNothing about foxes.',
 }
 
+const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
+/** `keys` with Mod held (⌘ on a Mac, Ctrl elsewhere). */
+const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
+/** Real focus in the note, on its heading. */
+const focusNote = async (c: HTMLElement) => {
+    await userEvent.click(c.querySelector('.ezco-mde-body h1') as HTMLElement)
+    await waitFor(() => document.activeElement === c.querySelector('.ProseMirror'), 2000)
+}
+
 const input = (c: HTMLElement) => c.querySelector('.cm-toolbar-input') as HTMLInputElement
 const results = (c: HTMLElement) => [...c.querySelectorAll('.cm-search-result')] as HTMLElement[]
 const filepath = (editor: MarkdownEditor) => (editor.storage as any).persistence.options.filepath as string
@@ -49,7 +58,7 @@ describe('The toolbar as a command palette', () => {
         await waitFor(() => editor.state.doc.textBetween(editor.state.selection.from, editor.state.selection.to) === 'quokka', 3000)
     })
 
-    it('opens on ⌘P, and lists the editor’s commands after `>`', async () => {
+    it('opens on ⌘P, the input focused with nothing typed', async () => {
         const vault = await Vault.open(memoryVfs(FILES), { watch: false })
         const { editor, container } = make({
             fs: { fs: vault.fs, filepath: 'index.md' },
@@ -57,8 +66,26 @@ describe('The toolbar as a command palette', () => {
             files: vault.files,
         })
         await waitFor(() => editor.getText().includes('Start here'), 3000)
-        editor.commands.focus('end')
-        editor.commands.keyboardShortcut('Mod-Shift-p')
+        await focusNote(container)
+        await userEvent.keyboard(mod('p'))
+        expect(document.activeElement).toBe(input(container))
+        expect(input(container).value).toBe('')
+    })
+
+    it('lists the editor’s commands after ⇧⌘P (`>`), narrowed by what is typed', async () => {
+        const vault = await Vault.open(memoryVfs(FILES), { watch: false })
+        const { editor, container } = make({
+            fs: { fs: vault.fs, filepath: 'index.md' },
+            search: vault.search,
+            files: vault.files,
+        })
+        await waitFor(() => editor.getText().includes('Start here'), 3000)
+        // Real focus in the last paragraph (not `focus()`, which refocuses the
+        // note a frame later, after the key has opened the toolbar): the
+        // command chosen below acts on that block.
+        await userEvent.click(container.querySelector('.ezco-mde-body p') as HTMLElement)
+        await waitFor(() => editor.isFocused, 2000)
+        await userEvent.keyboard(mod('{Shift>}p{/Shift}'))
         expect(document.activeElement).toBe(input(container))
         expect(input(container).value).toBe('>')
         await waitFor(() => results(container).some((r) => r.textContent?.includes('> Callout')), 3000)

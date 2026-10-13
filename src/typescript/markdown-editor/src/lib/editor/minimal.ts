@@ -17,7 +17,7 @@ import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BulletList, OrderedList, OrderedListStart, DashListKeymap, TaskList } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
-import { Wikilink, WikilinkOptions } from './extensions/wikilink';
+import { Wikilink, WikilinkKeys, WikilinkOptions } from './extensions/wikilink';
 import { FrontMatter, FrontMatterDocument, FrontMatterOptions } from './extensions/front-matter';
 import { Mathematics, MathOptions } from './extensions/math';
 import { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
@@ -51,6 +51,7 @@ export function syntaxExtensions(options: SyntaxOptions): AnyExtension[] {
         options.frontMatter !== false ? FrontMatterDocument : Document,
         MarkdownText,
         Wikilink.configure({ resolver: options.links?.resolver, open: options.links?.open }),
+        WikilinkKeys,
         Embed.configure({ render: options.embeds?.render }),
         Image.configure(options.images ?? {}),
         ...(options.frontMatter !== false ? [FrontMatter.configure(options.frontMatter ?? {})] : []),

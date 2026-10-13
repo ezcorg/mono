@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { userEvent } from '@vitest/browser/context'
 import { TextSelection } from '@tiptap/pm/state'
 import { createEditor, MarkdownEditor } from '../index'
+import { createTestContainer, cleanupEditor, waitFor } from '../../../test/utils'
 
 /**
  * Boundary semantics for the inline-code mark.
@@ -29,50 +31,6 @@ describe('Inline code boundary behavior', () => {
     function pressKey(key: string) {
         const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
         editor.view.dom.dispatchEvent(event)
-    }
-
-    /**
-     * Simulate a real text-input keystroke through the
-     * contentEditable / DOM-observer path (the route an actual user
-     * key takes — *not* the same as `editor.commands.insertContent`,
-     * which goes through PM's transaction API and uses `storedMarks`).
-     *
-     * Mounts the editor onto a temporary document body, dispatches a
-     * `beforeinput` event with `inputType: insertText`, lets the
-     * browser mutate the DOM, and waits for PM's mutation observer to
-     * reconcile the change into the doc.
-     */
-    async function typeChar(ch: string): Promise<void> {
-        const dom = editor.view.dom as HTMLElement
-        // The DOM must be in the document for selection/beforeinput to
-        // work properly under chromium.
-        if (!dom.isConnected) document.body.appendChild(dom)
-        dom.focus()
-
-        // Place the browser selection at PM's selection position. PM
-        // already keeps these in sync after each transaction, but
-        // re-asserting it here protects against the test setup
-        // mutating selection out from under us.
-        const { from } = editor.state.selection
-        const domPos = editor.view.domAtPos(from)
-        const sel = window.getSelection()!
-        sel.removeAllRanges()
-        const range = document.createRange()
-        range.setStart(domPos.node, domPos.offset)
-        range.collapse(true)
-        sel.addRange(range)
-
-        const ev = new InputEvent('beforeinput', {
-            inputType: 'insertText',
-            data: ch,
-            bubbles: true,
-            cancelable: true,
-        })
-        dom.dispatchEvent(ev)
-
-        // Yield to the microtask queue so PM's mutation observer can
-        // process the DOM change.
-        await new Promise(r => requestAnimationFrame(() => r(null)))
     }
 
     describe('ArrowRight at the right edge of code at end of paragraph', () => {
@@ -176,41 +134,31 @@ describe('Inline code boundary behavior', () => {
             expect(codeType.isInSet(lastTextNode.marks)).toBeFalsy()
         })
 
-        it('real-keystroke (beforeinput) typing after ArrowRight stays outside the code mark', async () => {
-            // This goes through PM's DOM observer / `beforeinput` path
-            // — the exact route a user keystroke takes. PM's observer
-            // reads marks from the inserted DOM node, *not* from
-            // `storedMarks`, so this test catches the bug where the
-            // visible caret slips inside the `<code>` element and the
-            // browser absorbs the typed character into the code run.
-            //
-            // Skipped if `beforeinput` isn't fully wired in the test
-            // environment (some setups need a contenteditable on the
-            // document body for the event to propagate).
-            editor.commands.setContent('`ab`')
-            const codeType = editor.state.schema.marks.code
-            const endPos = editor.state.doc.content.size - 1
-            editor.view.dispatch(
-                editor.state.tr.setSelection(
-                    TextSelection.create(editor.state.doc, endPos),
-                ),
-            )
-
-            pressKey('ArrowRight')
+        it('real-keystroke typing after ArrowRight stays outside the code mark', async () => {
+            // Real keys through the browser: the character lands in the
+            // DOM where the caret is and PM's observer reads its marks from
+            // there, not from `storedMarks`. This is what catches the caret
+            // slipping inside the `<code>` element, where the browser would
+            // absorb the typed character into the code run.
+            const container = createTestContainer('inline-code-keys')
+            const mounted = createEditor({ element: container, content: '`ab`' })
             try {
-                await typeChar('x')
-            } catch {
-                // Some test envs reject synthetic InputEvents — skip.
-                return
-            }
+                // Tiptap mounts after a tick; real focus from a real click.
+                await new Promise((r) => requestAnimationFrame(r))
+                await userEvent.click(mounted.view.dom)
+                const codeType = mounted.state.schema.marks.code
+                const endPos = mounted.state.doc.content.size - 1
+                mounted.commands.setTextSelection(endPos)
+                expect(codeType.isInSet(mounted.state.selection.$from.marks())).toBeTruthy()
 
-            // If the bug is present, the doc's last text node will
-            // include the typed 'x' under the code mark. With the
-            // CSS + state-level fix in place, 'x' should be plaintext.
-            const para = editor.state.doc.firstChild!
-            const lastChild = para.lastChild!
-            if (lastChild.text?.includes('x')) {
+                await userEvent.keyboard('{ArrowRight}x')
+                await waitFor(() => mounted.storage.markdown.getMarkdown() === '`ab` x', 2000)
+                const para = mounted.state.doc.firstChild!
+                const lastChild = para.lastChild!
+                expect(lastChild.text).toBe(' x')
                 expect(codeType.isInSet(lastChild.marks)).toBeFalsy()
+            } finally {
+                cleanupEditor(mounted, container)
             }
         })
 

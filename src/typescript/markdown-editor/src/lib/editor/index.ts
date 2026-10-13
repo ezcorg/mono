@@ -650,7 +650,7 @@ export type { FileSystemOptions, FileSystemStorage, FileEvent, LoadOptions } fro
 export { ExtendedLink } from './extensions/link';
 export { Settings, settingsOf, EditorSettingsSchema, editorSettingsJsonSchema } from './settings';
 export type { SettingsOptions, SettingsStorage, EditorSettings, SettingPath } from './settings';
-export { Wikilink, wikilinkLabel } from './extensions/wikilink';
+export { Wikilink, WikilinkKeys, wikilinkLabel } from './extensions/wikilink';
 export { LinksPanel } from './extensions/links-panel';
 export { FrontMatter, FrontMatterDocument, documentId } from './extensions/front-matter';
 export type { FrontMatterOptions } from './extensions/front-matter';

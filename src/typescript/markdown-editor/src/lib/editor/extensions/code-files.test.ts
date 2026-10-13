@@ -1,7 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest'
+import { userEvent } from '@vitest/browser/context'
 import { memoryVfs, type VfsInterface } from '@joinezco/storage'
 import { createEditor, MarkdownEditor } from '../index'
 import { createTestContainer, cleanupEditor, waitFor } from '../../../test/utils'
+
+const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
+/** `keys` with Mod held (⌘ on a Mac, Ctrl elsewhere). */
+const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
 
 const created: Array<{ editor: MarkdownEditor; container: HTMLElement }> = []
 afterEach(() => {
@@ -109,5 +114,31 @@ describe('Opening files one after another', () => {
         await slow
         expect(persistence.options.filepath).toBe('main.ts')
         expect(persistence.codeView?.state.doc.toString()).toBe('export {}\n')
+    })
+})
+
+describe('A code file, used', () => {
+    it('takes real keys in its view, writes them on autosave, and ⌘Z takes them back', async () => {
+        const { fs, writes } = recorded({ 'a.md': '# A', 'main.ts': 'export const x = 1;\n' })
+        const { container, persistence } = open(fs, 'a.md')
+        await waitFor(() => !!container.querySelector('.ProseMirror')?.textContent?.includes('A'), 3000)
+        await persistence.loadFile('main.ts')
+        const content = () => container.querySelector('.cm-content') as HTMLElement
+        await waitFor(() => content()?.textContent?.includes('x = 1') ?? false, 3000)
+        await userEvent.click(content())
+        await waitFor(() => persistence.codeView.hasFocus, 2000)
+        // To the end of the file (its last, empty line), and a line typed there.
+        await userEvent.keyboard(mod('{End}') + 'const y = 2;')
+        await waitFor(() => persistence.codeView.state.doc.toString() === 'export const x = 1;\nconst y = 2;', 3000)
+        await autosave()
+        expect(await fs.readFile('main.ts')).toBe('export const x = 1;\nconst y = 2;')
+        expect(writes).toEqual(['main.ts'])
+        for (let i = 0; i < 15 && persistence.codeView.state.doc.toString() !== 'export const x = 1;\n'; i++) {
+            await userEvent.keyboard(mod('z'))
+            await new Promise((r) => setTimeout(r, 30))
+        }
+        expect(persistence.codeView.state.doc.toString()).toBe('export const x = 1;\n')
+        await autosave()
+        expect(await fs.readFile('main.ts')).toBe('export const x = 1;\n')
     })
 })

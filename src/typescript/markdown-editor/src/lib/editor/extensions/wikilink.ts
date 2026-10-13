@@ -17,7 +17,7 @@
  * it back into its source text (minus the closing bracket) to edit; ⌘/Ctrl-
  * Enter follows a link beside or under the caret.
  */
-import { Editor, InputRule, Node, mergeAttributes } from '@tiptap/core'
+import { Editor, InputRule, Node, mergeAttributes, Extension } from '@tiptap/core'
 import { NodeSelection, Plugin, PluginKey } from '@tiptap/pm/state'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import type { EditorView } from '@tiptap/pm/view'
@@ -327,15 +327,6 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
     },
 
     addKeyboardShortcuts() {
-        const linkAt = (): PMNode | null => {
-            const { selection } = this.editor.state
-            if (selection instanceof NodeSelection) return selection.node.type === this.type ? selection.node : null
-            if (!selection.empty) return null
-            const { nodeBefore, nodeAfter } = selection.$from
-            if (nodeBefore?.type === this.type) return nodeBefore
-            if (nodeAfter?.type === this.type) return nodeAfter
-            return null
-        }
         return {
             // Just after a link: turn it back into its source to edit, less the
             // closing bracket (typing `]` makes it a link again).
@@ -353,13 +344,6 @@ export const Wikilink = Node.create<WikilinkOptions, WikilinkStorage>({
                         return true
                     })
                     .run()
-            },
-            'Mod-Enter': () => {
-                const node = linkAt()
-                if (!node) return false
-                const parts = attrsOf(node)
-                void this.storage.follow(parts.target, parts.fragment)
-                return true
             },
         }
     },
@@ -500,3 +484,37 @@ class SuggestView {
         this.hide()
     }
 }
+
+/**
+ * ⌘/Ctrl+Enter on a wikilink follows it. Its own extension, above the
+ * others (StarterKit's hard break binds the same key, and a keymap
+ * registered later in the list is tried first), so the link wins when the
+ * caret is on one and the hard break keeps the key everywhere else.
+ */
+export const WikilinkKeys = Extension.create({
+    name: 'wikilinkKeys',
+    priority: 110,
+
+    addKeyboardShortcuts() {
+        return {
+            'Mod-Enter': () => {
+                const { state } = this.editor
+                const type = state.schema.nodes.wikilink
+                if (!type) return false
+                const { selection } = state
+                let node: PMNode | null = null
+                if (selection instanceof NodeSelection) node = selection.node.type === type ? selection.node : null
+                else if (selection.empty) {
+                    const { nodeBefore, nodeAfter } = selection.$from
+                    node = nodeBefore?.type === type ? nodeBefore : nodeAfter?.type === type ? nodeAfter : null
+                }
+                if (!node) return false
+                const parts = attrsOf(node)
+                const storage = (this.editor.storage as unknown as Record<string, WikilinkStorage | undefined>).wikilink
+                if (!storage) return false
+                void storage.follow(parts.target, parts.fragment)
+                return true
+            },
+        }
+    },
+})

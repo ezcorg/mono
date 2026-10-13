@@ -35,6 +35,10 @@ async function open(path = 'index.md') {
     return { editor, vault, container }
 }
 
+const MOD = /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? 'Meta' : 'Control'
+/** `keys` with Mod held (⌘ on a Mac, Ctrl elsewhere, as `Mod-` resolves). */
+const mod = (keys: string) => `{${MOD}>}${keys}{/${MOD}}`
+
 const rows = (c: HTMLElement) => [...c.querySelectorAll('.ezco-mde-files-item')] as HTMLElement[]
 const shown = (c: HTMLElement) => rows(c).map((r) => r.dataset.path)
 const row = (c: HTMLElement, path: string) => rows(c).find((r) => r.dataset.path === path)!
@@ -69,7 +73,7 @@ describe('File tree', () => {
         expect(getComputedStyle(container.querySelector('.ezco-mde-nav')!).display).toBe('none')
         expect(reads).toEqual([])
         editor.commands.focus()
-        await userEvent.keyboard('{Control>}{Shift>}e{/Shift}{/Control}')
+        await userEvent.keyboard(mod('{Shift>}e{/Shift}'))
         await waitFor(() => !tree.hidden, 2000)
         await waitFor(() => shown(container).includes('index.md'), 3000)
         expect(getComputedStyle(container.querySelector('.ezco-mde-nav')!).display).not.toBe('none')
