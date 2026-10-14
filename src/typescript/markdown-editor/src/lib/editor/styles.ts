@@ -2521,14 +2521,16 @@ export const styleModule: StyleModule = new StyleModule({
     },
     // A comment within the note (comment-inline.ts): its card in a box
     // that stands in the note's flow after the text's block, in the
-    // chrome's type, as wide as a floating card; the box grows from
-    // nothing as the card comes in from its mark (comment-margin.ts).
-    // (The class doubled: over the body's own block spacing.)
+    // chrome's type. The box is the column's whole width and the card,
+    // as wide as a floating one, stands at its left: the card slides in
+    // from the box's right edge, under the mark's column, clipped by the
+    // box as its row opens (comment-margin.ts). (The class doubled: over
+    // the body's own block spacing.)
     '.ezco-mde-body.ezco-mde-body > .ezco-mde-comment-inline, .ezco-mde-body .ezco-mde-comment-inline': {
         position: 'relative',
         'box-sizing': 'border-box',
+        width: '100%',
         margin: '8px 0 12px',
-        'max-width': 'min(480px, 100%)',
         'font-family': 'var(--ezco-mde-chrome-font)',
         'font-size': '13px',
         'line-height': 1.5,
@@ -2541,6 +2543,7 @@ export const styleModule: StyleModule = new StyleModule({
         left: 'auto',
         right: 'auto',
         width: '100%',
+        'max-width': '480px',
         'max-height': 'none',
     },
     '.ezco-mde-comment-inline .ezco-mde-comment-bubble': {

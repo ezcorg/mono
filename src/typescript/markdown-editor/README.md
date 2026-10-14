@@ -98,9 +98,11 @@ nothing beside the note showing the comments, a click on it opens every
 comment on that line as a bubble within the note, right under the block
 its text is in, in the note's own flow, so what follows moves down and
 nothing is covered (one under the other where they share a line; the note
-scrolls to show the whole bubble; the bubble grows out of its mark into
-its place and goes back into it, so the eye can follow), and a second
-click closes them. The setting `comments.inline` (off; or the host's
+scrolls to show the whole bubble; the bubble slides in sideways from under
+the mark's column, clipped at the note's edge so it passes over nothing,
+as its row opens and what follows moves down, and goes back out the same
+way, so the eye can follow from the mark), and a second click closes
+them. The setting `comments.inline` (off; or the host's
 `comments: { margin: { inline: false } }`) floats the bubbles over the
 note's edge instead, under their text and never off it, the note's end
 extended for one under the last lines. A click on the

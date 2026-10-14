@@ -55,7 +55,6 @@ import { parseTextFragment, type Reaction } from '@joinezco/vault'
 import { DELETED_BODY, RESOLVED, commentsKey, type CommentInfo, type CommentsStorage, clearNewDraft, keepDraftAnchor } from './comments'
 import { Composer } from './comment-composer'
 import { inlineKey } from './comment-inline'
-import { annotationColumn } from './comment-gutter'
 import { byline, clearDraft, draftKey, readDraft, renderReadOnly, when, writeDraft, type ReadOnlyView } from './comment-render'
 import { openReactionPicker, reactionGrid } from './emoji-picker'
 import { ContextMenu, isSeparator, type ContextMenuEntry, type ContextMenuItem } from '../ui/context-menu'
@@ -970,8 +969,25 @@ class NewComment {
     }
 }
 
-/** How long a card within the note takes to come in from its mark, or go back. */
-const MOTION = 260
+/** How long a card within the note takes to slide in from under its mark, or back out. */
+const MOTION = 300
+
+/** A box clipping its card while it moves (the row opening or shutting,
+ *  the card sliding in from the box's edge), with the bubble's shadow
+ *  spared; or not. */
+function clip(box: HTMLElement, on: boolean) {
+    box.style.overflow = on ? 'clip' : ''
+    box.style.overflowClipMargin = on ? '4px' : ''
+}
+
+/** A box's row shut: no height, and no margins either (through a box of
+ *  no height they would still hold the paragraphs apart). */
+const shut = () => ({ height: '0px', marginTop: '0px', marginBottom: '0px' })
+/** A box's margins as styled, for its row open. */
+function margins(box: HTMLElement) {
+    const { marginTop, marginBottom } = getComputedStyle(box)
+    return { marginTop, marginBottom }
+}
 
 // ── The margin ──────────────────────────────────────────────────────────────
 
@@ -1191,20 +1207,19 @@ class Margin {
         })
     }
 
-    /** The mark of comment `id` in the annotation column, where the eye is
-     *  when its card comes in. */
-    private markRect(id: string): DOMRect | null {
-        for (const mark of annotationColumn(this.view)?.querySelectorAll<HTMLElement>('.ezco-mde-comment-mark') ?? []) {
-            if ((JSON.parse(mark.dataset.comments ?? '[]') as string[]).includes(id)) return mark.getBoundingClientRect()
-        }
-        return null
+    /** How far right of its place the card of comment `id` starts, or
+     *  ends: its left edge at its box's right edge, under the mark's
+     *  column, where the eye is. */
+    private slide(box: HTMLElement, dom: HTMLElement): number {
+        return Math.max(0, box.getBoundingClientRect().right - dom.getBoundingClientRect().left)
     }
 
     /** From the mark to its place: the whole of the box brought into view
-     *  (the note scrolls for it, as for a floating card), then the box
-     *  opens from nothing to the card's height while the card grows out of
-     *  the mark, so the eye follows. */
-    private enter(id: string, box: HTMLElement, dom: HTMLElement) {
+     *  (the note scrolls for it, as for a floating card), then the card
+     *  slides in sideways from under the mark's column, clipped at the
+     *  note's edge so it passes over nothing, while its row opens from
+     *  nothing to its height and what follows moves down. */
+    private enter(_id: string, box: HTMLElement, dom: HTMLElement) {
         requestAnimationFrame(() => {
             if (!box.isConnected) return
             const height = box.offsetHeight
@@ -1212,20 +1227,15 @@ class Margin {
             this.quietUntil = Date.now() + QUIET
             box.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' })
             if (still) return
-            const from = this.markRect(id)
-            const to = dom.getBoundingClientRect()
-            box.style.overflow = 'hidden'
-            box.animate([{ height: '0px' }, { height: `${height}px` }], { duration: MOTION, easing: EASE }).finished.then(() => (box.style.overflow = ''), () => (box.style.overflow = ''))
-            if (from) {
-                const dx = from.left + from.width / 2 - (to.left + to.width / 2)
-                const dy = from.top + from.height / 2 - (to.top + to.height / 2)
-                dom.animate([{ transform: `translate(${dx}px, ${dy}px) scale(0.2)`, opacity: 0 }, { transform: 'none', opacity: 1 }], { duration: MOTION, easing: EASE })
-            }
+            const dx = this.slide(box, dom)
+            clip(box, true)
+            box.animate([shut(), { height: `${height}px`, ...margins(box) }], { duration: MOTION, easing: EASE }).finished.then(() => clip(box, false), () => clip(box, false))
+            dom.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: MOTION, easing: EASE })
         })
     }
 
-    /** The inline cards of `ids` back into their marks and their boxes
-     *  closed, before the comments are (the boxes go with them). */
+    /** The inline cards of `ids` back out under the mark's column and
+     *  their rows closed, before the comments are (the boxes go with them). */
     private leave(ids: string[]): Promise<void> {
         const going = ids.filter((id) => this.inlined.has(id))
         if (!going.length || stillness()) return Promise.resolve()
@@ -1234,15 +1244,10 @@ class Margin {
             const box = this.boxes.get(id)
             const dom = this.cards.get(id)?.dom
             if (!box || !dom || !box.isConnected) continue
-            const from = this.markRect(id)
-            const to = dom.getBoundingClientRect()
-            box.style.overflow = 'hidden'
-            done.push(box.animate([{ height: `${box.offsetHeight}px` }, { height: '0px' }], { duration: MOTION, easing: EASE, fill: 'forwards' }).finished)
-            if (from) {
-                const dx = from.left + from.width / 2 - (to.left + to.width / 2)
-                const dy = from.top + from.height / 2 - (to.top + to.height / 2)
-                done.push(dom.animate([{ transform: 'none', opacity: 1 }, { transform: `translate(${dx}px, ${dy}px) scale(0.2)`, opacity: 0 }], { duration: MOTION, easing: EASE, fill: 'forwards' }).finished)
-            }
+            const dx = this.slide(box, dom)
+            clip(box, true)
+            done.push(box.animate([{ height: `${box.offsetHeight}px`, ...margins(box) }, shut()], { duration: MOTION, easing: EASE, fill: 'forwards' }).finished)
+            done.push(dom.animate([{ transform: 'none' }, { transform: `translateX(${dx}px)` }], { duration: MOTION, easing: EASE, fill: 'forwards' }).finished)
         }
         return Promise.all(done).then(
             () => {
@@ -1250,7 +1255,7 @@ class Margin {
                     const box = this.boxes.get(id)
                     if (box) {
                         for (const a of box.getAnimations({ subtree: true })) a.cancel()
-                        box.style.overflow = ''
+                        clip(box, false)
                     }
                 }
             },

@@ -32,8 +32,9 @@ touch, IME composition, LSP in code blocks, the outline following edited
 headings. Added today:
 
 - The animations of a comment coming into the note and going back (the
-  box's height, the card's travel from its mark): the tests wait for the
-  states on either side and never measure a frame between.
+  row's height and margins, the card's slide from under the mark's
+  column) are measured at their start, half way and at rest by pausing
+  them; the scroll that brings the row into view is not.
 - An inline comment under text in a list item, a table cell or a quote:
   the widget goes after the innermost block (`$to.after($to.depth)`),
   so in a list it stands inside the item; nothing measures that.
@@ -46,7 +47,7 @@ headings. Added today:
 
 `comments.inline` (default on) stands open comments in the note's flow
 (`comment-inline.ts`, the box; `comment-margin.ts` hosts the card and
-animates it from its mark). Left open:
+slides it in from under its mark). Left open:
 
 - Keyboard: the card is reached by a click or its mark; Tab from the
   note does not enter the widget (ProseMirror skips it). A key from the
@@ -54,8 +55,9 @@ animates it from its mark). Left open:
 - Selection: a selection dragged across the box skips it
   (`ignoreSelection`); copying such a range copies the note alone, which
   is right, but the box flashes no selection colour of its own.
-- The box is `max-width: min(480px, 100%)` at the note's left: a reader
-  may prefer it at the text's end, as the composer is. A setting if asked.
+- The box is the column's width and its card (`max-width: 480px`)
+  stands at the note's left: a reader may prefer it at the text's end,
+  under the mark, as the composer is. A setting if asked.
 - Printing: the box prints with the note. Probably wanted; not decided.
 - `comments.inline` off is the floating card as before; the setting could
   go once the inline form has been lived with, taking the floating code

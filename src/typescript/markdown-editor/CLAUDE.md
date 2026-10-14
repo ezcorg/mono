@@ -182,3 +182,8 @@ demo. So, for any change that shows:
   code (`locateTextFragment`, `proseOf`): a fence that embeds a file
   holding the note's own words (the demo's `src/example.ts`) used to take
   a comment meant for the paragraph.
+- A row animated shut by `height` alone still holds its neighbours
+  apart: the margins of a box of no height collapse through it. Animate
+  `marginTop`/`marginBottom` to 0 with the height (`shut()` in
+  `comment-margin.ts`), and clip with `overflow: clip` plus an
+  `overflow-clip-margin` for the bubble's shadow, not `hidden`.

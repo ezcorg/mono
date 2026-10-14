@@ -884,7 +884,11 @@ describe('Within the note', () => {
         // What follows moved down by the box: nothing is covered.
         expect(p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom).toBeGreaterThan(gap + b.height - 1)
         for (const p of editor.view.dom.querySelectorAll(':scope > p')) expect(overlap(p.getBoundingClientRect(), b)).toBe(false)
-        expect(b.width).toBeLessThanOrEqual(480)
+        // The box is the column's width; the card in it as wide as a floating one, at the left.
+        expect(b.width).toBeCloseTo(p2.getBoundingClientRect().width, 0)
+        const c = card(container, first).getBoundingClientRect()
+        expect(c.width).toBeLessThanOrEqual(480)
+        expect(c.left).toBeCloseTo(b.left, 0)
         expect(getComputedStyle(card(container, first)).position).toBe('relative')
         // The card is the chrome's, not the note's: its own face, at the chrome's size.
         expect(getComputedStyle(box).fontSize).toBe('13px')
@@ -900,6 +904,67 @@ describe('Within the note', () => {
         expect(p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom).toBeCloseTo(gap, 0)
         expect(getMarkdownContent(editor)).toBe(markdown)
         await waitFor(() => editor.isFocused, 2000)
+    })
+
+    it('slides the card in sideways from under the mark’s column as its row opens, and back out when it closes', async () => {
+        const { editor, container, comments } = await open(900, 'float')
+        await waitFor(() => marks(container).length === 3, 3000)
+        const first = idOf(comments, 'First.')
+        const p3 = paragraphOf(editor, 'Paragraph 3 says')
+        const p3Top = p3.getBoundingClientRect().top
+        markOfIn(container, first).click()
+        await waitFor(() => visibleCards(container).length === 1, 2000)
+        const box = card(container, first).parentElement as HTMLElement
+        const moving = () => box.getAnimations({ subtree: true })
+        await waitFor(() => moving().length === 2, 2000)
+        for (const a of moving()) a.pause()
+        // At the start: the row is shut (what follows has not moved), the
+        // card is wholly right of the box, clipped, its left edge at the
+        // box's right edge, right under the mark's column.
+        for (const a of moving()) a.currentTime = 0
+        await raf(1)
+        let b = box.getBoundingClientRect()
+        let c = card(container, first).getBoundingClientRect()
+        const mark = markOfIn(container, first).getBoundingClientRect()
+        expect(b.height).toBe(0)
+        expect(p3.getBoundingClientRect().top).toBeCloseTo(p3Top, 0)
+        expect(c.left).toBeCloseTo(b.right, 0)
+        expect(c.left).toBeLessThanOrEqual(mark.left)
+        expect(mark.left - c.left).toBeLessThan(40)
+        expect(getComputedStyle(box).overflow).toBe('clip')
+        expect(getComputedStyle(card(container, first)).opacity).toBe('1')
+        // Half way: part of the way in, at full size, in a row part open.
+        for (const a of moving()) a.currentTime = 150
+        await raf(1)
+        b = box.getBoundingClientRect()
+        c = card(container, first).getBoundingClientRect()
+        expect(c.left).toBeGreaterThan(b.left + 1)
+        expect(c.left).toBeLessThan(b.right - 1)
+        expect(b.height).toBeGreaterThan(0)
+        expect(c.width).toBeLessThanOrEqual(480)
+        // At rest: in place at the box's left, the row open, nothing clipped.
+        for (const a of moving()) a.finish()
+        await frames()
+        b = box.getBoundingClientRect()
+        c = card(container, first).getBoundingClientRect()
+        expect(c.left).toBeCloseTo(b.left, 0)
+        expect(b.height).toBeGreaterThan(c.height - 1)
+        expect(getComputedStyle(box).overflow).toBe('visible')
+        expect(p3.getBoundingClientRect().top).toBeGreaterThan(p3Top + c.height - 1)
+        // Closing: the same way back out, the row shutting, before the box goes.
+        card(container, first).focus()
+        await userEvent.keyboard('{Escape}')
+        await waitFor(() => moving().length === 2, 2000)
+        for (const a of moving()) a.pause()
+        for (const a of moving()) a.currentTime = 150
+        await raf(1)
+        b = box.getBoundingClientRect()
+        c = card(container, first).getBoundingClientRect()
+        expect(c.left).toBeGreaterThan(b.left + 1)
+        expect(b.height).toBeLessThan(box.scrollHeight)
+        for (const a of moving()) a.finish()
+        await waitFor(() => comments.active() === null && !editor.view.dom.querySelector('.ezco-mde-comment-inline'), 3000)
+        expect(p3.getBoundingClientRect().top).toBeCloseTo(p3Top, 0)
     })
 
     it('opens two comments on a line one under the other within the note, and a click elsewhere closes them', async () => {
