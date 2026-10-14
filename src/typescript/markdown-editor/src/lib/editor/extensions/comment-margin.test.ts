@@ -57,7 +57,7 @@ async function open(width: number, layout: Layout | undefined, files = FILES, au
 /** Three frames, and every animation in the cards ended. */
 const frames = async (n = 3) => {
     await raf(n)
-    const moving = [...document.querySelectorAll('.ezco-mde-comment-card')].flatMap((c) => c.getAnimations({ subtree: true }))
+    const moving = [...document.querySelectorAll('.ezco-mde-comment-card, .ezco-mde-comment-inline, .ezco-mde-beside')].flatMap((c) => c.getAnimations({ subtree: true }))
     await Promise.all(moving.map((a) => a.finished.catch(() => {})))
 }
 /** The editor's margin: in its container, or, a panel over the note's edge, in its frame on the page. */
@@ -164,12 +164,13 @@ describe('Comments float over the note', () => {
         await frames()
         const box = visibleCards(container)[0].getBoundingClientRect()
         const text = comments.comments().find((c) => c.id === second)!.target.range!
-        const end = editor.view.coordsAtPos(text.to, -1).bottom
-        expect(box.top).toBeGreaterThanOrEqual(end)
-        expect(box.top - end).toBeLessThan(12)
+        // Beside its text: level with the line it starts on, right of the text's column.
+        const start = editor.view.coordsAtPos(text.from, 1)
+        expect(Math.abs(box.top - start.top)).toBeLessThan(start.bottom - start.top + 12)
+        expect(box.left).toBeGreaterThan(start.right)
         expect(box.right).toBeLessThanOrEqual(container.getBoundingClientRect().right)
         expect(editor.view.dom.getBoundingClientRect().width).toBe(noteWidth)
-        // Within the note, under its text, in the note's flow (the margin
+        // Within the note, beside its text, in the note's flow (the margin
         // has nothing to show): the test below measures what moves.
         expect(editor.view.dom.contains(visibleCards(container)[0])).toBe(true)
         expect(margin(container).hidden).toBe(true)
@@ -211,7 +212,7 @@ describe('Comments float over the note', () => {
         await userEvent.keyboard('{Escape}')
         await waitFor(() => comments.active() === null, 2000)
         expect(margin(container).hidden).toBe(true)
-        expect(editor.isFocused).toBe(true)
+        await waitFor(() => editor.isFocused, 2000)
         // Open again, a click elsewhere in the note closes what is open.
         markOf(second).click()
         await waitFor(() => visibleCards(container).length === 2, 2000)
@@ -736,13 +737,14 @@ describe('Writing', () => {
         await viaHeadMenu(container, 'Hide comments panel')
         await waitFor(() => margin(container).classList.contains('is-floating'), 3000)
         expect(container.querySelector('.ezco-mde-comments')).toBeNull()
-        // Back within the note, under its text again.
+        // Back within the note, beside its text again.
         expect(margin(container).style.width).toBe('')
         await waitFor(() => !!card(container, first) && editor.view.dom.contains(card(container, first)), 2000)
         await frames()
         const box = card(container, first).getBoundingClientRect()
-        const end = editor.view.coordsAtPos(comments.comments().find((c) => c.id === first)!.target.range!.to, -1)
-        expect(box.top).toBeGreaterThanOrEqual(end.bottom)
+        const start = editor.view.coordsAtPos(comments.comments().find((c) => c.id === first)!.target.range!.from, 1)
+        expect(Math.abs(box.top - start.top)).toBeLessThan(start.bottom - start.top + 12)
+        expect(box.left).toBeGreaterThan(start.right)
         expect(editor.commands.toggleCommentsPanel()).toBe(true)
         await waitFor(() => margin(container).classList.contains('is-panel'), 3000)
     })
@@ -859,8 +861,22 @@ describe('Within the note', () => {
         const { node } = editor.view.domAtPos(rangeOf(editor, text).from)
         return (node instanceof HTMLElement ? node : node.parentElement!).closest('p') as HTMLElement
     }
+    /** The right edge of a block's own text (not of a box in it). */
+    const textRight = (block: HTMLElement) => {
+        let right = -Infinity
+        const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT)
+        const range = document.createRange()
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (node.parentElement?.closest('.ezco-mde-comment-inline')) continue
+            range.selectNodeContents(node)
+            for (const r of range.getClientRects()) if (r.width > 0) right = Math.max(right, r.right)
+        }
+        return right
+    }
+    const lineTop = (editor: MarkdownEditor, text: string) => editor.view.coordsAtPos(rangeOf(editor, text).from).top
+    const lineHeight = (block: HTMLElement) => parseFloat(getComputedStyle(block).lineHeight)
 
-    it('stands an open comment within the note under its text, moving what follows down, and leaves the Markdown alone', async () => {
+    it('stands an open comment beside its text, the paragraph in one column and the card in the other, and leaves the Markdown alone', async () => {
         const { editor, container, comments } = await open(900, 'float')
         await waitFor(() => marks(container).length === 3, 3000)
         const first = idOf(comments, 'First.')
@@ -868,27 +884,31 @@ describe('Within the note', () => {
         const p2 = paragraphOf(editor, 'Paragraph 2 says')
         const p3 = paragraphOf(editor, 'Paragraph 3 says')
         const gap = p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom
+        const wide = p2.getBoundingClientRect()
         markOfIn(container, first).click()
         await waitFor(() => visibleCards(container).length === 1, 2000)
         await frames()
         const box = card(container, first).parentElement as HTMLElement
-        // In a box of the note's own, right after the paragraph, before the next.
+        // In a box of the note's own, in the paragraph, which is a row now.
         expect(box.classList.contains('ezco-mde-comment-inline')).toBe(true)
-        expect(box.parentElement).toBe(editor.view.dom)
-        expect(box.previousElementSibling).toBe(p2)
-        expect(box.nextElementSibling).toBe(p3)
+        expect(box.parentElement).toBe(p2)
+        expect(p2.classList.contains('ezco-mde-beside')).toBe(true)
         expect(box.getAttribute('contenteditable')).toBe('false')
         const b = box.getBoundingClientRect()
-        expect(b.top).toBeGreaterThanOrEqual(p2.getBoundingClientRect().bottom)
-        expect(p3.getBoundingClientRect().top).toBeGreaterThanOrEqual(b.bottom)
-        // What follows moved down by the box: nothing is covered.
-        expect(p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom).toBeGreaterThan(gap + b.height - 1)
-        for (const p of editor.view.dom.querySelectorAll(':scope > p')) expect(overlap(p.getBoundingClientRect(), b)).toBe(false)
-        // The box is the column's width; the card in it as wide as a floating one, at the left.
-        expect(b.width).toBeCloseTo(p2.getBoundingClientRect().width, 0)
-        const c = card(container, first).getBoundingClientRect()
-        expect(c.width).toBeLessThanOrEqual(480)
-        expect(c.left).toBeCloseTo(b.left, 0)
+        const p = p2.getBoundingClientRect()
+        // The card in the right column, half the paragraph at most, the text in the left one.
+        expect(b.width).toBeLessThanOrEqual(300)
+        expect(b.width).toBeGreaterThan(200)
+        expect(b.right).toBeCloseTo(p.right, 0)
+        expect(textRight(p2)).toBeLessThanOrEqual(b.left - 8)
+        expect(parseFloat(getComputedStyle(p2).paddingRight)).toBeCloseTo(b.width + 16, 0)
+        expect(p.width).toBeCloseTo(wide.width, 0)
+        // Level with the line its text starts on, in the paragraph, which holds it; what follows is below it.
+        expect(Math.abs(b.top - lineTop(editor, 'Paragraph 2 says'))).toBeLessThan(lineHeight(p2))
+        expect(b.top).toBeGreaterThanOrEqual(p.top)
+        expect(p.bottom).toBeGreaterThanOrEqual(b.bottom - 1)
+        expect(p3.getBoundingClientRect().top).toBeGreaterThanOrEqual(p.bottom)
+        for (const other of editor.view.dom.querySelectorAll(':scope > p')) if (other !== p2) expect(overlap(other.getBoundingClientRect(), b)).toBe(false)
         expect(getComputedStyle(card(container, first)).position).toBe('relative')
         // The card is the chrome's, not the note's: its own face, at the chrome's size.
         expect(getComputedStyle(box).fontSize).toBe('13px')
@@ -897,61 +917,67 @@ describe('Within the note', () => {
         expect(getMarkdownContent(editor)).toBe(markdown)
         expect(editor.state.doc.textContent).not.toContain('First.')
         expect(markOfIn(container, first).classList.contains('is-open')).toBe(true)
-        // Escape in the card: the box goes, the paragraphs close up, the note has the focus.
+        // Escape in the card: the column is given back, the paragraphs are as they were, the note has the focus.
         card(container, first).focus()
         await userEvent.keyboard('{Escape}')
         await waitFor(() => comments.active() === null && !editor.view.dom.querySelector('.ezco-mde-comment-inline'), 3000)
+        expect(p2.classList.contains('ezco-mde-beside')).toBe(false)
+        expect(p2.style.paddingRight).toBe('')
+        expect(p2.style.minHeight).toBe('')
+        expect(p2.getBoundingClientRect().height).toBeCloseTo(wide.height, 0)
         expect(p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom).toBeCloseTo(gap, 0)
         expect(getMarkdownContent(editor)).toBe(markdown)
         await waitFor(() => editor.isFocused, 2000)
     })
 
-    it('slides the card in sideways from under the mark’s column as its row opens, and back out when it closes', async () => {
+    it('slides the card in from under the mark as the paragraph narrows into its column, and back out as the column is given back', async () => {
         const { editor, container, comments } = await open(900, 'float')
         await waitFor(() => marks(container).length === 3, 3000)
         const first = idOf(comments, 'First.')
+        const p2 = paragraphOf(editor, 'Paragraph 2 says')
         const p3 = paragraphOf(editor, 'Paragraph 3 says')
         const p3Top = p3.getBoundingClientRect().top
+        const wide = p2.getBoundingClientRect()
         markOfIn(container, first).click()
         await waitFor(() => visibleCards(container).length === 1, 2000)
         const box = card(container, first).parentElement as HTMLElement
-        const moving = () => box.getAnimations({ subtree: true })
+        const moving = () => p2.getAnimations({ subtree: true }).filter((a) => a.playState !== 'finished')
         await waitFor(() => moving().length === 2, 2000)
         for (const a of moving()) a.pause()
-        // At the start: the row is shut (what follows has not moved), the
-        // card is wholly right of the box, clipped, its left edge at the
-        // box's right edge, right under the mark's column.
+        // At the start: the paragraph as it was, at its full width, the
+        // card wholly right of it, clipped, level with the mark's line.
         for (const a of moving()) a.currentTime = 0
         await raf(1)
         let b = box.getBoundingClientRect()
-        let c = card(container, first).getBoundingClientRect()
+        let p = p2.getBoundingClientRect()
         const mark = markOfIn(container, first).getBoundingClientRect()
-        expect(b.height).toBe(0)
+        expect(parseFloat(getComputedStyle(p2).paddingRight)).toBe(0)
+        expect(p.height).toBeCloseTo(wide.height, 0)
         expect(p3.getBoundingClientRect().top).toBeCloseTo(p3Top, 0)
-        expect(c.left).toBeCloseTo(b.right, 0)
-        expect(c.left).toBeLessThanOrEqual(mark.left)
-        expect(mark.left - c.left).toBeLessThan(40)
-        expect(getComputedStyle(box).overflow).toBe('clip')
-        expect(getComputedStyle(card(container, first)).opacity).toBe('1')
-        // Half way: part of the way in, at full size, in a row part open.
+        expect(b.left).toBeGreaterThanOrEqual(p.right)
+        expect(Math.abs(b.left - mark.left)).toBeLessThan(32)
+        expect(Math.abs(b.top - mark.top)).toBeLessThan(lineHeight(p2))
+        expect(getComputedStyle(p2).overflow).toBe('clip')
+        // Half way: the column part open and the text in it, the card part way in.
         for (const a of moving()) a.currentTime = 150
         await raf(1)
         b = box.getBoundingClientRect()
-        c = card(container, first).getBoundingClientRect()
-        expect(c.left).toBeGreaterThan(b.left + 1)
-        expect(c.left).toBeLessThan(b.right - 1)
-        expect(b.height).toBeGreaterThan(0)
-        expect(c.width).toBeLessThanOrEqual(480)
-        // At rest: in place at the box's left, the row open, nothing clipped.
+        p = p2.getBoundingClientRect()
+        const pad = parseFloat(getComputedStyle(p2).paddingRight)
+        expect(pad).toBeGreaterThan(0)
+        expect(pad).toBeLessThan(b.width + 16)
+        expect(b.left).toBeLessThan(p.right)
+        expect(b.right).toBeGreaterThan(p.right)
+        expect(textRight(p2)).toBeLessThanOrEqual(p.right - pad + 1)
+        // At rest: the card in its column, the paragraph holding it, nothing clipped.
         for (const a of moving()) a.finish()
         await frames()
         b = box.getBoundingClientRect()
-        c = card(container, first).getBoundingClientRect()
-        expect(c.left).toBeCloseTo(b.left, 0)
-        expect(b.height).toBeGreaterThan(c.height - 1)
-        expect(getComputedStyle(box).overflow).toBe('visible')
-        expect(p3.getBoundingClientRect().top).toBeGreaterThan(p3Top + c.height - 1)
-        // Closing: the same way back out, the row shutting, before the box goes.
+        p = p2.getBoundingClientRect()
+        expect(b.right).toBeCloseTo(p.right, 0)
+        expect(parseFloat(getComputedStyle(p2).paddingRight)).toBeCloseTo(b.width + 16, 0)
+        expect(p.bottom).toBeGreaterThanOrEqual(b.bottom - 1)
+        // Closing: the same way back out, the column closing behind it.
         card(container, first).focus()
         await userEvent.keyboard('{Escape}')
         await waitFor(() => moving().length === 2, 2000)
@@ -959,30 +985,66 @@ describe('Within the note', () => {
         for (const a of moving()) a.currentTime = 150
         await raf(1)
         b = box.getBoundingClientRect()
-        c = card(container, first).getBoundingClientRect()
-        expect(c.left).toBeGreaterThan(b.left + 1)
-        expect(b.height).toBeLessThan(box.scrollHeight)
+        p = p2.getBoundingClientRect()
+        expect(b.right).toBeGreaterThan(p.right + 1)
+        expect(parseFloat(getComputedStyle(p2).paddingRight)).toBeLessThan(b.width + 16)
+        expect(parseFloat(getComputedStyle(p2).paddingRight)).toBeGreaterThan(0)
         for (const a of moving()) a.finish()
         await waitFor(() => comments.active() === null && !editor.view.dom.querySelector('.ezco-mde-comment-inline'), 3000)
         expect(p3.getBoundingClientRect().top).toBeCloseTo(p3Top, 0)
+        expect(p2.style.paddingRight).toBe('')
     })
 
-    it('opens two comments on a line one under the other within the note, and a click elsewhere closes them', async () => {
+    it('opens two comments on a paragraph one under the other beside it, and a click elsewhere closes them', async () => {
         const { editor, container, comments } = await open(900, 'float')
         await waitFor(() => marks(container).length === 3, 3000)
         const second = idOf(comments, 'Second, a longer comment that wraps onto a few lines in the margin to take room.')
         markOfIn(container, second).click()
         await waitFor(() => visibleCards(container).length === 2, 2000)
         await frames()
-        const [upper, lower] = visibleCards(container).map((c) => c.getBoundingClientRect()).sort((a, b) => a.top - b.top)
-        expect(lower.top).toBeGreaterThanOrEqual(upper.bottom)
         const p3 = paragraphOf(editor, 'Paragraph 3 says')
         const p4 = paragraphOf(editor, 'Paragraph 4 says')
-        expect(upper.top).toBeGreaterThanOrEqual(p3.getBoundingClientRect().bottom)
-        expect(p4.getBoundingClientRect().top).toBeGreaterThanOrEqual(lower.bottom)
+        const [upper, lower] = visibleCards(container).map((c) => c.getBoundingClientRect()).sort((a, b) => a.top - b.top)
+        const p = p3.getBoundingClientRect()
+        expect(lower.top).toBeGreaterThanOrEqual(upper.bottom)
+        expect(upper.top).toBeGreaterThanOrEqual(p.top)
+        expect(p.bottom).toBeGreaterThanOrEqual(lower.bottom - 1)
+        expect(textRight(p3)).toBeLessThanOrEqual(Math.min(upper.left, lower.left) - 8)
+        expect(p4.getBoundingClientRect().top).toBeGreaterThanOrEqual(p.bottom)
         await userEvent.click(editor.view.dom.querySelector('h1') as HTMLElement)
         await waitFor(() => comments.active() === null && visibleCards(container).length === 0, 3000)
         expect(editor.view.dom.querySelector('.ezco-mde-comment-inline')).toBeNull()
+        expect(p3.classList.contains('ezco-mde-beside')).toBe(false)
+        expect(p3.style.paddingRight).toBe('')
+    })
+
+    it('stands the card under the paragraph instead where the reader asks, moving what follows down', async () => {
+        const { editor, container, comments } = await open(900, 'float')
+        await settingsOf(editor).set('comments.beside', false)
+        const first = idOf(comments, 'First.')
+        const p2 = paragraphOf(editor, 'Paragraph 2 says')
+        const p3 = paragraphOf(editor, 'Paragraph 3 says')
+        const gap = p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom
+        editor.commands.focusComment(first)
+        await waitFor(() => !!card(container, first), 2000)
+        await frames()
+        const box = card(container, first).parentElement as HTMLElement
+        // In a box of the note's own after the paragraph, before the next, the column's width; the card in it at the left.
+        expect(box.previousElementSibling).toBe(p2)
+        expect(box.nextElementSibling).toBe(p3)
+        expect(p2.classList.contains('ezco-mde-beside')).toBe(false)
+        const b = box.getBoundingClientRect()
+        expect(b.width).toBeCloseTo(p2.getBoundingClientRect().width, 0)
+        expect(card(container, first).getBoundingClientRect().width).toBeLessThanOrEqual(480)
+        expect(card(container, first).getBoundingClientRect().left).toBeCloseTo(b.left, 0)
+        expect(p3.getBoundingClientRect().top - p2.getBoundingClientRect().bottom).toBeGreaterThan(gap + b.height - 1)
+        for (const other of editor.view.dom.querySelectorAll(':scope > p')) expect(overlap(other.getBoundingClientRect(), b)).toBe(false)
+        // Beside again when asked.
+        await settingsOf(editor).set('comments.beside', true)
+        await waitFor(() => card(container, first)?.parentElement?.parentElement === p2, 3000)
+        await frames()
+        expect(p2.classList.contains('ezco-mde-beside')).toBe(true)
+        expect(editor.view.dom.querySelector(':scope > .ezco-mde-comment-inline')).toBeNull()
     })
 
     it('writes a reply within the note without touching the note', async () => {

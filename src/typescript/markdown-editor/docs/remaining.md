@@ -32,12 +32,13 @@ touch, IME composition, LSP in code blocks, the outline following edited
 headings. Added today:
 
 - The animations of a comment coming into the note and going back (the
-  row's height and margins, the card's slide from under the mark's
-  column) are measured at their start, half way and at rest by pausing
-  them; the scroll that brings the row into view is not.
-- An inline comment under text in a list item, a table cell or a quote:
-  the widget goes after the innermost block (`$to.after($to.depth)`),
-  so in a list it stands inside the item; nothing measures that.
+  block's padding and height, the card's slide from under the mark) are
+  measured at their start, half way and at rest by pausing them; the
+  scroll that brings the card into view is not, nor is the under-the-block
+  form's motion.
+- An inline comment on text in a list item or a quote (beside the
+  item's paragraph, narrower), in a table cell or code (under the block,
+  as the cell or the fence cannot be narrowed): nothing measures those.
 - The draft mark when the note's words change under a kept draft (the
   anchor is a text fragment: found again when the words are, dropped
   when they are not): only the found case is tested.
@@ -45,9 +46,12 @@ headings. Added today:
 
 ## Comments within the note: the experiment's open ends
 
-`comments.inline` (default on) stands open comments in the note's flow
-(`comment-inline.ts`, the box; `comment-margin.ts` hosts the card and
-slides it in from under its mark). Left open:
+`comments.inline` (default on) stands open comments in the note's flow,
+beside their text (`comments.beside`, default on: `comment-inline.ts`
+classes and pads the block through a node decoration and puts the box at
+its start; `comment-margin.ts` hosts the card, measures the line and the
+card, and slides it in from under its mark as the column opens) or under
+the block. Left open:
 
 - Keyboard: the card is reached by a click or its mark; Tab from the
   note does not enter the widget (ProseMirror skips it). A key from the
@@ -55,9 +59,15 @@ slides it in from under its mark). Left open:
 - Selection: a selection dragged across the box skips it
   (`ignoreSelection`); copying such a range copies the note alone, which
   is right, but the box flashes no selection colour of its own.
-- The box is the column's width and its card (`max-width: 480px`)
-  stands at the note's left: a reader may prefer it at the text's end,
-  under the mark, as the composer is. A setting if asked.
+- The card's column is half the block, up to 300px: a short paragraph
+  beside a tall card leaves a hole under its text (the block grows to
+  hold the card); a deep list item gets a narrow card. A floor on the
+  text's column (falling back to under the block) if asked.
+- As the column opens the paragraph's words move between lines for the
+  300ms: inherent in a slide that pushes text aside. A cross-fade of the
+  text, or narrowing first and sliding after, if it reads as jitter.
+- Under the block, the card stands at the note's left across the column's
+  width: a reader may prefer it at the text's end. A setting if asked.
 - Printing: the box prints with the note. Probably wanted; not decided.
 - `comments.inline` off is the floating card as before; the setting could
   go once the inline form has been lived with, taking the floating code

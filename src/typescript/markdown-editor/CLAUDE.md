@@ -74,10 +74,14 @@ demo. So, for any change that shows:
   was clicked), and a comment's mark is a bubble icon in the annotation
   column right of the note (`.ezco-mde-annotations`, `comment-gutter.ts`),
   the only way to a comment when nothing beside the note shows them: a
-  click opens every comment on that line within the note, under its text
-  in the note's flow (`comment-inline.ts`, a widget after the block;
-  `comments.inline` off floats them over the note's edge instead), a
-  second closes them; a draft put down keeps a dashed mark of its own; a
+  click opens every comment on that line within the note, beside its
+  text, the block narrowed into one column and the card in the other,
+  level with the text's line (`comment-inline.ts`: a node decoration
+  classes and pads the block, a widget at its start holds the card, the
+  margin measures; under the block where it cannot be narrowed, code or a
+  table's cell, or `comments.beside` is off; `comments.inline` off floats
+  them over the note's edge instead), a second closes them; a draft put
+  down keeps a dashed mark of its own; a
   click on commented text only places the caret unless the host sets
   `comments.openOnClick`. See the README.
 - Lists: every kind round-trips as written (markers, numbers, letters,
@@ -187,3 +191,12 @@ demo. So, for any change that shows:
   `marginTop`/`marginBottom` to 0 with the height (`shut()` in
   `comment-margin.ts`), and clip with `overflow: clip` plus an
   `overflow-clip-margin` for the bubble's shadow, not `hidden`.
+- A style set straight on a block's element in the editable is a DOM
+  change ProseMirror observes (a node with content ignores no mutation):
+  it marks the block dirty and draws it again, without the style. A
+  block's padding and height for a card beside it go through the node
+  decoration's `style` (`rowStyle`), applied with the view's observer
+  stopped; the margin measures, and dispatches when the numbers change.
+  Only a widget's own box may be styled directly (its mutations are
+  ignored). WAAPI animations are no mutation, so a row can still be
+  animated on the element.

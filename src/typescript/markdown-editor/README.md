@@ -40,8 +40,9 @@ of rail, gutter, column and comments is centred as one in a wider host, so
 the gutter stays at the text's edge. Right of the note stands the
 annotation column, with a mark on the first line of each comment's text.
 The note's comments take what is past that, in a panel beside the note,
-and open from their marks within the note, each under its text, where
-there is no such room (or when the panel has been put away; the setting
+and open from their marks within the note, each beside its text with the
+paragraph in one column and the comment in the other, where there is no
+such room (or when the panel has been put away; the setting
 `comments.inline: false` floats them over the note's edge instead); asked
 for all the same, the panel slides over the note's edge instead.
 
@@ -95,13 +96,17 @@ speech bubble in the comment colour on the first line of its text (empty
 and grey for a resolved comment, whose text reads as text again; one mark
 for a line two comments start on). The mark is the way to the comment: with
 nothing beside the note showing the comments, a click on it opens every
-comment on that line as a bubble within the note, right under the block
-its text is in, in the note's own flow, so what follows moves down and
-nothing is covered (one under the other where they share a line; the note
-scrolls to show the whole bubble; the bubble slides in sideways from under
-the mark's column, clipped at the note's edge so it passes over nothing,
-as its row opens and what follows moves down, and goes back out the same
-way, so the eye can follow from the mark), and a second click closes
+comment on that line as a bubble within the note, beside the text it is
+about: the paragraph narrows into one column and the bubble stands in the
+other, level with the line the text starts on, as wide as half the
+paragraph (300px at most), and the paragraph grows to hold it, so what
+follows moves down and nothing is covered (one under the other where they
+share a paragraph; the note scrolls to show the whole bubble; the bubble
+slides in from under the mark as the column opens and the text re-wraps
+into it, and goes back out the same way, so the eye can follow from the
+mark). A block that cannot be narrowed (code, a table's cell), or the
+setting `comments.beside` off, stands the bubble under the block instead,
+across the column, and what follows moves down. A second click closes
 them. The setting `comments.inline` (off; or the host's
 `comments: { margin: { inline: false } }`) floats the bubbles over the
 note's edge instead, under their text and never off it, the note's end

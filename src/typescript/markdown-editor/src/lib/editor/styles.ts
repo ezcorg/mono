@@ -2549,6 +2549,25 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-comment-inline .ezco-mde-comment-bubble': {
         'box-shadow': 'var(--ezco-mde-bubble-shadow)',
     },
+    // A block with a comment beside it: a row, its text in one column
+    // (the decoration gives the block its right padding, and the height
+    // that holds the cards), the card in the other, level with the line
+    // its text starts on. The block clips: a card slides in from past its
+    // edge, over nothing; the bubble's shadow is spared.
+    '.ezco-mde-body .ezco-mde-beside': {
+        position: 'relative',
+        overflow: 'clip',
+        'overflow-clip-margin': '4px',
+    },
+    '.ezco-mde-body .ezco-mde-comment-inline.is-beside': {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        width: 'auto',
+        margin: 0,
+        'text-align': 'start',
+        'text-indent': 0,
+    },
     // Collapsed to its byline, everything under it with it; the bubble
     // keeps its padding, so the byline sits where it did.
     '.ezco-mde-comment-bubble.is-collapsed > .ezco-mde-comment-head': {

@@ -54,7 +54,8 @@ the host names.
 Two reading patterns:
 
 - `get(path)`: the files laid over the schema's default. For a setting
-  whose default is the editor's (`comments.step`, `editor.font`).
+  whose default is the editor's (`comments.step`, `comments.beside`,
+  `editor.font`).
 - `chosen(path) ?? option`: the files' value when there is one, else the
   host's option. For a setting whose default the host gives
   (`comments.openOnClick`, `comments.inline`, the panel's layout).

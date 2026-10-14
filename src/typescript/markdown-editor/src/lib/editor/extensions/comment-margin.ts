@@ -98,6 +98,11 @@ export interface CommentMarginStorage {
     inline: () => boolean
     /** The box an inline comment's card stands in (comment-inline.ts): the same each time. */
     inlineBox: (id: string) => HTMLElement
+    /** Whether a comment stands beside its text, its block narrowed into
+     *  a column, rather than under its block. */
+    beside: () => boolean
+    /** The style of a block as a row with cards beside it (comment-inline.ts). */
+    rowStyle: (block: number, key: string) => string
     /** Focus the composer of the comment being written, if one is. */
     focusDraft: () => boolean
     /** Close every open comment, the inline ones going out first; true when there was one. */
@@ -971,6 +976,19 @@ class NewComment {
 
 /** How long a card within the note takes to slide in from under its mark, or back out. */
 const MOTION = 300
+/** A card beside its text: as wide as this, or half its block if that is
+ *  less; and the gap between the text's column and the card's. */
+const BESIDE = 300
+const BESIDE_GAP = 16
+
+/** How wide a card beside `block`'s text is: up to BESIDE, and half the
+ *  block (its width without its own left padding; its right padding is
+ *  taken to be the column's alone). */
+function columnOf(block: HTMLElement): number {
+    const style = getComputedStyle(block)
+    const full = block.offsetWidth - parseFloat(style.borderLeftWidth) - parseFloat(style.borderRightWidth) - parseFloat(style.paddingLeft)
+    return Math.max(0, Math.min(BESIDE, Math.floor(full / 2)))
+}
 
 /** A box clipping its card while it moves (the row opening or shutting,
  *  the card sliding in from the box's edge), with the bubble's shadow
@@ -1004,6 +1022,13 @@ class Margin {
      *  the note), by comment, kept across redraws; and which cards are in one. */
     private readonly boxes = new Map<string, HTMLElement>()
     private readonly inlined = new Set<string>()
+    /** The blocks with cards beside them, as rows, by their first comment:
+     *  the right padding that makes their column, the height that holds
+     *  their cards (0 until measured), and whether the row is new (its
+     *  column not yet open). Given to the view through the decoration. */
+    private readonly rows = new Map<string, { pad: number; min: number; fresh: boolean }>()
+    /** What is clipping while something moves in it, and how many movements. */
+    private readonly clipped = new Map<HTMLElement, number>()
     private showResolved = false
     /** How comments are shown now: the host's choice, or the reader's. */
     private layout: CommentLayout
@@ -1130,6 +1155,8 @@ class Margin {
         storage.floating = () => this.floating
         storage.inline = () => this.inlineNow()
         storage.inlineBox = (id) => this.box(id)
+        storage.beside = () => this.besideNow()
+        storage.rowStyle = (block, key) => this.rowStyle(block, key)
         storage.focusDraft = () => {
             if (!this.draft) return false
             this.draft.focus()
@@ -1185,6 +1212,12 @@ class Margin {
         return this.floating && (this.settings?.chosen('comments.inline') ?? this.options.inline ?? true)
     }
 
+    /** Whether a comment within the note stands beside its text (the
+     *  reader's choice; on unless turned off). */
+    private besideNow(): boolean {
+        return this.settings?.get('comments.beside') ?? true
+    }
+
     /** The box comment `id`'s card stands in within the note. */
     private box(id: string): HTMLElement {
         let box = this.boxes.get(id)
@@ -1207,60 +1240,192 @@ class Margin {
         })
     }
 
-    /** How far right of its place the card of comment `id` starts, or
-     *  ends: its left edge at its box's right edge, under the mark's
-     *  column, where the eye is. */
+    /** The style of the block at `block` as the row `key` (comment-inline.ts
+     *  asks, drawing the decoration): its column's padding, from the
+     *  block's width, and the height that holds its cards once measured. */
+    private rowStyle(block: number, key: string): string {
+        let row = this.rows.get(key)
+        if (!row) {
+            const dom = this.view.nodeDOM(block)
+            row = { pad: (dom instanceof HTMLElement ? columnOf(dom) : BESIDE) + BESIDE_GAP, min: 0, fresh: true }
+            this.rows.set(key, row)
+        }
+        return `padding-right: ${row.pad}px; min-height: ${row.min}px`
+    }
+
+    /** The first comment of a row: the one whose text starts first. */
+    private keyOf(row: HTMLElement): string | null {
+        const state = commentsKey.getState(this.view.state)
+        const from = (id: string) => state?.comments.find((c) => c.id === id)?.target.range?.from ?? 0
+        const ids = [...row.querySelectorAll<HTMLElement>(':scope > .ezco-mde-comment-inline')].map((b) => b.dataset.comment ?? '')
+        return ids.sort((a, b) => from(a) - from(b))[0] ?? null
+    }
+
+    /** The blocks with cards beside them, measured: each a row narrowed
+     *  into a column by its right padding (the card's width and a gap, the
+     *  width up to BESIDE and half the block), its cards at the line their
+     *  text starts on (one under the other where they share a block), and
+     *  the block as tall as it must be to hold them. The cards' boxes are
+     *  placed here; the block's padding and height go through the
+     *  decoration, drawn again when they change. Measured on every update
+     *  (the text re-wraps as it is edited) and as the cards change size. */
+    private placeBeside() {
+        const state = commentsKey.getState(this.view.state)
+        const rows = new Map<HTMLElement, { id: string; box: HTMLElement; from: number }[]>()
+        for (const id of this.inlined) {
+            const box = this.boxes.get(id)
+            const row = box?.parentElement
+            const range = state?.comments.find((c) => c.id === id)?.target.range
+            if (!box || !row || !range || !row.classList.contains('ezco-mde-beside')) {
+                if (box?.classList.contains('is-beside')) {
+                    box.classList.remove('is-beside')
+                    box.style.top = ''
+                    box.style.width = ''
+                }
+                continue
+            }
+            box.classList.add('is-beside')
+            let cards = rows.get(row)
+            if (!cards) rows.set(row, (cards = []))
+            cards.push({ id, box, from: range.from })
+        }
+        const seen = new Set<string>()
+        let changed = false
+        for (const [row, cards] of rows) {
+            cards.sort((a, b) => a.from - b.from)
+            const key = cards[0].id
+            seen.add(key)
+            const style = getComputedStyle(row)
+            const width = columnOf(row)
+            const pad = width + BESIDE_GAP
+            // The text in its column: the line each card's text starts on.
+            const top = row.getBoundingClientRect().top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop)
+            const line = parseFloat(style.lineHeight)
+            let floor = 0
+            let min = 0
+            for (const { box, from } of cards) {
+                box.style.width = `${width}px`
+                let at = 0
+                try {
+                    at = this.view.coordsAtPos(from).top - top
+                } catch {
+                    /* a range past the note: at the block's top */
+                }
+                if (Number.isFinite(line) && line > 0) at = Math.floor((at + 1) / line) * line
+                at = Math.max(floor, Math.round(Math.max(0, at)))
+                box.style.top = `${at}px`
+                min = at + box.offsetHeight
+                floor = min + GAP
+            }
+            const was = this.rows.get(key)
+            if (!was || was.pad !== pad || was.min !== min) {
+                this.rows.set(key, { pad, min, fresh: false })
+                changed = true
+            } else was.fresh = false
+        }
+        for (const key of [...this.rows.keys()]) if (!seen.has(key)) this.rows.delete(key)
+        if (changed) this.refreshInline()
+    }
+
+    /** `el` clipping while something moves in it (a card sliding in from
+     *  its edge, a row opening), and until the last movement ends. */
+    private hold(el: HTMLElement) {
+        this.clipped.set(el, (this.clipped.get(el) ?? 0) + 1)
+        clip(el, true)
+    }
+
+    private release(el: HTMLElement) {
+        const left = (this.clipped.get(el) ?? 1) - 1
+        if (left > 0) this.clipped.set(el, left)
+        else {
+            this.clipped.delete(el)
+            clip(el, false)
+        }
+    }
+
+    /** How far right of its place a card under its block starts, or ends:
+     *  its left edge at its box's right edge, under the mark's column,
+     *  where the eye is. */
     private slide(box: HTMLElement, dom: HTMLElement): number {
         return Math.max(0, box.getBoundingClientRect().right - dom.getBoundingClientRect().left)
     }
 
     /** From the mark to its place: the whole of the box brought into view
-     *  (the note scrolls for it, as for a floating card), then the card
-     *  slides in sideways from under the mark's column, clipped at the
-     *  note's edge so it passes over nothing, while its row opens from
-     *  nothing to its height and what follows moves down. */
-    private enter(_id: string, box: HTMLElement, dom: HTMLElement) {
+     *  (the note scrolls for it, as for a floating card); then, beside its
+     *  text, the block's column narrows (its text re-wrapping into it) as
+     *  the card slides in at full size from under the mark's column, the
+     *  block clipping it so it passes over nothing, and the block grows to
+     *  hold it; under its block, the card slides in from the box's right
+     *  edge the same way while its row opens and what follows moves down. */
+    private enter(box: HTMLElement, dom: HTMLElement) {
+        const row = box.parentElement?.classList.contains('ezco-mde-beside') ? box.parentElement : null
+        // The row as it was before this card: another's column, or none.
+        const key = row ? this.keyOf(row) : null
+        const was = key ? this.rows.get(key) : undefined
+        const prev = row ? (was && !was.fresh ? { pad: was.pad, min: was.min } : { pad: 0, min: 0 }) : null
         requestAnimationFrame(() => {
             if (!box.isConnected) return
-            const height = box.offsetHeight
             const still = stillness()
             this.quietUntil = Date.now() + QUIET
             box.scrollIntoView({ block: 'nearest', behavior: still ? 'auto' : 'smooth' })
             if (still) return
+            const motion = { duration: MOTION, easing: EASE }
+            if (row && prev && row.isConnected) {
+                const style = getComputedStyle(row)
+                const pad = parseFloat(style.paddingRight) || 0
+                const min = parseFloat(style.minHeight) || 0
+                // Placed again at rest: a measurement taken while the text re-wrapped was of the moment.
+                const settled = () => this.placeBeside()
+                row.animate([{ paddingRight: `${prev.pad}px`, minHeight: `${prev.min}px` }, { paddingRight: `${pad}px`, minHeight: `${min}px` }], motion).finished.then(settled, settled)
+                box.animate([{ transform: `translateX(${pad}px)` }, { transform: 'none' }], motion)
+                return
+            }
+            const height = box.offsetHeight
             const dx = this.slide(box, dom)
-            clip(box, true)
-            box.animate([shut(), { height: `${height}px`, ...margins(box) }], { duration: MOTION, easing: EASE }).finished.then(() => clip(box, false), () => clip(box, false))
-            dom.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], { duration: MOTION, easing: EASE })
+            this.hold(box)
+            box.animate([shut(), { height: `${height}px`, ...margins(box) }], motion).finished.then(() => this.release(box), () => this.release(box))
+            dom.animate([{ transform: `translateX(${dx}px)` }, { transform: 'none' }], motion)
         })
     }
 
-    /** The inline cards of `ids` back out under the mark's column and
-     *  their rows closed, before the comments are (the boxes go with them). */
+    /** The inline cards of `ids` back out under the mark's column, their
+     *  block's column given back (the text re-wrapping to its width) or
+     *  their row shut, before the comments are (the boxes go with them). */
     private leave(ids: string[]): Promise<void> {
         const going = ids.filter((id) => this.inlined.has(id))
         if (!going.length || stillness()) return Promise.resolve()
-        const done: Promise<unknown>[] = []
+        const motion = { duration: MOTION, easing: EASE, fill: 'forwards' as const }
+        const made: Animation[] = []
+        const held: HTMLElement[] = []
+        const emptied = new Set<HTMLElement>()
         for (const id of going) {
             const box = this.boxes.get(id)
             const dom = this.cards.get(id)?.dom
             if (!box || !dom || !box.isConnected) continue
-            const dx = this.slide(box, dom)
-            clip(box, true)
-            done.push(box.animate([{ height: `${box.offsetHeight}px`, ...margins(box) }, shut()], { duration: MOTION, easing: EASE, fill: 'forwards' }).finished)
-            done.push(dom.animate([{ transform: 'none' }, { transform: `translateX(${dx}px)` }], { duration: MOTION, easing: EASE, fill: 'forwards' }).finished)
-        }
-        return Promise.all(done).then(
-            () => {
-                for (const id of going) {
-                    const box = this.boxes.get(id)
-                    if (box) {
-                        for (const a of box.getAnimations({ subtree: true })) a.cancel()
-                        clip(box, false)
-                    }
+            const row = box.parentElement
+            if (row?.classList.contains('ezco-mde-beside')) {
+                const style = getComputedStyle(row)
+                const pad = parseFloat(style.paddingRight) || 0
+                made.push(box.animate([{ transform: 'none' }, { transform: `translateX(${pad}px)` }], motion))
+                // The last card leaving a block: its column given back, the text re-wrapping to the width.
+                const staying = [...this.inlined].some((other) => !going.includes(other) && this.boxes.get(other)?.parentElement === row)
+                if (!staying && !emptied.has(row)) {
+                    emptied.add(row)
+                    made.push(row.animate([{ paddingRight: `${pad}px`, minHeight: style.minHeight }, { paddingRight: '0px', minHeight: '0px' }], motion))
                 }
-            },
-            () => undefined,
-        )
+                continue
+            }
+            const dx = this.slide(box, dom)
+            this.hold(box)
+            held.push(box)
+            made.push(box.animate([{ height: `${box.offsetHeight}px`, ...margins(box) }, shut()], motion))
+            made.push(dom.animate([{ transform: 'none' }, { transform: `translateX(${dx}px)` }], motion))
+        }
+        const settle = () => {
+            for (const a of made) a.cancel()
+            for (const el of held) this.release(el)
+        }
+        return Promise.all(made.map((a) => a.finished)).then(settle, settle)
     }
 
     /** Every open comment closed, the inline ones going out first. */
@@ -1716,7 +1881,7 @@ class Margin {
             const host = within ? this.box(info.id) : this.list
             if (card.dom.parentElement !== host) {
                 host.append(card.dom)
-                if (within) this.enter(info.id, host, card.dom)
+                if (within) this.enter(host, card.dom)
             }
             if (within) this.inlined.add(info.id)
             else {
@@ -1747,6 +1912,7 @@ class Margin {
             this.cards.delete(id)
             this.inlined.delete(id)
         }
+        this.placeBeside()
         this.schedule()
     }
 
@@ -1760,6 +1926,7 @@ class Margin {
      *  its text. In a panel: in the note's order. Every card fits the frame. */
     private layout_() {
         if (!this.view.dom.isConnected) return
+        this.placeBeside()
         this.listen()
         if (this.draft) this.placeDraft(commentsKey.getState(this.view.state)?.draft?.ranges[0] ?? null)
         if (this.dom.hidden) return
@@ -1936,6 +2103,9 @@ class Margin {
         this.storage.togglePanel = () => false
         this.storage.floating = () => true
         this.storage.inline = () => false
+        this.storage.beside = () => false
+        this.storage.rowStyle = () => ''
+        this.rows.clear()
         this.storage.closeAll = () => false
         this.storage.leaveInline = async () => {}
         this.storage.focusDraft = () => false
@@ -1955,7 +2125,7 @@ export const CommentMargin = Extension.create<CommentMarginOptions, CommentMargi
     },
 
     addStorage() {
-        return { togglePanel: () => false, floating: () => true, inline: () => false, inlineBox: () => document.createElement('div'), focusDraft: () => false, closeAll: () => false, leaveInline: async () => {} }
+        return { togglePanel: () => false, floating: () => true, inline: () => false, beside: () => false, rowStyle: () => '', inlineBox: () => document.createElement('div'), focusDraft: () => false, closeAll: () => false, leaveInline: async () => {} }
     },
 
     addCommands() {
