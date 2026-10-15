@@ -496,7 +496,7 @@ impl ServiceHandler {
                 #[cfg(target_os = "linux")]
                 println!(
                     "  - Start when you log in, and stop when you log out unless your \
-                     session manager lingers (sudo loginctl enable-linger $USER)"
+                     session manager lingers (loginctl enable-linger)"
                 );
                 #[cfg(not(target_os = "linux"))]
                 println!("  - Start automatically on login (on supported platforms)");
@@ -1062,7 +1062,8 @@ fn linger_note(instance: &Instance) -> Option<String> {
         Some(true) => None,
         Some(false) => Some(
             "Lingering is off: this service stops when you log out and does not start at boot.\n\
-             To keep it running: sudo loginctl enable-linger $USER"
+             To keep it running: loginctl enable-linger  (yours to grant on systemd 256 and later; \
+             an older logind asks an admin: sudo loginctl enable-linger $USER)"
                 .to_string(),
         ),
         None => Some(

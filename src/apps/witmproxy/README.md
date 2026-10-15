@@ -108,9 +108,10 @@ systemctl --user status ez-witmproxy@agent-1
 ```
 
 A user service runs while you are logged in. To have it survive logout and
-start at boot, let your session manager linger (once, as root):
-`sudo loginctl enable-linger $USER`. `service install --user` and `service
-status --user` say when it does not.
+start at boot, let your session manager linger: `loginctl enable-linger`.
+On systemd 256 and later that is yours to grant; an older logind asks an
+admin (`sudo loginctl enable-linger $USER`). `service install --user` and
+`service status --user` say when it does not.
 
 Off Linux every witmproxy is a user's already (`~/.witmproxy`, a
 LaunchAgent in `~/Library/LaunchAgents`), so `--user` changes nothing
@@ -162,7 +163,8 @@ instance's in `policy.toml` in its root (or `--policy-file`), a tenant's at
 by the proxy for every connection it makes on a client's behalf: CONNECT
 tunnels (refused with a `403` before the tunnel exists), intercepted
 requests (in the upstream client's resolver), and the transparent proxy's
-passthrough.
+passthrough. All of it is TCP today; QUIC, and flows of any protocol, are
+planned in `docs/transports.md`.
 
 ```toml
 # policy.toml: the instance's floor
