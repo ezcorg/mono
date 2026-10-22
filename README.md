@@ -1,6 +1,8 @@
 # mono
 
-Monorepo containing all of the organization's projects and code.
+The organization's public monorepo. Private projects and the CI hosts'
+configuration live in [ezcorg/internal](https://github.com/ezcorg/internal),
+which mirrors this layout.
 
 # Development
 
