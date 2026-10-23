@@ -61,4 +61,5 @@ jobs:
           submodules: recursive   # lsp-client and tiptap-markdown are submodules
       - run: nix develop -c pnpm install --frozen-lockfile
       - run: nix develop -c pnpm --filter "@joinezco/codeblock^..." run build   # its workspace dependencies
+      - run: nix develop -c pnpm --dir src/typescript/codeblock exec playwright install chromium   # runs under nix-ld in the CI image
       - run: nix develop -c pnpm --dir src/typescript/codeblock run test

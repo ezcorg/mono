@@ -63,7 +63,10 @@
           # openssl is linked, just the C/C++ toolchain from stdenv (+ perl above).
           # reqwest uses rustls (not native-tls), so no Security framework is
           # needed for TLS on macOS.
-          buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ];
+          buildInputs = pkgs.lib.optionals pkgs.stdenv.isDarwin [ pkgs.libiconv ]
+            # ezdb's keyring reaches the Secret Service over D-Bus: libdbus-sys
+            # links dbus-1, found through pkg-config.
+            ++ pkgs.lib.optionals pkgs.stdenv.isLinux [ pkgs.dbus ];
 
           env.RUST_BACKTRACE = "1";
 

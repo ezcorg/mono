@@ -54,7 +54,9 @@
             ] ++ lib.optionals stdenv.isDarwin [ libiconv ]
               # Browser for the vitest browser tests; the Linux CI image also
               # exposes it as /usr/bin/google-chrome for configs that hardcode it.
-              ++ lib.optionals stdenv.isLinux [ chromium ];
+              # dbus: ezdb's keyring reaches the Secret Service over D-Bus, and
+              # libdbus-sys finds dbus-1 through pkg-config.
+              ++ lib.optionals stdenv.isLinux [ chromium dbus ];
             shellHook = ''
               export CARGO_NET_GIT_FETCH_WITH_CLI=true
               # Tools the scripts `cargo install` on demand (wasmsign2, wkg).
