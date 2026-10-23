@@ -1,4 +1,11 @@
 import { beforeAll, afterEach } from 'vitest'
+import { enableComments } from '../../lib/editor/extensions/comments-feature'
+
+// The comments work is off for every editor until it ships
+// (comments-feature.ts). The suites were written with it on and keep it so,
+// so the work keeps passing; `comments-feature.test.ts` is the one place it
+// is turned off.
+enableComments()
 
 // Global test setup
 beforeAll(() => {

@@ -83,7 +83,9 @@ export interface VaultOptions extends MakeOptions {
 export interface Opened extends Made {
     vault: Vault
     fs: VfsInterface
-    /** The comments extension's storage (the extension is on unless the editor was made with `comments: false`). */
+    /** The comments extension's storage (the suites turn the comments work
+     *  on in `setup.ts`: the extension is there unless the editor was made
+     *  with `comments: false`). */
     comments: CommentsStorage
     settings: SettingsStorage | null
     persistence: FileSystemStorage

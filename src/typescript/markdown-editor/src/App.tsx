@@ -5,6 +5,11 @@ import { Vault } from '@joinezco/vault';
 import '../fonts/source-serif-4.css'
 import './App.css'
 import { file } from './example';
+import { enableComments } from './lib/editor/extensions/comments-feature';
+
+// The comments work is off until it ships (comments-feature.ts): the demo
+// shows it with `?comments` in its URL (`pnpm shot … --url 'http://127.0.0.1:5173/?comments'`).
+if (new URLSearchParams(window.location.search).has('comments')) enableComments();
 
 /** Where the window's width is kept between reloads. */
 const WIDTH_KEY = 'ezco-demo-window-width';

@@ -63,7 +63,11 @@ demo. So, for any change that shows:
   (`--ezco-mde-danger`, `--ezco-mde-warning`, `--ezco-mde-comment-color`).
   No colour literal or font stack in a component rule. The note's face is
   `--ezco-mde-font`; the chrome's is not.
-- Comments: bubbles stand on the note, one renderer (`comment-render.ts`)
+- Comments (the work is off for every editor until it ships: the switch is
+  `extensions/comments-feature.ts`; the tests turn it on in
+  `src/test/utils/setup.ts`, the demo with `?comments` in its URL, so
+  `pnpm shot` takes `--url 'http://127.0.0.1:5173/?comments'`): bubbles
+  stand on the note, one renderer (`comment-render.ts`)
   for anything that shows a document, the composer's buttons inside the
   bubble, a floating card stays under its text (the note scrolls for it),
   the composer for a new comment floats over the note by its text in every

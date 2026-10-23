@@ -5,6 +5,17 @@ what was offered and not taken up. Each item says where it would go. The
 survey (`duplication-survey.md`), the test plan (`test-coverage-plan.md`)
 and the settings design (`settings.md`) hold the record of what was done.
 
+## Comments, off until they ship
+
+The comments work (`comments.ts`, `comment-gutter.ts`, `comment-margin.ts`,
+`comment-inline.ts`, `comment-composer.ts`, `comment-render.ts`, the
+`comments` group of the settings) is behind `extensions/comments-feature.ts`,
+off for every editor: how a comment is shown is not settled, and the
+storage model is likely to change. The tests run with it on
+(`src/test/utils/setup.ts`); the demo shows it with `?comments`. To ship
+it, flip the switch, then take the gate out of `index.ts` and
+`settings.ts` and the switch with it.
+
 ## Duplication, for a later pass
 
 From the survey's "Still duplicated" list, unchanged:

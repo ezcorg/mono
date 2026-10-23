@@ -17,6 +17,7 @@ import { Extension, type Editor } from '@tiptap/core'
 import { Config, defaultsOf, deviceId, fromZod, z, type ConfigFiles, type Format, type Scope } from '@joinezco/config'
 import { localFiles } from './settings-memory'
 import { persistenceOf } from './extensions/filesystem'
+import { commentsEnabled } from './extensions/comments-feature'
 
 export const EditorSettingsSchema = z.object({
     editor: z
@@ -25,6 +26,7 @@ export const EditorSettingsSchema = z.object({
             measure: z.number().min(20).max(120).default(38).describe('How wide the note’s text column is, in ems of its text size.'),
         })
         .meta({ title: 'The note' }),
+    // Offered only while the comments work is on (extensions/comments-feature.ts).
     comments: z
         .object({
             panel: z.boolean().default(true).describe('Show every comment in a panel beside the note, where there is room.'),
@@ -48,6 +50,14 @@ export type EditorSettings = z.infer<typeof EditorSettingsSchema>
 /** The schema as JSON Schema: `schema.json` beside the files, and what the
  *  settings file is checked and completed against when opened as code. */
 export const editorSettingsJsonSchema = fromZod(EditorSettingsSchema, { title: 'Editor settings', description: 'What the editor does by default, and what you would rather it did.' })
+
+/** The schema without its `comments` group: what an editor offers (in the
+ *  toolbar, in `schema.json`, to the file opened as code) while the
+ *  comments work is off (`extensions/comments-feature.ts`). */
+const settingsJsonSchemaWithoutComments: typeof editorSettingsJsonSchema = (() => {
+    const { comments: _comments, ...properties } = editorSettingsJsonSchema.properties ?? {}
+    return { ...editorSettingsJsonSchema, properties }
+})()
 
 export interface SettingsOptions {
     /** Where the files are kept: the editor's own filesystem by default. */
@@ -185,13 +195,15 @@ export const Settings = Extension.create<SettingsOptions, SettingsStorage>({
         const storage = this.storage
         const options = this.options
         storage.chromeScope = options.chromeScope ?? 'device'
+        // The `Comments` group only while the comments work is on.
+        storage.schema = commentsEnabled() ? editorSettingsJsonSchema : settingsJsonSchemaWithoutComments
         const fs = options.fs ?? (persistenceOf(this.editor)?.options.fs as ConfigFiles | undefined)
         const notify = () => (storage as SettingsStorage & { notify(): void }).notify()
         storage.ready = (async () => {
             const files: ConfigFiles = fs ?? localFiles()
             const config = await Config.open<EditorSettings>({
                 fs: files,
-                schema: editorSettingsJsonSchema,
+                schema: storage.schema,
                 user: options.user ?? ((this.editor.storage as Record<string, any>).comments?.author?.() as string | null | undefined) ?? undefined,
                 device: options.device === false ? undefined : options.device ?? deviceId(),
                 instance: options.instance,

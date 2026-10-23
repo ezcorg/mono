@@ -25,7 +25,7 @@ const editor = createEditor({
     files: vault.files, // create / rename (links kept) / delete
     frontMatter: { assignId: () => newNoteId() }, // stable note ids
     fileTree: {}, // the vault as a tree, shown on ⌘⇧E and not before
-    comments: { author: 'theo', index: vault.comments, reactions: vault.reactions }, // documents, opened from their text
+    comments: { author: 'theo', index: vault.comments, reactions: vault.reactions }, // documents, opened from their text (off until the work ships: see Comments)
 })
 ```
 
@@ -38,13 +38,15 @@ share folds away on the chevron in its corner, or ⌘⌥B. The note's text keeps
 to a column of some seventy-five characters (`--ezco-mde-measure`); the row
 of rail, gutter, column and comments is centred as one in a wider host, so
 the gutter stays at the text's edge. Right of the note stands the
-annotation column, with a mark on the first line of each comment's text.
-The note's comments take what is past that, in a panel beside the note,
-and open from their marks within the note, each beside its text with the
-paragraph in one column and the comment in the other, where there is no
-such room (or when the panel has been put away; the setting
-`comments.inline: false` floats them over the note's edge instead); asked
-for all the same, the panel slides over the note's edge instead.
+annotation column, with a mark on the first line of each comment's text
+(the comments and their columns are off until the work ships: see
+[Comments](#comments)). The note's comments take what is past that, in a
+panel beside the note, and open from their marks within the note, each
+beside its text with the paragraph in one column and the comment in the
+other, where there is no such room (or when the panel has been put away;
+the setting `comments.inline: false` floats them over the note's edge
+instead); asked for all the same, the panel slides over the note's edge
+instead.
 
 With `fs` alone the editor keeps a vault of its own over it, so wikilinks,
 search and renames work without the host building one.
@@ -72,6 +74,16 @@ version that moves with every change; a stale one is refused. They are
 applied as one transaction that keeps the caret, then saved.
 
 ## Comments
+
+**Off for now.** The comments work is not finished (how a comment is shown
+is not settled, and how comments are stored is likely to change), so every
+editor is made without it, whatever `comments` says, until the switch in
+`src/lib/editor/extensions/comments-feature.ts` is thrown: no highlights,
+no marks, no panel, no `Comments` settings. A note's reference blocks and
+spans are still the documents they are and round-trip as written, and
+`comments.author` still names the vault's identity and whose settings are
+read. The tests run with the work on; the demo shows it with `?comments` in
+its URL. What follows describes the work as it stands.
 
 A comment is a document that quotes a passage of another and says
 something under it: the reference is an embed of a range, the text is what

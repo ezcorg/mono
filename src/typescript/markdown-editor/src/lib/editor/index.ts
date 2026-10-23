@@ -40,6 +40,7 @@ import { Comments } from './extensions/comments';
 import { CommentMarks } from './extensions/comment-gutter';
 import { CommentMargin, type CommentLayout } from './extensions/comment-margin';
 import { CommentInline } from './extensions/comment-inline';
+import { commentsEnabled } from './extensions/comments-feature';
 import { RailToggle } from './extensions/rail';
 import { revealFragment } from './extensions/fragment';
 import { fileOperations, normalizePath, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage';
@@ -157,7 +158,10 @@ export type MarkdownSetupOptions = {
     /** The vault as a tree of folders and files — opt-in: built only when set. */
     fileTree?: Omit<FileTreeOptions, 'files' | 'subscribe'>;
     /** Comment threads (the comments RFC). A note's threads are read and
-     *  shown whatever is given here; `false` leaves them in the note unshown. */
+     *  shown whatever is given here; `false` leaves them in the note unshown.
+     *  The work is not finished and is off for every editor for now
+     *  (`extensions/comments-feature.ts`): until it ships only `author` is
+     *  read, as the vault's identity and whose settings are read. */
     comments?: CommentsSetupOptions | false;
     /** The reader's settings (`settings.ts`): files in the editor's
      *  filesystem (`.settings/`), in scopes, the toolbar's `settings` mode
@@ -486,8 +490,9 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             ? [FileTree.configure({ ...options.fileTree, files: services.files, subscribe: services.subscribe })]
             : []),
         // Comments: the note's threads (and those written elsewhere) found and
-        // highlighted, and a margin to read and write them in.
-        ...(options.comments !== false
+        // highlighted, and a margin to read and write them in. Off until the
+        // work ships (comments-feature.ts), whatever the host asked for.
+        ...(commentsEnabled() && options.comments !== false
             ? [
                 Comments.configure({ author: options.comments?.author, index: services.comments, reactions: services.reactions, openOnClick: options.comments?.openOnClick ?? false }),
                 // Each comment's mark in the annotation column beside the note.
@@ -561,13 +566,15 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         if (options.blockActions !== false) gutter = el('div', 'ezco-mde-gutter')
         bodyHost = el('div', 'ezco-mde-body-host')
         // The annotation column right of the note (comment-gutter.ts): each
-        // comment's mark on the line its text starts on.
-        if (options.comments !== false) annotations = el('div', 'ezco-mde-annotations')
+        // comment's mark on the line its text starts on. Neither column is
+        // built while the comments work is off (comments-feature.ts).
+        const comments = commentsEnabled() && options.comments !== false ? options.comments : false
+        if (comments !== false) annotations = el('div', 'ezco-mde-annotations')
         // A column for comments, right of that: the panel that scrolls on
         // its own (the default, when there is room past the note's text
         // column) or a column level with the text. With `layout: 'float'`
         // comments float over the note's edge and take no room.
-        const layout = options.comments !== false && options.comments?.margin !== false ? options.comments?.margin?.layout ?? 'panel' : undefined
+        const layout = comments !== false && comments?.margin !== false ? comments?.margin?.layout ?? 'panel' : undefined
         if (layout === 'column' || layout === 'panel') commentsHost = el('div', 'ezco-mde-comments')
         content.append(...[navHost, gutter, bodyHost, annotations, commentsHost].filter((host): host is HTMLElement => !!host))
         wrapper.append(toolbarSlot, content)
