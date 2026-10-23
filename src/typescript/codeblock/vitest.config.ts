@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
+import { lazyDeps } from './optimize-deps';
 
 export default defineConfig({
     test: {
@@ -15,7 +16,9 @@ export default defineConfig({
             {
                 // The editor in Chromium: loading, saving, previews.
                 optimizeDeps: {
-                    include: ['lodash', 'path-browserify', 'comlink', 'minisearch', 'markdown-it', '@codemirror/lang-markdown', '@codemirror/lang-css'],
+                    // What the editor loads lazily, and the vault's own
+                    // dependencies (a workspace link, served as source).
+                    include: [...lazyDeps, 'lodash', 'path-browserify', 'comlink', '@joinezco/vault > minisearch', '@joinezco/vault > markdown-it'],
                 },
                 test: {
                     name: 'browser',
