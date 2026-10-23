@@ -337,6 +337,8 @@ class Card {
     /** Watches the texts for growth, to fold them again. */
     private readonly sizes = sizeObserver(() => this.clamp())
     private key = ''
+    /** Whether the card was last told it is the one looked at. */
+    private isActive = false
     /** How near the note's reading line is to the text, 0 to 1 (the card
      *  steps out by it). */
     private near = ''
@@ -424,6 +426,7 @@ class Card {
 
     update(info: CommentInfo, active: boolean) {
         this.info = info
+        this.isActive = active
         this.dom.classList.toggle('is-active', active)
         this.dom.classList.toggle('is-resolved', info.resolved)
         this.dom.classList.toggle('is-orphaned', info.target.orphaned)
@@ -433,9 +436,14 @@ class Card {
             this.stopReplying()
             this.confirming = null
         }
-        const key = JSON.stringify([
-            summary(info),
-            active,
+        if (this.keyOf() !== this.key) this.render()
+    }
+
+    /** What the card is built from, as one string: a render is owed when it changes. */
+    private keyOf(): string {
+        return JSON.stringify([
+            summary(this.info),
+            this.isActive,
             this.margin.author(),
             this.margin.floating,
             this.margin.panel,
@@ -447,12 +455,13 @@ class Card {
             [...this.allReactions],
             [...this.expanded],
         ])
-        if (key === this.key) return
-        this.key = key
-        this.render()
     }
 
     private render() {
+        // What this render shows: the margin's next pass (`update`) owes no
+        // render for it. (A reply or an edit renders as it starts; a second
+        // render moved the composer into a new bubble and took its focus.)
+        this.key = this.keyOf()
         const { editor } = this.margin
         const info = this.info
         const author = this.margin.author()
