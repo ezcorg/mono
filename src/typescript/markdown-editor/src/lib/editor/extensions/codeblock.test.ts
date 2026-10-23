@@ -65,6 +65,17 @@ const lineLeft = (line: Element) => {
     }
     return NaN
 }
+/** How wide a line's leading spaces are drawn: its indentation, in whatever
+ *  font the browser running this has (the suite's may have no monospace). */
+const indentWidth = (line: Element) => {
+    const text = document.createTreeWalker(line, NodeFilter.SHOW_TEXT).nextNode() as Text | null
+    const spaces = text?.data.match(/^ +/)?.[0].length ?? 0
+    if (!text || !spaces) return 0
+    const range = document.createRange()
+    range.setStart(text, 0)
+    range.setEnd(text, spaces)
+    return range.getBoundingClientRect().width
+}
 
 const cmOf = (c: HTMLElement) => c.querySelector('.ezco-mde-body > .cm-editor') as HTMLElement
 const contentOf = (c: HTMLElement) => cmOf(c).querySelector('.cm-content') as HTMLElement
@@ -99,7 +110,9 @@ describe('A code block in the note', () => {
         expect(content.getAttribute('contenteditable')).toBe('true')
         const lines = [...content.querySelectorAll('.cm-line')]
         expect(lines[1].textContent).toBe('  return 1')
-        expect(lineLeft(lines[1])).toBeGreaterThan(lineLeft(lines[0]) + 10)
+        // Its indentation is kept: the second line starts its two spaces in.
+        expect(indentWidth(lines[1])).toBeGreaterThan(0)
+        expect(lineLeft(lines[1]) - lineLeft(lines[0])).toBeCloseTo(indentWidth(lines[1]), 0)
     })
 
     it('keeps its indentation when it is only shown', async () => {
@@ -109,7 +122,8 @@ describe('A code block in the note', () => {
         expect(content.getAttribute('contenteditable')).toBe('false')
         expect(['pre', 'break-spaces', 'pre-wrap']).toContain(getComputedStyle(content).whiteSpace)
         const lines = [...content.querySelectorAll('.cm-line')]
-        expect(lineLeft(lines[1])).toBeGreaterThan(lineLeft(lines[0]) + 10)
+        expect(indentWidth(lines[1])).toBeGreaterThan(0)
+        expect(lineLeft(lines[1]) - lineLeft(lines[0])).toBeCloseTo(indentWidth(lines[1]), 0)
     })
 
     it('keeps the note’s list spacing out of its own lists (its toolbar’s results)', async () => {

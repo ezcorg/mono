@@ -88,6 +88,13 @@ export default defineConfig({
       '@joinezco/codeblock > @lezer/highlight',
       '@joinezco/codeblock > @m234/nerd-fonts/fs',
       '@joinezco/codeblock > @volar/language-service',
+      // The TypeScript language server a code block starts in its worker:
+      // listed so the first file to open one does not trigger a
+      // re-optimize and reload mid-run.
+      '@joinezco/codeblock > @volar/language-server/browser',
+      '@joinezco/codeblock > volar-service-typescript',
+      '@joinezco/codeblock > vscode-languageserver/browser',
+      '@joinezco/codeblock > typescript',
       '@joinezco/codeblock > comlink',
       '@joinezco/codeblock > lodash',
       '@joinezco/vault > markdown-it',
