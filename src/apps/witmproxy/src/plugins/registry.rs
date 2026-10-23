@@ -1130,7 +1130,7 @@ impl PluginRegistry {
     /// Resolve configuration for a plugin, merging tenant-specific config over global defaults.
     ///
     /// A tenant value is stored as the text the management API received. It
-    /// is read as a JSON-encoded [`ActualInput`] when it is one (the form the
+    /// is read as a JSON-encoded [`ActualInput`](crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::ActualInput) when it is one (the form the
     /// global configuration is stored in), else typed as the plugin's
     /// manifest declares the input (the way `witm plugin configure` types a
     /// command-line value), else passed as a string for the plugin to parse.

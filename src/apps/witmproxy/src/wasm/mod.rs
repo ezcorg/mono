@@ -709,7 +709,7 @@ impl LocalStorageClient {
             let freed = (key.len() as u64).saturating_add(removed.len() as u64);
             let _ = self
                 .bytes_used
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
                     Some(cur.saturating_sub(freed))
                 });
         }

@@ -14,6 +14,9 @@ use crate::proxy::tenant::TenantContext;
 
 /// Pluggable trait for determining tenant identity from a TCP peer address.
 /// No auth logic belongs here -- just identity resolution.
+// async_trait marks each method it expands `#[must_use]`, over a boxed future
+// that already is one: clippy's `double_must_use` now sees into the expansion.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait TenantResolver: Send + Sync {
     async fn resolve(&self, peer_addr: &SocketAddr) -> TenantContext;
