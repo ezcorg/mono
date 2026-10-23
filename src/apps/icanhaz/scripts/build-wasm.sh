@@ -11,7 +11,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 check=0; [ "${1:-}" = "--check" ] && check=1
 
-rustup target list --installed | grep -q '^wasm32-wasip2$' || { echo "rustup target add wasm32-wasip2" >&2; exit 1; }
+# The target, as rustup or a Nix toolchain (no rustup there) installs it.
+[ -d "$(rustc --print sysroot)/lib/rustlib/wasm32-wasip2" ] || { echo "rustup target add wasm32-wasip2" >&2; exit 1; }
 
 # The daemon's WIT deps (git-ignored, pinned by wkg.lock).
 scripts/fetch-wit.sh
