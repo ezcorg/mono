@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { EditorView } from '@codemirror/view'
-import { persistFile, regionField } from '@joinezco/codeblock'
+import { currentFileField, persistFile, regionField } from '@joinezco/codeblock'
 import { getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
 
 /**
@@ -43,6 +43,12 @@ describe('A region of a file, as a fence', () => {
     it('opens some lines of a file from the block’s toolbar (`path#L2-L3`), and links to lines from the menu', async () => {
         const { editor, container, region } = await open(fence('src/lib.rs#L1-L2', 'fn one() {}\nfn two() {}'))
         await waitFor(() => numbers(region()).join(',') === '1,2', 3000)
+        // The region is known from the fence before the block has opened its
+        // file; when it does, the toolbar names the file (over anything typed).
+        await waitFor(() => {
+            const file = region().state.field(currentFileField, false)
+            return file?.path === 'src/lib.rs' && !file.loading
+        }, 3000)
         // The block's own toolbar (the note's palette is another `.cm-toolbar-input`).
         const input = container.querySelector('.ProseMirror .cm-toolbar-input') as HTMLInputElement
         input.focus()
