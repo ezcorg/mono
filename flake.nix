@@ -45,6 +45,7 @@
               just
               git
               wasm-tools
+              wkg              # fetches icanhaz's WIT deps (src/apps/icanhaz/scripts/fetch-wit.sh)
               # Portable Linux release binaries from a NixOS host: `cargo zigbuild
               # --target x86_64-unknown-linux-gnu.2.28` links against an old glibc
               # instead of the Nix store's.
@@ -59,7 +60,7 @@
               ++ lib.optionals stdenv.isLinux [ chromium dbus ];
             shellHook = ''
               export CARGO_NET_GIT_FETCH_WITH_CLI=true
-              # Tools the scripts `cargo install` on demand (wasmsign2, wkg).
+              # Tools the scripts `cargo install` on demand (wasmsign2).
               export PATH="$HOME/.cargo/bin:$PATH"
             '';
           };

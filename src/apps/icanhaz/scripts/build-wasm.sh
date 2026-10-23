@@ -11,11 +11,10 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 check=0; [ "${1:-}" = "--check" ] && check=1
 
-command -v wkg >/dev/null || { echo "wkg is needed to fetch the WIT deps: cargo install wkg" >&2; exit 1; }
 rustup target list --installed | grep -q '^wasm32-wasip2$' || { echo "rustup target add wasm32-wasip2" >&2; exit 1; }
 
 # The daemon's WIT deps (git-ignored, pinned by wkg.lock).
-if [ ! -d wit/deps/wasi-filesystem-0.2.12 ]; then wkg wit fetch; fi
+scripts/fetch-wit.sh
 
 # A guest is built on its own (each crate is outside the mono workspace) into
 # its own target directory: a global cargo target-dir would take the artifact
