@@ -303,7 +303,10 @@ pub fn build_upstream_client(
         .pool_idle_timeout(std::time::Duration::from_secs(90))
         .pool_max_idle_per_host(10) // Allow more connections for HTTP/2 multiplexing
         .connect_timeout(std::time::Duration::from_secs(30))
-        .timeout(std::time::Duration::from_secs(60))
+        // Idle, not total: a streamed response (an LLM API's SSE, a large download)
+        // can rightly take far longer than any fixed limit, and a total timeout cuts
+        // it off mid-stream. This only ends an upstream that has gone silent.
+        .read_timeout(std::time::Duration::from_secs(300))
         // Certificate setup
         .add_root_certificate(ca_cert)
         // HTTP/2 specific configuration to avoid protocol errors
