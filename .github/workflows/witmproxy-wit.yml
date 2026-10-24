@@ -1,11 +1,13 @@
-# the witmproxy WIT package on ghcr.io (src/scripts/publish-wit.sh), whenever the world changes
+# the witmproxy plugin WIT package on ghcr.io (src/scripts/publish-wit.sh), whenever the world changes.
+# Published from main on the trusted Linux pool, with wkg from the workspace dev shell (flake.nix).
 name: witmproxy-wit
 
 on:
   push:
     branches: [main]
     paths:
-      - src/apps/witmproxy/wit/world.wit
+      - src/apps/witmproxy/wit/**
+      - src/apps/witmproxy/wkg.toml
       - src/scripts/publish-wit.sh
       - .github/workflows/witmproxy-wit.yml
   workflow_dispatch:
@@ -21,18 +23,11 @@ permissions:
 
 jobs:
   publish:
-    runs-on: [self-hosted, linux, theo-msi]
+    runs-on: [nix, linux-vm-trusted]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - run: command -v wkg >/dev/null || cargo install wkg@0.13.0
-      - run: src/scripts/publish-wit.sh "${{ inputs.version }}" "${{ github.repository_owner }}"
+      # The script gives wkg the token itself (its registry config), so no docker login is needed.
+      - run: nix develop -c src/scripts/publish-wit.sh "${{ inputs.version }}" "${{ github.repository_owner }}"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}

@@ -4293,6 +4293,8 @@ dependencies = [
  "tracing",
  "uuid",
  "wit-bindgen-wrpc",
+ "wit-component 0.254.0",
+ "wit-parser 0.254.0",
  "wrpc-transport",
 ]
 

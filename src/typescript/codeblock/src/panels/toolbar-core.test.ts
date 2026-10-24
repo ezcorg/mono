@@ -31,3 +31,53 @@ describe('Files imported from disk', () => {
         core.destroy();
     });
 });
+
+describe('The field, as files open', () => {
+    // The dropdown scrolls its selection into view; jsdom has no layout.
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+    const make = (opened: string[]) =>
+        new ToolbarCore({
+            fs: memoryVfs({}),
+            openFile: (path) => void opened.push(path),
+            getDocContent: () => '',
+            focusEditor() {},
+            persist: async () => {},
+            closeFile() {},
+        });
+    const typeInto = (core: ToolbarCore, text: string) => {
+        core.input.focus();
+        core.input.value = text;
+        core.input.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    it('keeps what is being typed when a file opens on its own, and names it once the field is reset', () => {
+        const core = make([]);
+        document.body.append(core.dom);
+        typeInto(core, 'src/li');
+        // The block's own file arrives (a region loading) under the typing.
+        core.setFilePath('note.md');
+        expect(core.input.value).toBe('src/li');
+        core.resetInputToCurrentFile();
+        expect(core.input.value).toBe('note.md');
+        // Not being typed in, the field follows the file.
+        core.input.blur();
+        core.setFilePath('other.md', 'other.md#L2-L3');
+        expect(core.input.value).toBe('other.md#L2-L3');
+        core.destroy();
+        core.dom.remove();
+    });
+
+    it('names the file it opened itself, lines and all, though the field is still focused', () => {
+        const opened: string[] = [];
+        const core = make(opened);
+        document.body.append(core.dom);
+        typeInto(core, 'src/lib.rs#L2-L3');
+        (core as unknown as { handleSearchResult(r: unknown): void }).handleSearchResult({ id: 'src/lib.rs', path: 'src/lib.rs', match: 'path' });
+        expect(opened).toEqual(['src/lib.rs#L2-L3']);
+        expect(document.activeElement).toBe(core.input);
+        core.setFilePath('src/lib.rs', 'src/lib.rs#L2-L3');
+        expect(core.input.value).toBe('src/lib.rs#L2-L3');
+        core.destroy();
+        core.dom.remove();
+    });
+});

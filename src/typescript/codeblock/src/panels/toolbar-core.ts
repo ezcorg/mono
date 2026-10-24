@@ -458,6 +458,8 @@ export class ToolbarCore {
     private deleteMode: DeleteMode = { active: false, filePath: '' };
     private overwriteMode: OverwriteMode = { active: false, filePath: '', action: 'create-file' };
     private inputTouched = false;
+    /** The path the toolbar itself asked the host to open, until the host reports a file. */
+    private opening: string | null = null;
     /** What the field says instead of the path (the language of an unnamed
      *  block whose file is a stand-in); back to it whenever the field resets. */
     private shownAs: string | null = null;
@@ -525,14 +527,24 @@ export class ToolbarCore {
 
     /** Update the current file path (called when the host opens a new file).
      *  `shownAs` is what the field says instead of the path (the language of
-     *  an unnamed block whose file is a stand-in). */
+     *  an unnamed block whose file is a stand-in). A file that opens on its
+     *  own (a region loading, a link followed) while the field is being typed
+     *  in does not take the typing: the field names it once left or reset. */
     setFilePath(path: string | null, shownAs?: string) {
+        const asked = this.opening !== null && ToolbarCore.splitLines(this.opening).file === path;
+        this.opening = null;
+        const typing = !asked && this.inputTouched && document.activeElement === this.input;
         this.currentFilePath = path;
         this.shownAs = shownAs ?? null;
-        if (!this.namingMode.active && !this.settingsMode.active) {
-            this.input.value = shownAs ?? path ?? '';
-            this.inputTouched = false;
-        }
+        if (typing || this.namingMode.active || this.settingsMode.active) return;
+        this.input.value = shownAs ?? path ?? '';
+        this.inputTouched = false;
+    }
+
+    /** Ask the host for `path`: a file the toolbar opens is named in the field when it arrives. */
+    private open(path: string, options?: { skipSave?: boolean; find?: string }) {
+        this.opening = path;
+        this.host.openFile(path, options);
     }
 
     /** A query's file and, after `#`, the lines asked for (`src/a.ts#L3-L9`). */
@@ -965,7 +977,7 @@ export class ToolbarCore {
         const path = lines ? result.id + lines : result.id;
         this.input.value = path;
         this.setResults([]);
-        this.host.openFile(path, result.match === 'content' ? { find: query } : undefined);
+        this.open(path, result.match === 'content' ? { find: query } : undefined);
     }
 
     private handleCommandResult(command: CommandResult) {
@@ -1123,7 +1135,7 @@ export class ToolbarCore {
             this.exitBrowseMode();
             this.input.value = path;
             this.setResults([]);
-            this.host.openFile(path);
+            this.open(path);
         } else {
             this.browseMode.currentPath = entry.fullPath;
             this.browseMode.filter = '';
@@ -1304,14 +1316,14 @@ export class ToolbarCore {
         await this.fileOps.create(pathToOpen, '', { overwrite: true }).catch(console.error);
         this.host.notifyFileChanged?.(pathToOpen, FileChangeType.Created);
         this.setResults([]);
-        this.host.openFile(pathToOpen);
+        this.open(pathToOpen);
     }
 
     private async createAndOpenFile(pathToOpen: string) {
         await this.fileOps.create(pathToOpen, this.host.getDocContent(), { overwrite: true }).catch(console.error);
         this.host.notifyFileChanged?.(pathToOpen, FileChangeType.Created);
         this.setResults([]);
-        this.host.openFile(pathToOpen);
+        this.open(pathToOpen);
     }
 
     private async performRename(oldPath: string, newPath: string) {
@@ -1328,7 +1340,7 @@ export class ToolbarCore {
         this.host.notifyFileChanged?.(oldPath, FileChangeType.Deleted);
         this.host.notifyFileChanged?.(newPath, FileChangeType.Created);
         this.setResults([]);
-        this.host.openFile(newPath, { skipSave: true });
+        this.open(newPath, { skipSave: true });
     }
 
     private async importFiles(files: FileList) {
@@ -1342,7 +1354,7 @@ export class ToolbarCore {
         }
         if (files.length > 0) {
             const first = files[0].webkitRelativePath || files[0].name;
-            this.host.openFile(first);
+            this.open(first);
         }
     }
 

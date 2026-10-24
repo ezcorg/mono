@@ -2,6 +2,5 @@
 **/node_modules
 **/dist
 
-# Vendored WASI WIT packages — fetched during setup (see wit/deps/README.md)
-/wit/deps/*
-!/wit/deps/README.md
+# wit/deps (the wasi:* packages, and ezco:ezcap as wkg prints it from
+# src/rust/ezcap/wit) is committed; `wkg wit fetch` refreshes it (wkg.toml).

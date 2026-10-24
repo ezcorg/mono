@@ -35,6 +35,9 @@ ezcap = { path = "../../../rust/ezcap", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
+# wit_tests.rs: the committed WIT copies against their sources (ezcap's wit-parser).
+wit-parser = "0.254"
+wit-component = "0.254"
 
 # Same stance as icanhaz-host: not the workspace lint set (unwrap/expect are
 # used throughout), and the two lints the wRPC bridge trips.

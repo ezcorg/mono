@@ -1,5 +1,5 @@
 # icanhaz: checked on every change (src/scripts/check-icanhaz.sh): lint, the wasm guests rebuilt
-# from the daemon's WIT, and the host + broker tests
+# from the daemon's WIT, and the host + broker tests (which check the committed WIT copies too)
 name: icanhaz
 
 on:
@@ -54,8 +54,6 @@ jobs:
           components: rustfmt, clippy
           cache-key: icanhaz-${{ matrix.os }}
           save-cache: ${{ github.ref == 'refs/heads/main' }}
-      # wkg fetches the daemon's WIT deps (wit/deps is git-ignored, pinned by wkg.lock)
-      - run: cargo install wkg --locked
       - run: src/scripts/check-icanhaz.sh
         env:
           LINT: ${{ runner.os == 'Linux' && 1 || 0 }}   # the lint-only steps once, on Linux

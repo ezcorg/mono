@@ -14,8 +14,7 @@ check=0; [ "${1:-}" = "--check" ] && check=1
 # The target, as rustup or a Nix toolchain (no rustup there) installs it.
 [ -d "$(rustc --print sysroot)/lib/rustlib/wasm32-wasip2" ] || { echo "rustup target add wasm32-wasip2" >&2; exit 1; }
 
-# The daemon's WIT deps (git-ignored, pinned by wkg.lock).
-scripts/fetch-wit.sh
+# The daemon's WIT deps are committed (wit/deps; `wkg wit fetch` refreshes them).
 
 # A guest is built on its own (each crate is outside the mono workspace) into
 # its own target directory: a global cargo target-dir would take the artifact

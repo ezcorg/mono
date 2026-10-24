@@ -6,7 +6,6 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 LINT=${LINT:-1}
-src/apps/icanhaz/scripts/fetch-wit.sh   # the broker's build script resolves the daemon's WIT, under clippy too
 if [ "$LINT" = 1 ]; then
   cargo fmt --package icanhaz-host --package icanhaz-broker --package ezcap --check
   cargo clippy --package icanhaz-host --package icanhaz-broker --package ezcap --all-targets -- -D warnings

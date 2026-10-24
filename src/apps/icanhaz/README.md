@@ -80,7 +80,7 @@ browser / editor / agent ──wRPC──▶ router ──▶ [wrapper …] ─�
 src/apps/icanhaz/
   wit/            the daemon's WIT: broker, components, configuration, the
                   capability interfaces, host.wit (raw layer), nocap.wit (types,
-                  resources.drop); deps/ fetched by `wkg wit fetch` (git-ignored)
+                  resources.drop); deps/ committed, refreshed by `wkg wit fetch`
   broker/         icanhaz-broker: grant store, scopes, certificates, consent,
                   pairings, durable state (also embedded by witmproxy)
   host/           icanhaz-host: the daemon (serving layer, router, raw layer,
@@ -103,7 +103,7 @@ src/apps/icanhaz/
 ## Running it
 
 Build the wasm guests once (the shipped capabilities and the test fixtures,
-from the daemon's WIT; needs `wkg` and the `wasm32-wasip2` target):
+from the daemon's WIT; needs the `wasm32-wasip2` target):
 
 ```sh
 src/apps/icanhaz/scripts/build-wasm.sh

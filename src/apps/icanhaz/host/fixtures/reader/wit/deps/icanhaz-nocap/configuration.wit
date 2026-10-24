@@ -45,6 +45,13 @@ interface configuration {
 
   /// Every instance under `owner-prefix`, values unmasked, and the revision.
   configured: func(owner-prefix: string) -> result<snapshot, string>;
+
+  /// Set one configured instance of `capability` from the daemon's own
+  /// declarations or another host's (the tray's form, from the command
+  /// line). A blank secret keeps the stored one. Local hosts only.
+  configure: func(capability: string, instance: string, inputs: list<user-input>) -> result<_, string>;
+  /// Remove one configured instance. Local hosts only.
+  unconfigure: func(capability: string, instance: string) -> result<bool, string>;
 }
 
 world configuration-wrpc {

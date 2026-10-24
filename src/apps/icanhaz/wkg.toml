@@ -1,6 +1,7 @@
-# wkg fetches the wasi:* packages from the registry (see wkg.lock and
-# wit/deps/README.md). ezco:ezcap is a workspace-local package owned by
-# src/rust/ezcap; this override makes `wkg wit fetch` copy it from that
-# path into the git-ignored wit/deps/ instead of looking for it in a registry.
+# `wkg wit fetch` refreshes wit/deps, which is committed: the wasi:* packages
+# from the registry (pinned by wkg.lock), and ezco:ezcap, a workspace-local
+# package owned by src/rust/ezcap, which this override copies from that path
+# instead of looking for it in a registry. The broker's tests check both the
+# copy and the fixtures' vendored copies against their sources.
 [overrides]
 "ezco:ezcap" = { path = "../../rust/ezcap/wit" }

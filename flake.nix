@@ -45,7 +45,7 @@
               just
               git
               wasm-tools
-              wkg              # fetches icanhaz's WIT deps (src/apps/icanhaz/scripts/fetch-wit.sh)
+              wkg              # icanhaz's WIT deps (`wkg wit fetch`), the plugin WIT package (publish-wit.sh)
               # Portable Linux release binaries from a NixOS host: `cargo zigbuild
               # --target x86_64-unknown-linux-gnu.2.28` links against an old glibc
               # instead of the Nix store's.
