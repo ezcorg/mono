@@ -152,6 +152,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+      # cel-cpp (cel-cxx-ffi's build script) is built by Bazel with the dev shell's clang, whose
+      # builtin headers (arm_neon.h) lie outside the module map Bazel writes for it, so abseil
+      # fails the layering check. It is a lint; off for this build. (The VM is disposable.)
+      - if: runner.os == 'macOS'
+        run: printf 'build --features=-layering_check --host_features=-layering_check\n' >> ~/.bazelrc
       - run: nix develop -c src/scripts/build-witm.sh ${{ matrix.target }} ${{ matrix.artifact }} "${{ needs.meta.outputs.version }}"
         env:
           ZIGBUILD: ${{ matrix.zigbuild }}
