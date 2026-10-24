@@ -46,11 +46,10 @@
               git
               wasm-tools
               wkg              # icanhaz's WIT deps (`wkg wit fetch`), the plugin WIT package (publish-wit.sh)
-              # Portable Linux release binaries from a NixOS host: `cargo zigbuild
-              # --target x86_64-unknown-linux-gnu.2.28` links against an old glibc
-              # instead of the Nix store's.
+              # Portable Linux release binaries from a NixOS host (build-witm.sh,
+              # ZIGBUILD=1): `cargo zigbuild` links against glibc 2.28 instead of
+              # the Nix store's. It brings its own zig.
               cargo-zigbuild
-              zig_0_14
               perl             # openssl-src (vendored by sqlcipher) configures with perl
             ] ++ lib.optionals stdenv.isDarwin [ libiconv ]
               # Browser for the vitest browser tests; the Linux CI image also
