@@ -4,6 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 src/scripts/set-version.sh src/apps/witmproxy/Cargo.toml "$1"
+src/apps/icanhaz/scripts/fetch-wit.sh   # icanhaz-broker's build script resolves icanhaz's WIT (deps fetched, not committed)
 cd src/apps/witmproxy
 cargo build --release
 cargo package --list

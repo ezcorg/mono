@@ -4,6 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 target=$1 artifact=$2 version=${3:-}
 [ -n "$version" ] && src/scripts/set-version.sh src/apps/witmproxy/Cargo.toml "$version"
+# witmproxy builds icanhaz-broker, whose build script resolves icanhaz's WIT: its deps are fetched, not committed.
+src/apps/icanhaz/scripts/fetch-wit.sh
 if [ "${ZIGBUILD:-0}" = 1 ]; then
   # On a NixOS runner a plain cargo build links against the Nix store's glibc.
   # zig as the linker targets glibc 2.28 instead, so the binary runs anywhere.
