@@ -30,8 +30,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: version to publish (e.g. 0.0.8)
-        required: true
+        description: version to publish (e.g. 0.0.8); empty just builds the binaries
+        required: false
         type: string
       dry_run:
         description: build and package, publish nothing
