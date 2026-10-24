@@ -47,7 +47,7 @@ describe('Slash commands', () => {
         const editor = await typing('Hello')
         await userEvent.keyboard('{Enter}/')
         await waitFor(() => !!menu(), 2000)
-        expect(titles()).toEqual(['Heading 1', 'Heading 2', 'Heading 3', 'Bullet list', 'Numbered list', 'Task list', 'Code block', 'Quote', 'Callout', 'Math block', 'Footnote', 'Table', 'Divider'])
+        expect(titles()).toEqual(['Heading 1', 'Heading 2', 'Heading 3', 'Bullet list', 'Numbered list', 'Task list', 'Code block', 'Quote', 'Callout', 'Math block', 'Footnote', 'Table', 'Divider', 'Front matter'])
         expect(selected()).toBe('Heading 1')
         expect(rows()[0].getAttribute('aria-selected')).toBe('true')
         expect(rows()[1].getAttribute('aria-selected')).toBe('false')

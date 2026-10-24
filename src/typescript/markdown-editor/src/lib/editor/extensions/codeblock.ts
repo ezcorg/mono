@@ -672,6 +672,18 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 });
                 // Where the lines are is the file's doing, not an edit to undo.
                 if (current.attrs.file === newFile && current.attrs.language === newLang) tr.setMeta('addToHistory', false);
+                // An unnamed block given a language with services (the
+                // toolbar's "Create new file", its naming skipped) is built
+                // again so it gets its stand-in file, as a fence of that
+                // language read from the note would: this view was made
+                // without one. The new view takes the focus (not the
+                // toolbar, as a fence just typed would).
+                const standIn = newFile === null && current.attrs.file === null && this.options.standIns && shadowPath(tr.doc, pos, tr.doc.nodeAt(pos)!, persistenceOf(editor)?.options.filepath) !== null;
+                if (standIn) {
+                    adoptingStandIn.add(tr.doc.nodeAt(pos)!);
+                    view.dispatch(tr);
+                    return;
+                }
                 updating = true;
                 try {
                     view.dispatch(tr);
@@ -777,7 +789,8 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             }, true);
 
             // Track whether this codeblock was created empty (e.g. via ``` input rule)
-            const wasCreatedEmpty = !node.textContent && !node.attrs.file;
+            const adopting = adoptingStandIn.has(node);
+            const wasCreatedEmpty = !node.textContent && !node.attrs.file && !adopting;
 
             // Use the editor's filesystem if available (so codeblocks can resolve
             // file references seeded into the same filesystem), otherwise fall back
@@ -857,6 +870,12 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                             toolbarInput.focus();
                             toolbarInput.click();
                         }
+                    });
+                } else if (adopting) {
+                    // Built again for its stand-in: the code is where to type next.
+                    adoptingStandIn.delete(node);
+                    requestAnimationFrame(() => {
+                        if (!destroyed) cm.focus();
                     });
                 }
             }).catch(error => {
@@ -987,6 +1006,9 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
 });
 
 const standInCleanups = new WeakMap<object, () => void>();
+/** Blocks whose view is being built again to take a stand-in file (see
+ *  `syncFileAttrs`): the new view focuses the code, not the toolbar. */
+const adoptingStandIn = new WeakSet<PMNode>();
 
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {

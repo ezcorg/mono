@@ -174,3 +174,63 @@ describe('Markdown block-level paste', () => {
         expect(ourHandlerReturn).toBe(false)
     })
 })
+
+describe('Front matter pasted', () => {
+    let editor: MarkdownEditor
+    let container: HTMLElement
+
+    beforeEach(async () => {
+        container = createTestContainer('md-paste-fm')
+        editor = createEditor({ element: container, content: '' })
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+        editor.commands.focus('end')
+    })
+
+    afterEach(() => {
+        cleanupEditor(editor, container)
+    })
+
+    function paste(text: string): boolean {
+        const dt = new DataTransfer()
+        dt.setData('text/plain', text)
+        dt.setData('text/html', `<meta charset="utf-8">${text}`)
+        const ev = new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })
+        editor.view.dom.dispatchEvent(ev)
+        return ev.defaultPrevented
+    }
+
+    const kinds = () => editor.state.doc.content.content.map((node) => node.type.name)
+
+    it('at the top of a note without any becomes the note’s front matter, the rest its body', () => {
+        const text = '---\nid: X\ntags: [a]\n---\n\n# Title\n\nBody.'
+        expect(paste(text)).toBe(true)
+        expect(kinds()).toEqual(['frontMatter', 'heading', 'paragraph'])
+        expect(getMarkdownContent(editor)).toBe(text)
+    })
+
+    it('alone at the top is the front matter, and nothing else is added', () => {
+        expect(paste('---\nid: X\n---')).toBe(true)
+        expect(editor.state.doc.firstChild?.type.name).toBe('frontMatter')
+        expect(editor.state.doc.firstChild?.textContent).toBe('id: X')
+    })
+
+    it('anywhere else reads as the file would read it: a divider and a heading, never front matter', () => {
+        editor.commands.setContent('# A\n\nB')
+        editor.commands.focus('end')
+        expect(paste('---\nkey: value\n---')).toBe(true)
+        expect(kinds()).not.toContain('frontMatter')
+        expect(kinds()).toContain('horizontalRule')
+        expect(editor.state.doc.firstChild?.type.name).toBe('heading')
+        expect(editor.state.doc.firstChild?.textContent).toBe('A')
+        // `key: value` over dashes is a setext heading.
+        expect(editor.state.doc.content.content.some((n) => n.type.name === 'heading' && n.textContent === 'key: value')).toBe(true)
+    })
+
+    it('at the top of a note that has front matter already is not a second block of it', () => {
+        editor.commands.setContent('---\nid: X\n---\n\nBody')
+        editor.commands.setTextSelection(editor.state.doc.firstChild!.nodeSize + 1)
+        expect(paste('---\nother: 1\n---\n\nMore')).toBe(true)
+        expect(kinds().filter((k) => k === 'frontMatter')).toEqual(['frontMatter'])
+        expect(editor.state.doc.firstChild?.textContent).toBe('id: X')
+    })
+})

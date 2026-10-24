@@ -1,7 +1,7 @@
 import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey, TextSelection, AllSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
-import { ContextMenu } from '../ui/context-menu'
+import { ContextMenu, sectioned } from '../ui/context-menu'
 import { button, pressable } from '../ui/dom'
 import { menuPopover, type Popover } from '../ui/popover'
 
@@ -18,11 +18,24 @@ import { menuPopover, type Popover } from '../ui/popover'
  * one the block-action indicator uses). Unlike the slash menu — where the
  * user is still typing and focus must stay in the editor — here we *want*
  * focus to move into the menu, which is exactly what `ContextMenu` does.
+ *
+ * The menu is divided (a line between sections) by what an action acts on:
+ * the text itself (its marks, a link, clearing them), the block the
+ * selection is in (what it can become), the list it is in (its depth), and
+ * the rest (a comment, a model's rewrite).
  */
+
+/** The sections of the selection menu. */
+const TEXT = 'Text'
+const BLOCK = 'Block'
+const LIST = 'List'
+const MORE = 'More'
 
 interface SelectionAction {
     label: string
     icon: string
+    /** The section it stands in, under a heading. */
+    section: string
     isActive?: (editor: Editor) => boolean
     /** Hide the action entirely when it can't apply to this selection. */
     isAvailable?: (editor: Editor) => boolean
@@ -62,6 +75,7 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         actions.push({
             label: 'Bold',
             icon: 'B',
+            section: TEXT,
             isActive: (e) => e.isActive('bold'),
             run: (e) => e.chain().focus().toggleBold().run(),
         })
@@ -70,6 +84,7 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         actions.push({
             label: 'Italic',
             icon: 'I',
+            section: TEXT,
             isActive: (e) => e.isActive('italic'),
             run: (e) => e.chain().focus().toggleItalic().run(),
         })
@@ -78,6 +93,7 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         actions.push({
             label: 'Strikethrough',
             icon: 'S',
+            section: TEXT,
             isActive: (e) => e.isActive('strike'),
             run: (e) => e.chain().focus().toggleStrike().run(),
         })
@@ -86,6 +102,7 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         actions.push({
             label: 'Inline code',
             icon: '</>',
+            section: TEXT,
             isActive: (e) => e.isActive('code'),
             run: (e) => e.chain().focus().toggleCode().run(),
         })
@@ -94,6 +111,7 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         actions.push({
             label: 'Link',
             icon: '🔗',
+            section: TEXT,
             isActive: (e) => e.isActive('link'),
             // A selection that is all link: the link taken off it (and off
             // it alone: the rest of a link that reaches past the selection
@@ -112,21 +130,32 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         })
     }
 
+    // The marks taken off what is selected: the text's, as the marks are.
+    actions.push({
+        label: 'Clear formatting',
+        icon: '⌫',
+        section: TEXT,
+        run: (e) => e.chain().focus().unsetAllMarks().run(),
+    })
+
     actions.push({
         label: 'Heading 1',
         icon: 'H1',
+        section: BLOCK,
         isAvailable: (e) => e.can().setHeading({ level: 1 }),
         run: (e) => e.chain().focus().setHeading({ level: 1 }).run(),
     })
     actions.push({
         label: 'Heading 2',
         icon: 'H2',
+        section: BLOCK,
         isAvailable: (e) => e.can().setHeading({ level: 2 }),
         run: (e) => e.chain().focus().setHeading({ level: 2 }).run(),
     })
     actions.push({
         label: 'Quote',
         icon: '“',
+        section: BLOCK,
         isAvailable: (e) => e.can().toggleBlockquote(),
         isActive: (e) => e.isActive('blockquote'),
         run: (e) => e.chain().focus().toggleBlockquote().run(),
@@ -137,6 +166,7 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
     actions.push({
         label: 'Indent',
         icon: '⇥',
+        section: LIST,
         isAvailable: (e) => {
             const t = listItemTypeAt(e)
             return !!t && e.can().sinkListItem(t)
@@ -149,6 +179,7 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
     actions.push({
         label: 'Outdent',
         icon: '⇤',
+        section: LIST,
         isAvailable: (e) => {
             const t = listItemTypeAt(e)
             return !!t && e.can().liftListItem(t)
@@ -159,23 +190,17 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         },
     })
 
-    actions.push({
-        label: 'Clear formatting',
-        icon: '⌫',
-        run: (e) => e.chain().focus().unsetAllMarks().run(),
-    })
-
     // A comment on the selection, when the host says who is writing.
     const comments = (editor.storage as any).comments as { author?: () => string | null } | undefined
     if (comments?.author?.()) {
-        actions.push({ label: 'Comment', icon: '💬', run: (e) => void e.commands.startComment() })
+        actions.push({ label: 'Comment', icon: '💬', section: MORE, run: (e) => void e.commands.startComment() })
     }
 
     // Prose actions, when the host gave the editor a model.
     const ai = (editor.storage as any).proseAI as { inference?: unknown; actions: { id: string; label: string }[] } | undefined
     if (ai?.inference) {
         for (const action of ai.actions) {
-            actions.push({ label: action.label, icon: '✦', run: (e) => void e.commands.runProseAction(action.id) })
+            actions.push({ label: action.label, icon: '✦', section: MORE, run: (e) => void e.commands.runProseAction(action.id) })
         }
     }
 
@@ -386,7 +411,7 @@ class SelectionMenuView {
 
         const menu = new ContextMenu({
             className: 'ezco-mde-selection-menu',
-            items: actions.map((action) => ({
+            items: sectioned(actions, (action) => ({
                 label: action.isActive?.(this.editor)
                     ? `${action.label} ✓`
                     : action.label,

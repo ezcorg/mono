@@ -88,7 +88,11 @@ describe('Selection menu', () => {
         const { editor, container } = await make(`Hello **world** paragraph.`)
         await select(editor, container, WORLD.from, WORLD.to)
         const open = await openMenu(container)
-        expect(menuLabels(open)).toEqual(['Bold ✓', 'Italic', 'Strikethrough', 'Inline code', 'Link', 'Heading 1', 'Heading 2', 'Quote', 'Clear formatting'])
+        // In sections, a line between: the text's own actions (its marks,
+        // and clearing them), then what the block can become.
+        expect(open.querySelectorAll('.ezco-mde-context-menu-separator').length).toBe(1)
+        expect(open.querySelector('.ezco-mde-context-menu-separator')?.nextElementSibling).toBe(menuItem('Heading 1', open))
+        expect(menuLabels(open)).toEqual(['Bold ✓', 'Italic', 'Strikethrough', 'Inline code', 'Link', 'Clear formatting', 'Heading 1', 'Heading 2', 'Quote'])
         expect(focused()).toBe('Bold ✓')
         // The menu stands to the right of the button, in the reading flow.
         expect(open.getBoundingClientRect().left).toBeGreaterThanOrEqual(button(container).getBoundingClientRect().right)
@@ -258,9 +262,9 @@ describe('Selection menu', () => {
         expect(focused()).toBe('Strikethrough')
         await userEvent.keyboard('{ArrowUp}')
         expect(focused()).toBe('Italic')
-        // Up from the first wraps to the last.
+        // Up from the first wraps to the last (the line between is passed over).
         await userEvent.keyboard('{ArrowUp}{ArrowUp}')
-        expect(focused()).toBe('Clear formatting')
+        expect(focused()).toBe('Quote')
         await userEvent.keyboard('{ArrowDown}{ArrowDown}')
         expect(focused()).toBe('Italic')
         // The keys went to the menu, not the note: nothing typed, nothing moved.

@@ -57,7 +57,7 @@ import { Composer } from './comment-composer'
 import { inlineKey } from './comment-inline'
 import { byline, clearDraft, draftKey, readDraft, renderReadOnly, when, writeDraft, type ReadOnlyView } from './comment-render'
 import { openReactionPicker, reactionGrid } from './emoji-picker'
-import { ContextMenu, isSeparator, type ContextMenuEntry, type ContextMenuItem } from '../ui/context-menu'
+import { ContextMenu, isItem, type ContextMenuEntry, type ContextMenuItem } from '../ui/context-menu'
 import { button, el, glyph, labelled, pressable } from '../ui/dom'
 import { CHEVRON_DOWN_ICON, CLOSE_ICON, FACE_ICON, FILE_ICON, stroke, svg } from '../ui/icons'
 import { readKept, writeKept } from '../ui/kept'
@@ -231,15 +231,15 @@ function openMenu(anchor: HTMLElement, items: ContextMenuEntry[], onClose: () =>
     const menu = new ContextMenu({
         className: 'ezco-mde-comment-menu',
         items: items.map((item) =>
-            isSeparator(item)
-                ? item
-                : {
+            isItem(item)
+                ? {
                       ...item,
                       onSelect: () => {
                           close()
                           item.onSelect()
                       },
-                  },
+                  }
+                : item,
         ),
         onClose: close,
     })

@@ -3,7 +3,7 @@ import { NodeSelection, Plugin, PluginKey, Selection, TextSelection } from '@tip
 import type { EditorView } from '@tiptap/pm/view'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { caretRect, menuPopover, type Popover } from '../ui/popover'
-import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
+import { ContextMenu, sectioned, type ContextMenuEntry } from '../ui/context-menu'
 import { foldsOf, type Fold } from './folding'
 import { button, el, labelled, pressable } from '../ui/dom'
 import { observeResize, rafThrottle, resolveMount, type Mount } from '../ui/layout'
@@ -29,9 +29,15 @@ export interface BlockActionsOptions {
     mount?: BlockActionsMount
 }
 
-interface BlockAction {
+export interface BlockAction {
     label: string
     icon: string
+    /** The section of the menu it stands in ("Turn into", "List", "Rows";
+     *  "Block" for what any block can do), under a heading; none for an
+     *  item on its own at the top. */
+    section?: string
+    /** A setting rather than an action: on or off, shown as a switch. */
+    checked?: boolean
     run: (ctx: { editor: Editor; pos: number; node: PMNode }) => void
 }
 
@@ -382,6 +388,7 @@ export function actionsForNode(node: PMNode, editor?: Editor): BlockAction[] {
         extras.push({
             label: 'Comment',
             icon: '❝',
+            section: BLOCK,
             run: ({ editor, pos, node }) => {
                 const { doc } = editor.state
                 const selection = node.isLeaf || node.isAtom ? NodeSelection.create(doc, pos) : TextSelection.between(doc.resolve(pos + 1), doc.resolve(pos + node.nodeSize - 1))
@@ -391,17 +398,24 @@ export function actionsForNode(node: PMNode, editor?: Editor): BlockAction[] {
         })
     }
     if (name !== 'frontMatter' && name !== 'horizontalRule') {
-        extras.push({ label: 'Fold', icon: FOLD_ICON, run: ({ editor, pos, node }) => editor.commands.foldBlocks(pos, pos + node.nodeSize) })
+        extras.push({ label: 'Fold', icon: FOLD_ICON, section: BLOCK, run: ({ editor, pos, node }) => editor.commands.foldBlocks(pos, pos + node.nodeSize) })
     }
     if (!extras.length) return actions
     const last = actions[actions.length - 1]
     return last?.label.startsWith('Delete') ? [...actions.slice(0, -1), ...extras, last] : [...actions, ...extras]
 }
 
+/** The sections a block's menu is divided into, by what an action is for:
+ *  what the block can become, what its own kind can do (a list's markers,
+ *  a table's rows), and what any block can (`BLOCK`, last). */
+const TURN_INTO = 'Turn into'
+const BLOCK = 'Block'
+
 function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
     const remove: BlockAction = {
         label: 'Delete',
         icon: '✕',
+        section: BLOCK,
         run: ({ editor, pos, node }) => {
             // Use TipTap's command chain (not a raw `tr.delete` dispatch)
             // so the editor regains focus and ProseMirror maps the
@@ -420,31 +434,38 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
     const toParagraph: BlockAction = {
         label: 'Paragraph',
         icon: '¶',
+        section: TURN_INTO,
         run: ({ editor }) => editor.chain().focus().setParagraph().run(),
     }
 
+    /** `action` in the "Turn into" section. */
+    const into = (label: string, icon: string, run: BlockAction['run']): BlockAction => ({ label, icon, section: TURN_INTO, run })
+
     switch (node.type.name) {
         case 'frontMatter': {
-            // The note's properties: open them, choose whether they fold
-            // away when not being edited (the mark says they do), or drop them.
+            // The note's properties: open them, add one, choose whether they
+            // fold away when not being edited (a switch), or drop them. The
+            // same list whether the YAML is open, folded or being typed in:
+            // nothing here turns into a heading or a paragraph.
             const folds = (editor?.storage as { frontMatter?: { autoCollapse: boolean } } | undefined)?.frontMatter?.autoCollapse ?? true
             return [
-                { label: 'Edit properties', icon: '✎', run: ({ editor }) => editor.commands.editFrontMatter() },
-                { label: `${folds ? '✓ ' : ''}Collapse when not editing`, icon: '⇅', run: ({ editor }) => editor.commands.setFrontMatterAutoCollapse(!folds) },
+                { label: 'Edit properties', icon: '✎', section: 'Properties', run: ({ editor }) => editor.commands.editFrontMatter() },
+                { label: 'Add property', icon: '+', section: 'Properties', run: ({ editor }) => editor.commands.addFrontMatterProperty() },
+                { label: 'Collapse when not editing', icon: '⇅', section: 'Properties', checked: folds, run: ({ editor }) => editor.commands.setFrontMatterAutoCollapse(!folds) },
                 remove,
             ]
         }
         case 'paragraph':
             return [
-                { label: 'Heading 1', icon: 'H1', run: ({ editor }) => editor.chain().focus().setHeading({ level: 1 }).run() },
-                { label: 'Heading 2', icon: 'H2', run: ({ editor }) => editor.chain().focus().setHeading({ level: 2 }).run() },
-                { label: 'Heading 3', icon: 'H3', run: ({ editor }) => editor.chain().focus().setHeading({ level: 3 }).run() },
-                { label: 'Bullet list', icon: '•', run: ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'bullet' }).run() },
-                { label: 'Dashed list', icon: '–', run: ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'dash' }).run() },
-                { label: 'Numbered list', icon: '1.', run: ({ editor }) => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: null }).run() },
-                { label: 'Lettered list', icon: 'a.', run: ({ editor }) => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: 'a' }).run() },
-                { label: 'Task list', icon: '☐', run: ({ editor }) => editor.chain().focus().toggleTaskList().run() },
-                { label: 'Quote', icon: '"', run: ({ editor }) => editor.chain().focus().toggleBlockquote().run() },
+                into('Heading 1', 'H1', ({ editor }) => editor.chain().focus().setHeading({ level: 1 }).run()),
+                into('Heading 2', 'H2', ({ editor }) => editor.chain().focus().setHeading({ level: 2 }).run()),
+                into('Heading 3', 'H3', ({ editor }) => editor.chain().focus().setHeading({ level: 3 }).run()),
+                into('Bullet list', '•', ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'bullet' }).run()),
+                into('Dashed list', '–', ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'dash' }).run()),
+                into('Numbered list', '1.', ({ editor }) => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: null }).run()),
+                into('Lettered list', 'a.', ({ editor }) => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: 'a' }).run()),
+                into('Task list', '☐', ({ editor }) => editor.chain().focus().toggleTaskList().run()),
+                into('Quote', '"', ({ editor }) => editor.chain().focus().toggleBlockquote().run()),
                 remove,
             ]
         case 'heading': {
@@ -453,28 +474,25 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
             return [
                 ...levels
                     .filter((l) => l !== current)
-                    .map<BlockAction>((l) => ({
-                        label: `Heading ${l}`,
-                        icon: `H${l}`,
-                        run: ({ editor }) => editor.chain().focus().setHeading({ level: l }).run(),
-                    })),
+                    .map<BlockAction>((l) => into(`Heading ${l}`, `H${l}`, ({ editor }) => editor.chain().focus().setHeading({ level: l }).run())),
                 toParagraph,
                 remove,
             ]
         }
         case 'bulletList': {
             // Offer the *other* marker so a bullet (•) list can become a
-            // dashed (–) list and vice-versa.
+            // dashed (–) list and vice-versa: the list's own affair, not a
+            // conversion.
             const isDash = (node.attrs as { marker?: string }).marker === 'dash'
             const markerSwap: BlockAction = isDash
-                ? { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) }
-                : { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) }
+                ? { label: 'Bullet list', icon: '•', section: 'List', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) }
+                : { label: 'Dashed list', icon: '–', section: 'List', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) }
             return [
+                into('Numbered list', '1.', ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList')),
+                into('Lettered list', 'a.', ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { type: 'a' })),
+                into('Task list', '☐', ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList')),
                 markerSwap,
-                { label: 'Numbered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
-                { label: 'Lettered list', icon: 'a.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { type: 'a' }) },
-                { label: 'Task list', icon: '☐', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList') },
-                { label: 'Lift to paragraphs', icon: '¶', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
+                { label: 'Lift to paragraphs', icon: '¶', section: 'List', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
                 remove,
             ]
         }
@@ -482,59 +500,45 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
             // Numbers or letters: the other is offered.
             const lettered = (node.attrs as { type?: string | null }).type === 'a' || (node.attrs as { type?: string | null }).type === 'A'
             const countSwap: BlockAction = lettered
-                ? { label: 'Numbered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { ...node.attrs, type: null }) }
-                : { label: 'Lettered list', icon: 'a.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { ...node.attrs, type: 'a' }) }
+                ? { label: 'Numbered list', icon: '1.', section: 'List', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { ...node.attrs, type: null }) }
+                : { label: 'Lettered list', icon: 'a.', section: 'List', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { ...node.attrs, type: 'a' }) }
             return [
+                into('Bullet list', '•', ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' })),
+                into('Dashed list', '–', ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' })),
+                into('Task list', '☐', ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList')),
                 countSwap,
-                { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) },
-                { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) },
-                { label: 'Task list', icon: '☐', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList') },
-                { label: 'Lift to paragraphs', icon: '¶', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
+                { label: 'Lift to paragraphs', icon: '¶', section: 'List', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
                 remove,
             ]
         }
-        case 'taskList':
+        case 'taskList': {
+            const markAll = (checked: boolean) => ({ editor, pos, node }: Parameters<BlockAction['run']>[0]) => {
+                const tr = editor.state.tr
+                node.descendants((child, offset) => {
+                    if (child.type.name === 'taskItem') {
+                        tr.setNodeMarkup(pos + 1 + offset, undefined, { ...child.attrs, checked })
+                    }
+                    return true
+                })
+                editor.view.dispatch(tr)
+            }
             return [
-                { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) },
-                { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) },
-                { label: 'Numbered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
-                { label: 'Lettered list', icon: 'a.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { type: 'a' }) },
-                {
-                    label: 'Mark all complete',
-                    icon: '☑',
-                    run: ({ editor, pos, node }) => {
-                        const tr = editor.state.tr
-                        node.descendants((child, offset) => {
-                            if (child.type.name === 'taskItem') {
-                                tr.setNodeMarkup(pos + 1 + offset, undefined, { ...child.attrs, checked: true })
-                            }
-                            return true
-                        })
-                        editor.view.dispatch(tr)
-                    },
-                },
-                {
-                    label: 'Mark all incomplete',
-                    icon: '☐',
-                    run: ({ editor, pos, node }) => {
-                        const tr = editor.state.tr
-                        node.descendants((child, offset) => {
-                            if (child.type.name === 'taskItem') {
-                                tr.setNodeMarkup(pos + 1 + offset, undefined, { ...child.attrs, checked: false })
-                            }
-                            return true
-                        })
-                        editor.view.dispatch(tr)
-                    },
-                },
-                { label: 'Lift to paragraphs', icon: '¶', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
+                into('Bullet list', '•', ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' })),
+                into('Dashed list', '–', ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' })),
+                into('Numbered list', '1.', ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList')),
+                into('Lettered list', 'a.', ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { type: 'a' })),
+                { label: 'Mark all complete', icon: '☑', section: 'Tasks', run: markAll(true) },
+                { label: 'Mark all incomplete', icon: '☐', section: 'Tasks', run: markAll(false) },
+                { label: 'Lift to paragraphs', icon: '¶', section: 'List', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
                 remove,
             ]
+        }
         case 'blockquote':
             return [
                 {
                     label: 'Unwrap quote',
                     icon: '⇤',
+                    section: 'Quote',
                     // Lift the *entire* quote's content out, not just the
                     // block under the cursor — replace the blockquote node
                     // with its children.
@@ -581,6 +585,7 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
                 {
                     label: 'Copy contents',
                     icon: '⎘',
+                    section: 'Code',
                     run: ({ node }) => {
                         if (typeof navigator !== 'undefined' && navigator.clipboard) {
                             navigator.clipboard.writeText(node.textContent).catch(() => { })
@@ -591,14 +596,14 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
             ]
         case 'table':
             return [
-                { label: 'Add row above', icon: '↑', run: ({ editor }) => editor.chain().focus().addRowBefore().run() },
-                { label: 'Add row below', icon: '↓', run: ({ editor }) => editor.chain().focus().addRowAfter().run() },
-                { label: 'Add column before', icon: '←', run: ({ editor }) => editor.chain().focus().addColumnBefore().run() },
-                { label: 'Add column after', icon: '→', run: ({ editor }) => editor.chain().focus().addColumnAfter().run() },
-                { label: 'Delete row', icon: '⊟', run: ({ editor }) => editor.chain().focus().deleteRow().run() },
-                { label: 'Delete column', icon: '⊠', run: ({ editor }) => editor.chain().focus().deleteColumn().run() },
-                { label: 'Toggle header row', icon: '⇎', run: ({ editor }) => editor.chain().focus().toggleHeaderRow().run() },
-                { label: 'Delete table', icon: '✕', run: ({ editor }) => editor.chain().focus().deleteTable().run() },
+                { label: 'Add row above', icon: '↑', section: 'Rows', run: ({ editor }) => editor.chain().focus().addRowBefore().run() },
+                { label: 'Add row below', icon: '↓', section: 'Rows', run: ({ editor }) => editor.chain().focus().addRowAfter().run() },
+                { label: 'Delete row', icon: '⊟', section: 'Rows', run: ({ editor }) => editor.chain().focus().deleteRow().run() },
+                { label: 'Add column before', icon: '←', section: 'Columns', run: ({ editor }) => editor.chain().focus().addColumnBefore().run() },
+                { label: 'Add column after', icon: '→', section: 'Columns', run: ({ editor }) => editor.chain().focus().addColumnAfter().run() },
+                { label: 'Delete column', icon: '⊠', section: 'Columns', run: ({ editor }) => editor.chain().focus().deleteColumn().run() },
+                { label: 'Toggle header row', icon: '⇎', section: 'Table', run: ({ editor }) => editor.chain().focus().toggleHeaderRow().run() },
+                { label: 'Delete table', icon: '✕', section: BLOCK, run: ({ editor }) => editor.chain().focus().deleteTable().run() },
             ]
         case 'horizontalRule':
             return [remove]
@@ -836,7 +841,12 @@ class BlockActionsView {
         const node = doc.nodeAt(pos)
         if (!node) return
         if (this.isOpen) this.closeMenu()
-        const selection = node.isLeaf || node.isAtom || node.type.name === 'ezcodeBlock' ? NodeSelection.create(doc, pos) : Selection.near(doc.resolve(pos + 1), 1)
+        // A code block's or the front matter's text is its own editor's: the
+        // block is selected whole (a caret sent into the front matter would
+        // be moved on to the body, and the body's block would be the active
+        // one, with the wrong menu).
+        const whole = node.isLeaf || node.isAtom || node.type.name === 'ezcodeBlock' || node.type.name === 'frontMatter'
+        const selection = whole ? NodeSelection.create(doc, pos) : Selection.near(doc.resolve(pos + 1), 1)
         this.view.dispatch(this.view.state.tr.setSelection(selection).scrollIntoView())
         this.view.focus()
         this.reposition()
@@ -1009,9 +1019,9 @@ class BlockActionsView {
     private buildSpanningMenuItems(span: {
         from: number
         to: number
-    }): ContextMenuItem[] {
+    }): ContextMenuEntry[] {
         const editor = this.editor
-        const items: ContextMenuItem[] = []
+        const items: ContextMenuEntry[] = []
         const add = (label: string, icon: string, can: boolean, run: () => void) => {
             if (!can) return
             items.push({
@@ -1046,6 +1056,7 @@ class BlockActionsView {
         }
 
         // What any blocks can: a comment on the selection, the blocks folded.
+        items.push({ type: 'separator' })
         if (canComment(editor)) {
             items.push({
                 label: 'Comment',
@@ -1224,8 +1235,9 @@ class BlockActionsView {
 
         // Build the menu items. A multi-block selection gets the spanning
         // actions (whatever can apply to every block in the range); a single
-        // block gets that block's own actions.
-        let items: ContextMenuItem[]
+        // block gets that block's own actions. Either way the items stand in
+        // sections, a line between one and the next.
+        let items: ContextMenuEntry[]
         const span = this.resolveSpanningSelection()
         if (span) {
             items = this.buildSpanningMenuItems(span)
@@ -1241,9 +1253,10 @@ class BlockActionsView {
             const actions = actionsForNode(this.activeNode, this.editor)
             const activeNode = this.activeNode
             const activePos = this.activePos
-            items = actions.map((action) => ({
+            items = sectioned(actions, (action) => ({
                 label: action.label,
                 icon: action.icon,
+                ...(action.checked !== undefined ? { checked: action.checked } : {}),
                 onSelect: () => {
                     // Action runs its own `.focus()` chain, which
                     // re-focuses the editor at the (possibly changed)

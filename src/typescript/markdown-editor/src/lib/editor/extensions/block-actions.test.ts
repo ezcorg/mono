@@ -494,8 +494,12 @@ describe('Block actions', () => {
         const editor = await makeEditor('# Title\n\n* one\n* two')
         const container = created[created.length - 1].container
         const open = await openGlyph(container, 1)
-        expect(menuLabels(open)).toEqual(['Dashed list', 'Numbered list', 'Lettered list', 'Task list', 'Lift to paragraphs', 'Fold', 'Delete'])
-        expect(focused()).toBe('Dashed list')
+        // The items in sections by what they are for, a line between: what
+        // the list can become, what a list can do, what any block can.
+        expect(open.querySelectorAll('.ezco-mde-context-menu-separator').length).toBe(2)
+        expect(open.querySelector('.ezco-mde-context-menu-separator')?.nextElementSibling).toBe(menuItem('Dashed list', open))
+        expect(menuLabels(open)).toEqual(['Numbered list', 'Lettered list', 'Task list', 'Dashed list', 'Lift to paragraphs', 'Fold', 'Delete'])
+        expect(focused()).toBe('Numbered list')
         // Under the glyph, in its column.
         const glyph = glyphs(container)[1].getBoundingClientRect()
         expect(open.getBoundingClientRect().top).toBeGreaterThanOrEqual(glyph.bottom - 1)
@@ -511,7 +515,7 @@ describe('Block actions', () => {
         expect(glyphs(container)[1].textContent).toBe('1.')
         editor.commands.setTextSelection(findNode(editor, 'orderedList')!.pos + 3)
         const again = await openIndicator(container)
-        expect(menuLabels(again)).toEqual(['Lettered list', 'Bullet list', 'Dashed list', 'Task list', 'Lift to paragraphs', 'Fold', 'Delete'])
+        expect(menuLabels(again)).toEqual(['Bullet list', 'Dashed list', 'Task list', 'Lettered list', 'Lift to paragraphs', 'Fold', 'Delete'])
         await userEvent.click(menuItem('Task list', again)!)
         await waitFor(() => !menu(), 2000)
         // (A task list writes itself loose, `* [ ]`: lists.test.ts.)

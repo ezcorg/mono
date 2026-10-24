@@ -72,10 +72,17 @@ body {
   background: rgba(127, 127, 127, 0.08);
 }
 
-/* Clearance for the native traffic-light buttons (top-left on macOS). They
-   are drawn at `trafficLightPosition` (tauri.conf.json): 14px in, 14px down,
-   so their 12px discs centre on the bar's 20px middle line, level with the
-   28px search field and theme toggle. */
+/* Clearance for the native traffic-light buttons (top-left on macOS). Where
+   they are drawn is `trafficLightPosition` (tauri.conf.json), but its `y` is
+   not the discs' top edge: tao (`inset_traffic_lights`) makes the native
+   title bar `y` taller than the close button's frame and leaves the button
+   where AppKit put it in that frame, so the lights land at an offset from
+   `y` that depends on the macOS version. On macOS 26 the button frame is
+   14pt tall and stands 9pt up from the bar's bottom, so the discs' centre is
+   `y - 2` from the window's top: `y: 22` centres them on this bar's 20px
+   middle line, level with the 28px search field and theme toggle (`y: 14`,
+   read as the discs' top edge, drew them 8px too high). `x` is the close
+   button's left edge, as it reads: 14px in, then 20px per button. */
 .titlebar-lights-spacer {
   flex: none;
   width: 68px;
