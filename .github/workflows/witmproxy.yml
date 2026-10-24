@@ -129,19 +129,25 @@ jobs:
       fail-fast: false
       # Built on our own hosts, in fresh VMs on the trusted pools: Linux on
       # pengutron (zig-linked against glibc 2.28, so the binary is portable),
-      # both macOS targets on galatron. Toolchains come from the workspace dev
-      # shell (flake.nix); the trusted pool may push them to the Attic cache.
+      # arm64 macOS on galatron. Toolchains come from the workspace dev shell
+      # (flake.nix); the trusted pool may push them to the Attic cache.
+      # x86_64 macOS would be a cross build on galatron, and Bazel's Apple cross
+      # toolchain (for cel-cpp) wants Xcode, which the Nix VM has none of: that
+      # one builds natively on GitHub's Intel runner, set up like the check job.
       matrix:
         include:
           - runner: [nix, linux-vm-trusted]
+            nix: true
             target: x86_64-unknown-linux-gnu
             artifact: witm-linux-x64
             zigbuild: 1
-          - runner: [nix, macos-vm-trusted]
+          - runner: macos-26-intel
+            nix: false
             target: x86_64-apple-darwin
             artifact: witm-macos-x64
             zigbuild: 0
           - runner: [nix, macos-vm-trusted]
+            nix: true
             target: aarch64-apple-darwin
             artifact: witm-macos-arm64
             zigbuild: 0
@@ -152,17 +158,27 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
+      - if: ${{ !matrix.nix }}
+        uses: ./.github/actions/rust
+        with:
+          cache-key: ${{ matrix.artifact }}
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
       # cel-cpp (cel-cxx-ffi's build script) is built by Bazel with the dev shell's clang, whose
       # builtin headers (arm_neon.h) lie outside the module map Bazel writes for it, so abseil
       # fails the layering check. It is a lint; off for this build. (The VM is disposable.)
+      # With no Xcode to ask for an SDK version, Bazel also compiles its build-time tools for
+      # macOS 10.11, under the SDK's floor for clock_gettime (10.12): they run on this host.
       - if: runner.os == 'macOS'
-        run: printf 'build --features=-layering_check --host_features=-layering_check\n' >> ~/.bazelrc
-      - run: nix develop -c src/scripts/build-witm.sh ${{ matrix.target }} ${{ matrix.artifact }} "${{ needs.meta.outputs.version }}"
+        run: |
+          printf 'build --features=-layering_check --host_features=-layering_check\n' >> ~/.bazelrc
+          printf 'build --host_macos_minimum_os=11.0\n' >> ~/.bazelrc
+      - run: ${{ matrix.nix && 'nix develop -c' || '' }} src/scripts/build-witm.sh ${{ matrix.target }} ${{ matrix.artifact }} "${{ needs.meta.outputs.version }}"
         env:
           ZIGBUILD: ${{ matrix.zigbuild }}
       # Share the dev shell's closure (toolchains, libraries) with every other
       # job through the cache. Only the trusted pools hold a push token.
-      - run: |
+      - if: ${{ matrix.nix }}
+        run: |
           nix develop --profile .ci-shell -c true
           attic push --ignore-upstream-cache-filter ci:mono .ci-shell || echo "cache push skipped"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
