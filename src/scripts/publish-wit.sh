@@ -61,7 +61,8 @@ check_wkg() {
     echo "Found wkg: $(wkg --version)"
 }
 
-# Function to setup wkg configuration
+# Function to setup wkg configuration: the registries, and the token for ours
+# (wkg's own registry auth, so no docker login is needed on the runner).
 setup_wkg_config() {
     local owner="$1"
     local config_dir="$HOME/.config/wasm-pkg"
@@ -76,10 +77,13 @@ default_registry = "$REGISTRY"
 [namespace_registries]
 wasi = { registry = "wasi",  metadata = { preferredProtocol = "oci", "oci" = {registry = "ghcr.io", namespacePrefix = "webassembly/" } } }
 $PACKAGE_NAMESPACE = { registry = "$PACKAGE_NAMESPACE", metadata = { preferredProtocol = "oci", "oci" = { registry = "$REGISTRY", namespacePrefix = "$owner/" } } }
+
+[registry."$REGISTRY".oci]
+auth = { username = "$owner", password = "$GITHUB_TOKEN" }
 EOF
+    chmod 600 "$config_file"
     
-    echo "wkg configuration created at $config_file:"
-    cat "$config_file"
+    echo "wkg configuration created at $config_file (it holds the token, so it is not shown)"
 }
 
 # Function to build WIT as WebAssembly component
@@ -174,11 +178,6 @@ main() {
     
     # Check prerequisites
     check_wkg
-    
-    # Setup configuration
-    setup_wkg_config "$REGISTRY_OWNER"
-
-    # Login to ghcr.io using GITHUB_TOKEN
     if [[ -z "${GITHUB_TOKEN:-}" ]]; then
         echo "Error: GITHUB_TOKEN environment variable is not set"
         echo "This token is required for authentication to ghcr.io"
@@ -186,9 +185,9 @@ main() {
         echo "and set it as an environment variable before running this script"
         exit 1
     fi
-
-    echo "Logging in to ghcr.io with GITHUB_TOKEN..."
-    echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$REGISTRY_OWNER" --password-stdin
+    
+    # Setup configuration, the token in it
+    setup_wkg_config "$REGISTRY_OWNER"
     
     # Build WIT
     build_wit
