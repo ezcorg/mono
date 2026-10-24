@@ -182,6 +182,10 @@ export const fileLoadedEffect = StateEffect.define<{ path: string; content: stri
 /** Put the open file down without writing its unsaved edits (it is being
  *  deleted): the view is left empty, showing no file. */
 export const closeFileEffect = StateEffect.define<void>();
+/** An unnamed block made one of `language` (the toolbar's "Create new
+ *  file" with the naming step skipped): highlighted as that language, still
+ *  no file. */
+export const setLanguageEffect = StateEffect.define<ExtensionOrLanguage>();
 
 // Light mode/dark mode theme toggle
 export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
@@ -218,6 +222,9 @@ export const currentFileField = StateField.define<{
             }
             if (e.is(closeFileEffect)) {
                 return { path: null, content: "", language: value.language, loading: false, preview: false };
+            }
+            if (e.is(setLanguageEffect)) {
+                return { ...value, language: e.value };
             }
         }
         return value;
@@ -1036,6 +1043,9 @@ const codeblockView = ViewPlugin.define((view) => {
                 if (e.is(setThemeEffect)) {
                     const dark = e.value.dark;
                     u.view.dom.setAttribute('data-theme', dark ? 'dark' : 'light');
+                }
+                if (e.is(setLanguageEffect)) {
+                    setLanguageSupport(e.value);
                 }
                 if (e.is(toggleSvgPreviewEffect)) {
                     const newMode = svgViewMode === 'preview' ? 'source' : 'preview';

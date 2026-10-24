@@ -20,7 +20,7 @@ type NerdIcon = { value: string; hexCode: number; color?: string };
 
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'file-action' | 'clear-filesystem' | 'host-command';
+    type: 'create-file' | 'save-as' | 'rename-file' | 'delete-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'file-action' | 'clear-filesystem' | 'host-command';
     icon: string;
     iconColor?: string;
     query: string;
@@ -141,6 +141,12 @@ export interface ToolbarHost {
     /** Put the open file down without writing its unsaved edits: it is about
      *  to be deleted. */
     closeFile(): void | Promise<void>;
+    /** Make the unnamed block one of `language` (an extension, `yml`):
+     *  "Create new file" for a language, with Enter on an empty name in
+     *  place of a name. The block keeps no file; a host that gives unnamed
+     *  blocks a stand-in file does so as it would for a fence of that
+     *  language. Without this, a name is required. */
+    setLanguage?(language: string): void;
     /** Commands the host offers, matched against the query. */
     commands?(query: string): HostCommand[];
     /** Get the current file path from host state (may differ from initial filepath). */
@@ -239,6 +245,9 @@ export const FOLDER_ICON = '\ue613';
 // reads more idiomatically as "browse/open a file" than a hash ever did.
 export const FOLDER_OPEN_ICON = '\uf07c';
 const PARENT_DIR_ICON = '\uf112';
+
+/** FontAwesome "trash" (U+F1F8): the delete command. */
+const TRASH_ICON = String.fromCharCode(0xf1f8);
 
 const FileChangeType = { Created: 1, Changed: 2, Deleted: 3 } as const;
 const mod = (n: number, m: number) => ((n % m) + m) % m;
@@ -661,6 +670,14 @@ export class ToolbarCore {
             commands.push({ id: command.id, type: 'host-command', icon: command.icon ?? '\uf120', query, action: () => command.run() });
         }
 
+        // Delete, last: the file the query names (the open one, when the field
+        // was only clicked into), asked about before it goes. The Delete key
+        // on a result does the same, less visibly.
+        if (hasExactFileMatch) {
+            const { file } = ToolbarCore.splitLines(query.trim());
+            commands.push({ id: `Delete "${file}"`, type: 'delete-file', icon: TRASH_ICON, query: file });
+        }
+
         return commands;
     }
 
@@ -1003,6 +1020,8 @@ export class ToolbarCore {
                 this.input.value = p;
                 this.checkOverwriteAndExecute(p, 'create-file', () => this.createBlankFile(p));
             }
+        } else if (command.type === 'delete-file') {
+            this.enterDeleteMode(command.query);
         } else if (command.type === 'rename-file') {
             const currentPath = this.getCurrentFilePath();
             if (currentPath) {
@@ -1041,9 +1060,20 @@ export class ToolbarCore {
         this.namingMode = { active: true, type, originalQuery, languageExtension };
         this.updateStateIcon();
         this.input.value = '';
-        this.input.placeholder = languageExtension ? `filename.${languageExtension}` : 'filename';
+        // A name is optional for a new file of a language where the host
+        // keeps unnamed blocks: Enter alone makes the block one of that
+        // language and nothing on disk is named.
+        const optional = type === 'create-file' && !!languageExtension && this.canSkipNaming();
+        this.input.placeholder = languageExtension
+            ? optional ? `filename.${languageExtension} (or Enter for an unnamed ${languageExtension} block)` : `filename.${languageExtension}`
+            : 'filename';
         this.input.focus();
         this.setResults([]);
+    }
+
+    /** Whether "Create new file" for a language may go without a name. */
+    private canSkipNaming(): boolean {
+        return typeof this.host.setLanguage === 'function';
     }
 
     private exitNamingMode() {
@@ -1053,7 +1083,21 @@ export class ToolbarCore {
     }
 
     private executeNamingMode(filename: string) {
-        if (!this.namingMode.active || !filename.trim()) return;
+        if (!this.namingMode.active) return;
+        if (!filename.trim()) {
+            // No name given: for a new file of a language, the block becomes
+            // an unnamed one of that language (the host's affair: a stand-in
+            // file where it keeps them). A save or a rename needs a name.
+            const { type, languageExtension } = this.namingMode;
+            if (type !== 'create-file' || !languageExtension || !this.canSkipNaming()) return;
+            this.exitNamingMode();
+            this.setResults([]);
+            this.input.value = languageExtension;
+            this.inputTouched = false;
+            this.host.setLanguage!(languageExtension);
+            this.host.focusEditor();
+            return;
+        }
         const resolvePath = (fn: string) => this.namingMode.languageExtension && !fn.includes('.')
             ? `${fn}.${this.namingMode.languageExtension}` : fn;
 

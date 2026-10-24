@@ -81,3 +81,128 @@ describe('The field, as files open', () => {
         core.dom.remove();
     });
 });
+
+describe('Create new file, for a language', () => {
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+    const make = (setLanguage?: (language: string) => void) => {
+        const languages: string[] = [];
+        const opened: string[] = [];
+        const focused = { count: 0 };
+        const core = new ToolbarCore({
+            fs: memoryVfs({}),
+            openFile: (path) => void opened.push(path),
+            getDocContent: () => '',
+            focusEditor() {
+                focused.count++;
+            },
+            persist: async () => {},
+            closeFile() {},
+            ...(setLanguage ? { setLanguage: (language: string) => (languages.push(language), setLanguage(language)) } : {}),
+        });
+        document.body.append(core.dom);
+        return { core, languages, opened, focused };
+    };
+    const press = (core: ToolbarCore, key: string) => core.input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    const startNaming = (core: ToolbarCore, query: string) =>
+        (core as unknown as { handleCommandResult(c: unknown): void }).handleCommandResult({ id: 'Create new file', type: 'create-file', icon: '', query, requiresInput: true });
+
+    it('takes Enter on an empty name as "no name": the block becomes one of the language, and the field says so', () => {
+        const { core, languages, opened, focused } = make(() => {});
+        startNaming(core, 'yml');
+        expect(core.isNamingModeActive()).toBe(true);
+        expect(core.input.placeholder).toBe('filename.yml (or Enter for an unnamed yml block)');
+        press(core, 'Enter');
+        expect(core.isNamingModeActive()).toBe(false);
+        expect(languages).toEqual(['yml']);
+        expect(opened).toEqual([]);
+        expect(core.input.value).toBe('yml');
+        expect(core.input.placeholder).toBe('');
+        expect(focused.count).toBe(1);
+        core.destroy();
+        core.dom.remove();
+    });
+
+    it('still names the file when a name is typed, with the language as its extension', async () => {
+        const { core, languages, opened } = make(() => {});
+        startNaming(core, 'yml');
+        core.input.value = 'config';
+        press(core, 'Enter');
+        // The path is checked against the filesystem before the file is made.
+        await new Promise((r) => setTimeout(r, 20));
+        expect(languages).toEqual([]);
+        expect(opened).toEqual(['config.yml']);
+        core.destroy();
+        core.dom.remove();
+    });
+
+    it('requires a name where the host keeps no unnamed blocks', () => {
+        const { core, opened } = make();
+        startNaming(core, 'yml');
+        expect(core.input.placeholder).toBe('filename.yml');
+        press(core, 'Enter');
+        expect(core.isNamingModeActive()).toBe(true);
+        expect(opened).toEqual([]);
+        core.destroy();
+        core.dom.remove();
+    });
+});
+
+describe('Deleting a file from the field', () => {
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+    const press = (core: ToolbarCore, key: string) => core.input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+
+    it('offers "Delete" for the file the field names, asks, and removes it on Enter', async () => {
+        const fs = memoryVfs({ 'notes/a.md': '# A', 'notes/b.md': '# B' });
+        const closed: string[] = [];
+        const core = new ToolbarCore({
+            fs,
+            filepath: 'notes/a.md',
+            openFile() {},
+            getDocContent: () => '# A',
+            focusEditor() {},
+            persist: async () => {},
+            closeFile() {
+                closed.push('closed');
+            },
+            getCurrentFilePath: () => 'notes/a.md',
+        });
+        document.body.append(core.dom);
+        // The field clicked into, untouched: the open file's commands.
+        core.input.focus();
+        core.input.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 20));
+        const labels = [...core.dom.querySelectorAll('.cm-search-result-label')].map((l) => l.textContent);
+        expect(labels).toContain('Delete "notes/a.md"');
+        const row = [...core.dom.querySelectorAll<HTMLElement>('.cm-search-result')].find((r) => r.textContent?.includes('Delete "notes/a.md"'))!;
+        row.click();
+        expect(core.input.placeholder).toBe('Delete "notes/a.md"? (Enter to confirm, Esc to cancel)');
+        press(core, 'Enter');
+        await new Promise((r) => setTimeout(r, 20));
+        expect(await fs.exists('notes/a.md')).toBe(false);
+        expect(await fs.exists('notes/b.md')).toBe(true);
+        // The open file was put down first, not written back.
+        expect(closed).toEqual(['closed']);
+        core.destroy();
+        core.dom.remove();
+    });
+
+    it('offers no "Delete" for a name that is not a file', async () => {
+        const core = new ToolbarCore({
+            fs: memoryVfs({ 'a.md': '# A' }),
+            openFile() {},
+            getDocContent: () => '',
+            focusEditor() {},
+            persist: async () => {},
+            closeFile() {},
+        });
+        document.body.append(core.dom);
+        core.input.focus();
+        core.input.value = 'nothing.md';
+        core.input.dispatchEvent(new Event('input', { bubbles: true }));
+        await new Promise((r) => setTimeout(r, 20));
+        const labels = [...core.dom.querySelectorAll('.cm-search-result-label')].map((l) => l.textContent);
+        expect(labels.some((l) => l?.startsWith('Delete'))).toBe(false);
+        core.destroy();
+        core.dom.remove();
+    });
+});

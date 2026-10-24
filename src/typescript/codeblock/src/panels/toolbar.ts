@@ -7,7 +7,8 @@
  */
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { CodeblockFacet, openFileEffect, currentFileField, regionField, setRegionEffect, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, regionField, setRegionEffect, setThemeEffect, setLanguageEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
+import type { ExtensionOrLanguage } from "../lsps";
 import { formatLineRange, lineRange, type LineRange } from "../utils/region";
 import { foldGutter } from "@codemirror/language";
 import { LSP, LspLog } from "../utils/lsp";
@@ -183,7 +184,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
      *  for a region; else the path. */
     const shownAs = (path: string | null, lang: string | null | undefined, region: LineRange | null) => {
         if (anonymous && path !== null && path === filepath) return lang ?? language ?? '';
-        return path !== null && region ? `${path}#${formatLineRange(region)}` : undefined;
+        // No file: the language, as the field names an unnamed block.
+        if (path === null) return lang ?? language ?? undefined;
+        return region ? `${path}#${formatLineRange(region)}` : undefined;
     };
 
     // --- Clear filesystem ---
@@ -251,6 +254,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
             // write once no file is open, and resolves when those land.
             closeFile(view);
             return persistFile(view);
+        },
+        setLanguage(language) {
+            // The block stays unnamed, highlighted as the language from here on.
+            safeDispatch(view, { effects: [setSearchResults.of([]), setLanguageEffect.of(language as ExtensionOrLanguage)] });
         },
         focusEditor() { view.focus(); },
         notifyFileChanged(path, type) { LSP.notifyFileChanged(path, type); },
@@ -485,10 +492,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 }
             }
 
-            // Sync file path (and the lines shown of it)
+            // Sync file path (and the lines shown of it), or the language of
+            // a block that has no file.
             const prevRegion = update.startState.field(regionField, false) ?? null;
             const nextRegion = update.state.field(regionField, false) ?? null;
-            if (prevFile.path !== nextFile.path || prevRegion !== nextRegion) {
+            if (prevFile.path !== nextFile.path || prevRegion !== nextRegion || (nextFile.path === null && prevFile.language !== nextFile.language)) {
                 if (prevFile.path !== nextFile.path) updateLspLogIcon();
                 if (!core.isNamingModeActive() && !lspLogOverlay && !core.isSettingsModeActive()) {
                     core.setFilePath(nextFile.path, shownAs(nextFile.path, nextFile.language, nextRegion));
