@@ -29,6 +29,8 @@ import { SelectionMenu } from './extensions/selection-menu';
 import { Sidebar, SidebarOptions } from './extensions/sidebar';
 import { BulletList, OrderedList, OrderedListStart, DashListKeymap, ListItemBackspace, TaskList } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
+import { ExtendedHorizontalRule } from './extensions/horizontal-rule';
+import { PathComplete } from './extensions/path-complete';
 import { HeadingAnchors } from './extensions/heading-anchors';
 import type { WikilinkOptions } from './extensions/wikilink';
 import { LinksPanel, LinksPanelOptions } from './extensions/links-panel';
@@ -121,6 +123,10 @@ export type MarkdownSetupOptions = {
     emoji?: boolean;
     /** Text-selection formatting menu. `false` omits it. */
     selectionMenu?: boolean;
+    /** Paths completed from the vault's files as they are typed after a
+     *  backtick (inline code) or as a Markdown link's destination. `false`
+     *  omits it. */
+    pathComplete?: boolean;
     /** Link hover/edit popover. `false` omits it. */
     linkMenu?: boolean;
     /** Links between notes. The editor parses and renders wikilinks on its
@@ -419,8 +425,12 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             link: false,
             document: false,
             text: false,
+            // The divider (extensions/horizontal-rule.ts) leaves `---` on a
+            // note's first line to the front matter extension's question.
+            horizontalRule: false,
         }),
         Paragraph,
+        ExtendedHorizontalRule,
         BulletList,
         OrderedList,
         OrderedListStart,
@@ -430,6 +440,9 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         // decorations — never serialized), so an outline can link to `#id`.
         HeadingAnchors,
         InlineCodeExit,
+        // A path typed after a backtick, or as a link's destination, is
+        // completed from the vault's files.
+        ...(options.pathComplete !== false ? [PathComplete] : []),
         // Wrap a non-empty selection on ` (inline code) / [ (brackets).
         WrapSelection,
         // Must come before `Markdown` so our higher-priority clipboardTextParser
@@ -692,6 +705,8 @@ export type { ExtendedCodeblockOptions } from './extensions/codeblock';
 export { ExtendedTaskItem } from './extensions/taskitem';
 export type { ExtendedTaskItemOptions } from './extensions/taskitem';
 export { Paragraph } from './extensions/paragraph';
+export { ExtendedHorizontalRule } from './extensions/horizontal-rule';
+export { PathComplete, completions as pathCompletions, type PathCompletion } from './extensions/path-complete';
 export { BulletList, OrderedList, OrderedListStart, DashListKeymap, retypeListItem, orderedLabel, letterIndex, ListItemBackspace } from './extensions/lists';
 export type { ListTarget } from './extensions/lists';
 export { HeadingAnchors } from './extensions/heading-anchors';

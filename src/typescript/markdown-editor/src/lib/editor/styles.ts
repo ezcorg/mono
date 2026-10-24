@@ -10,7 +10,7 @@ const darkModeStyles: Record<string, string> = {
     // toolbar + its results). Dark mode keeps the charcoal palette; light mode
     // (in the `:root`/`[data-theme="light"]` block below) uses a light surface
     // so popovers match the editor + the titlebar search field.
-    '--ezco-mde-context-menu-bg': '#26262c',
+    '--ezco-mde-context-menu-bg': '#252525',
     '--ezco-mde-context-menu-bg-hover': '#34343c',
     '--ezco-mde-context-menu-color': '#f5f5f5',
     '--ezco-mde-context-menu-border': 'rgba(245, 245, 245, 0.16)',
@@ -1393,6 +1393,22 @@ export const styleModule: StyleModule = new StyleModule({
         'font-size': '12.5px',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
+    // The path menu (extensions/path-complete.ts): the slash menu's rows,
+    // the files' icons from the code blocks' font (in their colours, set by
+    // script) and their names in the code face, as the toolbar's browser
+    // shows them.
+    '.ezco-mde-path-menu .ezco-mde-slash-item-icon': {
+        'font-family': 'var(--cm-icon-font-family)',
+        'font-size': '15px',
+    },
+    '.ezco-mde-path-menu .ezco-mde-slash-item-title, .ezco-mde-path-menu .ezco-mde-slash-item-desc': {
+        'font-family': 'var(--cm-font-family)',
+    },
+    // The `---` question (front-matter.ts): the slash menu's look.
+    '.ezco-mde-dashes-menu .ezco-mde-slash-item-icon': {
+        'font-family': 'var(--cm-font-family)',
+        'font-size': '12px',
+    },
     // ─────────────────────────────────────────────────────────────
     // Selection menu — a small icon button anchored at the end of a
     // non-empty text selection. Focusable (Tab from the editor), opens
@@ -1761,52 +1777,83 @@ export const styleModule: StyleModule = new StyleModule({
     },
 
     // Front matter (extensions/front-matter.ts): the YAML in a code block
-    // of its own (no toolbar), folded to one small line at the top of the
-    // note, "2 properties · id, title", when it is not being edited. Muted,
-    // in the chrome's type; the line is the way in.
-    '.ezco-mde-body .ezco-mde-front-matter': {
-        'font-family': 'var(--ezco-mde-chrome-font)',
-        'font-size': '13px',
-    },
-    '.ezco-mde-front-matter-line': {
-        display: 'flex',
-        'align-items': 'baseline',
-        gap: '8px',
-        'max-width': '100%',
-        margin: 0,
-        padding: '2px 0',
-        border: 0,
+    // of its own under a header drawn as the code blocks' toolbar is (its
+    // classes, so the toolbar's rules draw it: the YAML glyph in the line
+    // numbers' column, "frontmatter" in the field over the code, the
+    // properties summarized at the field's end, the field's dropdown as
+    // the toolbar's results). Folded, it is the header alone, and that
+    // nearly nothing: no surface, the field gone, the glyph and the
+    // summary small and faint (full on hover, or holding the focus), a
+    // line above the note's title that reads as a margin note on it.
+    // (CodeMirror's own base theme gives `.cm-panels` a surface of its own.)
+    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed > .cm-editor, .ezco-mde-body .ezco-mde-front-matter.is-collapsed .cm-editor .cm-panels, .ezco-mde-body .ezco-mde-front-matter.is-collapsed .cm-toolbar-panel.ezco-mde-front-matter-head': {
         background: 'transparent',
-        color: 'var(--ezco-mde-context-menu-item-color-muted)',
-        font: 'inherit',
+        '--cm-toolbar-background': 'transparent',
+    },
+    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed .ezco-mde-front-matter-head': {
+        'align-items': 'baseline',
+        opacity: 0.5,
         'font-size': '11px',
         'letter-spacing': '0.04em',
-        'text-align': 'left',
-        cursor: 'pointer',
+        transition: 'opacity 120ms ease-out',
     },
-    '.ezco-mde-front-matter-line:hover, .ezco-mde-front-matter-line:focus-visible': {
-        color: 'var(--ezco-mde-fg)',
-        outline: 'none',
+    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed .ezco-mde-front-matter-head:hover, .ezco-mde-body .ezco-mde-front-matter.is-collapsed .ezco-mde-front-matter-head:focus-within': {
+        opacity: 1,
     },
-    '.ezco-mde-front-matter-count': {
-        flex: 'none',
+    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed .ezco-mde-front-matter-head .cm-toolbar-input': {
+        display: 'none',
     },
-    '.ezco-mde-front-matter-keys': {
+    // The glyph keeps the line numbers' column, so it stands where the
+    // block's own glyph would, and the summary starts where the text does.
+    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed .ezco-mde-front-matter-head .cm-toolbar-state-icon': {
+        'font-size': '12px',
+        opacity: 0.8,
+    },
+    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed .ezco-mde-front-matter-summary': {
+        padding: '2px 0',
+        opacity: 1,
+        'font-size': '11px',
+        'font-family': 'var(--ezco-mde-chrome-font)',
+    },
+    '.ezco-mde-body .ezco-mde-front-matter-head .cm-toolbar-input': {
+        // Not typed in: the section's name, as wide as it is.
+        cursor: 'default',
+        flex: '0 1 auto',
+        width: 'auto',
         'min-width': 0,
+    },
+    '.ezco-mde-front-matter-summary': {
+        flex: '1 1 auto',
+        'min-width': 0,
+        margin: 0,
+        padding: '0 8px 0 10px',
+        border: 0,
+        background: 'transparent',
+        color: 'var(--cm-toolbar-color)',
+        opacity: 0.6,
+        font: 'inherit',
+        'font-family': 'var(--cm-font-family)',
+        'font-size': '0.85em',
+        'line-height': 1.4,
+        'text-align': 'left',
+        'white-space': 'nowrap',
         overflow: 'hidden',
         'text-overflow': 'ellipsis',
-        'white-space': 'nowrap',
-        opacity: 0.75,
+        cursor: 'pointer',
     },
-    '.ezco-mde-front-matter-keys[hidden]': {
-        display: 'none',
+    '.ezco-mde-front-matter-summary:hover, .ezco-mde-front-matter-summary:focus-visible': {
+        opacity: 1,
+        outline: 'none',
     },
-    '.ezco-mde-body .ezco-mde-front-matter:not(.is-collapsed) > .ezco-mde-front-matter-line': {
-        display: 'none',
-    },
-    // CodeMirror's own base theme makes its root flex with `!important`.
-    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed > .cm-editor': {
+    // CodeMirror's own base theme makes its root flex with `!important`:
+    // folded, the YAML (the scroller) is gone and the header stays.
+    '.ezco-mde-body .ezco-mde-front-matter.is-collapsed .cm-editor > .cm-scroller': {
         display: 'none !important',
+    },
+    // Selected whole (its glyph in the gutter pressed): ringed, not opened.
+    '.ezco-mde-body .ezco-mde-front-matter.is-selected > .cm-editor': {
+        'box-shadow': '0 0 0 2px var(--ezco-mde-accent)',
+        'border-radius': '4px',
     },
 
     // Math (extensions/math.ts): typeset, and its TeX between its dollars when

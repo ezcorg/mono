@@ -5,7 +5,9 @@
  *
  * Behaviour:
  * - Items are rendered as `<button role="menuitem">` inside a
- *   `role="menu"` container.
+ *   `role="menu"` container; a separator entry draws a line between
+ *   groups of them (`sectioned` makes those from items that know their
+ *   section). It takes no focus: the arrows pass over it.
  * - `focus()` puts focus on the first item; subsequent ArrowUp/Down
  *   moves focus through items with wraparound; Home/End jump to the
  *   ends; Enter/Space activates; Escape calls `onClose`.
@@ -31,6 +33,30 @@ export interface ContextMenuSeparator {
 export type ContextMenuEntry = ContextMenuItem | ContextMenuSeparator
 
 export const isSeparator = (entry: ContextMenuEntry): entry is ContextMenuSeparator => 'type' in entry && entry.type === 'separator'
+/** An entry that is an item (not a separator). */
+export const isItem = (entry: ContextMenuEntry): entry is ContextMenuItem => !isSeparator(entry)
+
+/**
+ * `items` in sections, a separator between one section and the next: the
+ * sections in the order they first appear, each with its items in order;
+ * items of no section first. For a menu built from a flat list of actions
+ * that know their section, divided as the comment menus are.
+ */
+export function sectioned<T extends { section?: string }>(items: T[], toEntry: (item: T) => ContextMenuItem): ContextMenuEntry[] {
+    const groups = new Map<string, ContextMenuItem[]>()
+    for (const item of items) {
+        const key = item.section ?? ''
+        let list = groups.get(key)
+        if (!list) groups.set(key, (list = []))
+        list.push(toEntry(item))
+    }
+    const entries: ContextMenuEntry[] = []
+    for (const list of groups.values()) {
+        if (entries.length) entries.push({ type: 'separator' })
+        entries.push(...list)
+    }
+    return entries
+}
 
 export type ContextMenuCloseReason = 'escape' | 'tab'
 

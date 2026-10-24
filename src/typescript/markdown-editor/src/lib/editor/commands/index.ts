@@ -110,4 +110,17 @@ export const defaultSlashCommands: SlashCommand[] = [
         command: ({ editor, range }) =>
             editor.chain().focus().deleteRange(range).setHorizontalRule().run(),
     },
+    {
+        title: 'Front matter',
+        description: 'The note’s properties, as YAML at its top',
+        icon: '---',
+        // Made at the top of the note (or opened, when the note has some
+        // already), wherever the slash was typed. Nothing, in an editor
+        // whose front matter is turned off (`frontMatter: false`).
+        command: ({ editor, range }) => {
+            const chain = editor.chain().focus().deleteRange(range)
+            if (editor.schema.nodes.frontMatter) chain.insertFrontMatter()
+            chain.run()
+        },
+    },
 ]

@@ -195,6 +195,16 @@ demo. So, for any change that shows:
   `marginTop`/`marginBottom` to 0 with the height (`shut()` in
   `comment-margin.ts`), and clip with `overflow: clip` plus an
   `overflow-clip-margin` for the bubble's shadow, not `hidden`.
+- ProseMirror hands a selection to a node view (`setSelection`, which the
+  front matter uses to open its YAML) only when the editable itself holds
+  the focus: `view.hasFocus()` is `activeElement === view.dom`, false with
+  the focus in the block's own header or a menu, though both are inside
+  `view.dom`. A command that sends the caret into such a node focuses the
+  view when `!view.hasFocus()`, not when `!view.dom.contains(activeElement)`.
+- The front matter's header is a CodeMirror panel (`showPanel`) with the
+  code block toolbar's classes, so the toolbar's rules draw it; its
+  dropdown is the toolbar's `cm-search-results` markup. Folded, the
+  `.cm-scroller` is hidden, not the `.cm-editor`, or the header would go too.
 - A style set straight on a block's element in the editable is a DOM
   change ProseMirror observes (a node with content ignores no mutation):
   it marks the block dirty and draws it again, without the style. A

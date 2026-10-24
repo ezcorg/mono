@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
-import { ContextMenu, type ContextMenuEntry } from './context-menu'
+import { ContextMenu, sectioned, type ContextMenuEntry } from './context-menu'
 import { menuItem, menuLabels } from '../../../test/utils'
 
 /**
@@ -179,5 +179,48 @@ describe('ContextMenu', () => {
         expect(menu.dom.isConnected).toBe(false)
         await userEvent.keyboard('{ArrowDown}')
         expect(document.activeElement).toBe(document.body)
+    })
+})
+
+describe('ContextMenu, in sections', () => {
+    it('`sectioned` puts a line between one section and the next, in the order they first appear; the arrows pass over it', async () => {
+        const ran: string[] = []
+        const actions = [
+            { label: 'Numbered list', section: 'Turn into' },
+            { label: 'Task list', section: 'Turn into' },
+            { label: 'Dashed list', section: 'List' },
+            { label: 'Delete', section: 'Block' },
+            { label: 'Lift', section: 'List' },
+        ]
+        const menu = new ContextMenu({
+            className: 'test-menu',
+            items: sectioned(actions, (a) => ({ label: a.label, onSelect: () => ran.push(a.label) })),
+        })
+        document.body.append(menu.dom)
+        menu.enable()
+        menu.focus()
+        try {
+            expect(menuLabels(menu.dom)).toEqual(['Numbered list', 'Task list', 'Dashed list', 'Lift', 'Delete'])
+            const separators = [...menu.dom.querySelectorAll('.ezco-mde-context-menu-separator')]
+            expect(separators.length).toBe(2)
+            expect(separators[0].previousElementSibling).toBe(menuItem('Task list', menu.dom))
+            expect(separators[0].nextElementSibling).toBe(menuItem('Dashed list', menu.dom))
+            expect(separators[1].nextElementSibling).toBe(menuItem('Delete', menu.dom))
+            expect(menu.dom.querySelector('.ezco-mde-context-menu-title, .ezco-mde-context-menu-heading')).toBeNull()
+            const focused = () => (document.activeElement as HTMLElement | null)?.querySelector('.ezco-mde-context-menu-item-label')?.textContent ?? null
+            expect(focused()).toBe('Numbered list')
+            await userEvent.keyboard('{ArrowDown}')
+            expect(focused()).toBe('Task list')
+            await userEvent.keyboard('{ArrowDown}')
+            expect(focused()).toBe('Dashed list')
+            await userEvent.keyboard('{End}')
+            expect(focused()).toBe('Delete')
+            await userEvent.keyboard('{ArrowDown}')
+            expect(focused()).toBe('Numbered list')
+            await userEvent.keyboard('{Enter}')
+            expect(ran).toEqual(['Numbered list'])
+        } finally {
+            menu.destroy()
+        }
     })
 })

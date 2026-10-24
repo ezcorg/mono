@@ -331,7 +331,9 @@ describe('The note rendered, every block kind and a comment', () => {
             const toolbar = container.querySelector('.ezco-mde-toolbar')
             record('toolbar', themed(toolbar, allowed, 'the toolbar'))
             record('toolbar input', themed(toolbar!.querySelector('.cm-toolbar-input'), allowed, 'the toolbar input'))
-            const code = container.querySelector('.cm-editor') as HTMLElement
+            // A code block's editor, not the front matter's (folded, that one
+            // has no surface of its own by design).
+            const code = container.querySelector('.ezco-mde-body > .cm-editor') as HTMLElement
             colours['code background'] = getComputedStyle(code).backgroundColor
             cancel.click()
             await waitFor(() => !container.querySelector('.ezco-mde-comment-card.is-draft'), 3000)
