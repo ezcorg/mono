@@ -159,7 +159,7 @@ jobs:
       # job through the cache. Only the trusted pools hold a push token.
       - run: |
           nix develop --profile .ci-shell -c true
-          attic push ci:mono .ci-shell || echo "cache push skipped"
+          attic push --ignore-upstream-cache-filter ci:mono .ci-shell || echo "cache push skipped"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ matrix.artifact }}

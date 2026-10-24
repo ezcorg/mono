@@ -7,8 +7,10 @@ import {
   ensureNotesDir,
   latestNotePath,
   newScratchPath,
-  type HostVfs,
 } from "./lib/tauri-vfs";
+import { localHandle } from "./lib/identity";
+import { type VfsInterface } from "@joinezco/storage";
+import { Vault, newNoteId } from "@joinezco/vault";
 import "./App.css";
 
 /** System-wide hotkey that summons the window and opens a fresh scratch note. */
@@ -60,7 +62,8 @@ function App() {
   let editorHost!: HTMLDivElement;
   let titlebarToolbar!: HTMLDivElement;
   let editor: MarkdownEditor | null = null;
-  let fs: HostVfs | null = null;
+  let fs: VfsInterface | null = null;
+  let vault: Vault | null = null;
 
   const stored = (localStorage.getItem("eznote-theme") as ThemeMode | null) ?? "system";
   const [themeMode, setThemeMode] = createSignal<ThemeMode>(stored);
@@ -101,7 +104,12 @@ function App() {
     applyTheme(themeMode());
 
     const base = await ensureNotesDir();
-    fs = createTauriVfs(base);
+    // The notes folder as a vault: its link index is built once here and
+    // kept current by every write through `vault.fs` and by the folder's
+    // watch (edits from other apps).
+    const handle = await localHandle();
+    vault = await Vault.open(createTauriVfs(base), { identity: handle });
+    fs = vault.fs;
 
     // Reopen the most recent note on launch, else start a fresh scratch.
     const filepath = (await latestNotePath(fs)) ?? newScratchPath();
@@ -120,6 +128,27 @@ function App() {
         autoHide: false,
         className: "mac-titlebar-search",
       },
+      // Wikilinks resolve against the vault; backlinks show under the note,
+      // and a rename from the toolbar rewrites every link to the note. The
+      // toolbar (⌘P) searches the vault's index: names and what notes say.
+      links: { resolver: vault.links, index: vault.links },
+      search: vault.search,
+      files: vault.files,
+      // Saves name the version they were made on; a note changed underneath
+      // (by an agent, in Finder) keeps the losing edits as a conflict copy.
+      versions: vault.versions,
+      // Every note carries a stable id (RFC §3), given on first open.
+      frontMatter: { assignId: () => newNoteId() },
+      // An unnamed \`\`\`ts fence gets a hidden stand-in file beside the note,
+      // so its language services work.
+      codeblock: { standIns: true },
+      // The notes folder as a tree, and the note's outline, in the editor's
+      // left column (⌘⌥B folds it away).
+      fileTree: {},
+      sidebar: {},
+      // Comments are documents written as the local user; reactions are
+      // the user's state in the vault.
+      comments: { author: handle, index: vault.comments, reactions: vault.reactions },
       onUpdate: () => {},
     });
     applyTheme(themeMode());
@@ -148,6 +177,8 @@ function App() {
     unregister(SCRATCH_SHORTCUT).catch(() => {});
     editor?.destroy();
     editor = null;
+    vault?.close();
+    vault = null;
   });
 
   return (

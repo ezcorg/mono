@@ -1,7 +1,7 @@
 use super::{GlobalArgs, ServiceCtlArgs};
 #[cfg(target_os = "linux")]
 use crate::config::TransparentProxyConfig;
-use crate::config::{AppConfig, LogConfig, ServiceScopedConfig, TelemetryConfig};
+use crate::config::{AppConfig, Instance, LogConfig, Scope, ServiceScopedConfig, TelemetryConfig};
 use anyhow::{Context, Result};
 use conf::{Conf, Subcommands};
 use service_manager::{
@@ -18,18 +18,6 @@ use service_manager::LaunchdServiceManager;
 #[cfg(target_os = "linux")]
 use service_manager::SystemdServiceManager;
 
-/// Service label used by the service-manager crate
-const SERVICE_LABEL: &str = "co.ez.witmproxy";
-
-/// Platform-specific service file name
-#[cfg(target_os = "macos")]
-const SERVICE_FILE_NAME: &str = "co.ez.witmproxy.plist";
-#[cfg(target_os = "linux")]
-const SERVICE_FILE_NAME: &str = "ez-witmproxy.service";
-
-/// Log file name within the app directory
-const LOG_FILE_NAME: &str = "witmproxy.log";
-
 /// The reconciled service state we display, from the runtime manager plus the
 /// on-disk service file. See [`ServiceHandler::classify_status`].
 #[derive(Debug, PartialEq, Eq)]
@@ -43,6 +31,19 @@ enum ServiceState {
     /// Service file on disk but the manager hasn't loaded it (e.g. freshly
     /// installed on macOS, not yet `service start`ed).
     NotStarted,
+}
+
+impl ServiceState {
+    /// One short phrase, for the `service list` table.
+    fn summary(&self) -> String {
+        match self {
+            ServiceState::NotInstalled => "not installed".to_string(),
+            ServiceState::Running => "running".to_string(),
+            ServiceState::Stopped(Some(reason)) => format!("stopped ({reason})"),
+            ServiceState::Stopped(None) => "stopped".to_string(),
+            ServiceState::NotStarted => "installed, not started".to_string(),
+        }
+    }
 }
 
 /// Every leaf reads its config subset from the `[config]` file section: the
@@ -77,6 +78,10 @@ pub enum ServiceCommands {
     /// Show the path to the daemon log file
     #[conf(serde(rename = "config"))]
     Logs(ServiceLogsArgs),
+    /// List every witmproxy instance on this host: the default one and each
+    /// directory under the `instances/` directory, with its root, unit state
+    /// and the addresses it bound
+    List(ServiceListArgs),
 }
 
 impl ServiceCommands {
@@ -89,11 +94,13 @@ impl ServiceCommands {
             | ServiceCommands::Restart(a)
             | ServiceCommands::Status(a) => &a.globals,
             ServiceCommands::Logs(a) => &a.globals,
+            ServiceCommands::List(a) => &a.globals,
         }
     }
 
     /// The tls+log scope of whichever leaf was invoked (for `install`,
-    /// derived from its full config).
+    /// derived from its full config; `list` carries none and gets the
+    /// defaults, which it never reads).
     pub(crate) fn ctl_config(&self) -> ServiceScopedConfig {
         match self {
             ServiceCommands::Install(a) => ServiceScopedConfig {
@@ -106,6 +113,7 @@ impl ServiceCommands {
             | ServiceCommands::Restart(a)
             | ServiceCommands::Status(a) => a.config.clone(),
             ServiceCommands::Logs(a) => a.config.clone(),
+            ServiceCommands::List(_) => ServiceScopedConfig::default(),
         }
     }
 
@@ -180,36 +188,70 @@ pub struct ServiceLogsArgs {
     pub lines: usize,
 }
 
+/// `service list` takes only the shared flags; it reads every instance, so
+/// `--instance` has nothing to select.
+#[derive(Conf)]
+#[conf(serde(allow_unknown_fields))]
+pub struct ServiceListArgs {
+    #[conf(flatten)]
+    pub globals: GlobalArgs,
+}
+
 pub struct ServiceHandler {
     pub(crate) config: AppConfig,
+    /// The instance whose unit, root and log this handler operates.
+    instance: Instance,
     verbose: bool,
     plugin_dir: Option<PathBuf>,
     auto: bool,
 }
 
 impl ServiceHandler {
-    pub fn new(config: AppConfig, verbose: bool, plugin_dir: Option<PathBuf>, auto: bool) -> Self {
+    pub fn new(
+        config: AppConfig,
+        instance: Instance,
+        verbose: bool,
+        plugin_dir: Option<PathBuf>,
+        auto: bool,
+    ) -> Self {
         Self {
             config,
+            instance,
             verbose,
             plugin_dir,
             auto,
         }
     }
 
-    /// Get the service label
-    fn service_label() -> ServiceLabel {
+    /// The service-manager label for this instance's unit.
+    fn service_label(&self) -> ServiceLabel {
         #[allow(
             clippy::expect_used,
-            reason = "SERVICE_LABEL is a compile-time constant known to parse"
+            reason = "ServiceLabel::from_str never fails; the name was validated by Instance"
         )]
-        SERVICE_LABEL.parse().expect("valid service label")
+        self.instance
+            .service_label()
+            .parse()
+            .expect("valid service label")
     }
 
-    /// Get the native service manager for the current platform
-    /// Linux: system-level systemd service (requires root)
-    /// macOS: user-level launchd service
-    fn get_manager() -> Result<Box<dyn ServiceManager>> {
+    /// ` --instance <name>` for a named instance, empty for the default: what
+    /// to append to a `witm` command in a hint so it addresses this instance.
+    fn instance_flag(&self) -> String {
+        let scope = self.instance.scope_flag();
+        match self.instance.name() {
+            None => scope.to_string(),
+            Some(name) => format!("{scope} --instance {name}"),
+        }
+    }
+
+    /// The native service manager for this instance's scope on this platform.
+    /// Linux: a system unit under `/etc/systemd/system` (root), or with
+    /// `--user` a unit under `~/.config/systemd/user` driven by
+    /// `systemctl --user`. macOS: a LaunchAgent under `~/Library/LaunchAgents`
+    /// (the only scope there; a LaunchDaemon with `UserName`, for a daemon
+    /// that must outlive the login session, is not written yet).
+    fn get_manager(&self) -> Result<Box<dyn ServiceManager>> {
         #[cfg(target_os = "macos")]
         {
             // Use user-level launchd services (~/Library/LaunchAgents)
@@ -218,8 +260,10 @@ impl ServiceHandler {
 
         #[cfg(target_os = "linux")]
         {
-            // Use system-level systemd services (/etc/systemd/system)
-            Ok(Box::new(SystemdServiceManager::system()))
+            Ok(Box::new(match self.instance.scope() {
+                Scope::System => SystemdServiceManager::system(),
+                Scope::User => SystemdServiceManager::user(),
+            }))
         }
 
         #[cfg(target_os = "windows")]
@@ -243,33 +287,28 @@ impl ServiceHandler {
         std::env::current_exe().context("Failed to get current executable path")
     }
 
-    /// Get the app directory
-    /// Linux system service: /var/lib/witmproxy
-    /// macOS / other: parent of cert_dir (~/.witmproxy)
+    /// The instance's root: `/var/lib/witmproxy` on Linux and `~/.witmproxy`
+    /// elsewhere for the default instance, `instances/<name>` under that
+    /// otherwise.
     fn get_app_dir(&self) -> PathBuf {
-        #[cfg(target_os = "linux")]
-        {
-            PathBuf::from("/var/lib/witmproxy")
-        }
-        #[cfg(not(target_os = "linux"))]
-        {
-            self.config
-                .tls
-                .cert_dir
-                .parent()
-                .unwrap_or(&PathBuf::from("."))
-                .to_path_buf()
-        }
+        self.instance.root()
     }
 
     /// Get the log file path
     pub fn get_log_path(&self) -> PathBuf {
-        self.get_app_dir().join(LOG_FILE_NAME)
+        self.instance.log_file()
     }
 
     /// Get the config file path
     fn get_config_path(&self) -> PathBuf {
-        self.get_app_dir().join("config.toml")
+        self.instance.config_file()
+    }
+
+    /// The addresses the daemon wrote to the instance's `services.json`, if
+    /// it has started at least once.
+    fn read_services(&self) -> Option<super::Services> {
+        let contents = std::fs::read_to_string(self.instance.services_file()).ok()?;
+        serde_json::from_str(&contents).ok()
     }
 
     /// Resolve the daemon's actual log file. The rolling appender writes files
@@ -293,14 +332,14 @@ impl ServiceHandler {
                     .and_then(|m| m.modified())
                     .unwrap_or(std::time::UNIX_EPOCH)
             })
-            .unwrap_or_else(|| app_dir.join(LOG_FILE_NAME))
+            .unwrap_or_else(|| self.instance.log_file())
     }
 
     /// Query the native service manager (launchd/systemd/SCM) for the real
     /// runtime state, rather than guessing from a log file's presence/mtime.
     fn query_service_status(&self) -> Option<ServiceStatus> {
-        let manager = Self::get_manager().ok()?;
-        let label = Self::service_label();
+        let manager = self.get_manager().ok()?;
+        let label = self.service_label();
         manager.status(ServiceStatusCtx { label }).ok()
     }
 
@@ -308,9 +347,7 @@ impl ServiceHandler {
     /// application health. `Some(true/false)` if the server was reachable,
     /// `None` if it couldn't be reached at all.
     async fn probe_health(&self) -> Option<bool> {
-        let services_path = self.get_app_dir().join("services.json");
-        let contents = std::fs::read_to_string(&services_path).ok()?;
-        let services: super::Services = serde_json::from_str(&contents).ok()?;
+        let services = self.read_services()?;
         let client = reqwest::Client::builder()
             .danger_accept_invalid_certs(true)
             .timeout(std::time::Duration::from_secs(2))
@@ -337,14 +374,66 @@ impl ServiceHandler {
             ServiceCommands::Restart(_) => self.restart_service().await,
             ServiceCommands::Status(_) => self.show_status().await,
             ServiceCommands::Logs(a) => self.show_logs(a.follow, a.lines).await,
+            ServiceCommands::List(_) => Self::list_instances(self.instance.scope()),
         }
     }
 
-    /// On Linux, ensure root for daemon management commands.
+    /// One line per instance on this host: name, root, the unit's state from
+    /// the service manager, and the proxy and web addresses from its
+    /// `services.json` when the daemon has written one.
+    pub fn list_instances(scope: Scope) -> Result<()> {
+        let mut rows: Vec<[String; 5]> = vec![[
+            "NAME".into(),
+            "ROOT".into(),
+            "SERVICE".into(),
+            "PROXY".into(),
+            "WEB".into(),
+        ]];
+        for instance in Instance::list(scope) {
+            let handler = ServiceHandler::new(AppConfig::default(), instance, false, None, false);
+            let state = Self::classify_status(
+                handler.query_service_status().as_ref(),
+                handler.is_service_installed(),
+            );
+            let (proxy, web) = handler
+                .read_services()
+                .map(|s| (s.proxy, s.web))
+                .unwrap_or_else(|| ("-".to_string(), "-".to_string()));
+            rows.push([
+                handler.instance.to_string(),
+                handler.instance.root().display().to_string(),
+                state.summary(),
+                proxy,
+                web,
+            ]);
+        }
+        let mut widths = [0usize; 5];
+        for row in &rows {
+            for (width, cell) in widths.iter_mut().zip(row) {
+                *width = (*width).max(cell.chars().count());
+            }
+        }
+        for row in &rows {
+            let line = row
+                .iter()
+                .zip(&widths)
+                .map(|(cell, width)| format!("{cell:<width$}"))
+                .collect::<Vec<_>>()
+                .join("  ");
+            println!("{}", line.trim_end());
+        }
+        Ok(())
+    }
+
+    /// On Linux, ensure root for managing the host's service. A user's
+    /// service needs none, and a `sudo` would put it in root's home.
     /// If not running as root, automatically re-executes the current command
     /// with `sudo` and exits with the child's exit code.
     #[cfg(target_os = "linux")]
-    fn ensure_root() -> Result<()> {
+    fn ensure_root(&self) -> Result<()> {
+        if self.instance.is_user() {
+            return Ok(());
+        }
         let is_root = std::process::Command::new("id")
             .arg("-u")
             .output()
@@ -393,22 +482,29 @@ impl ServiceHandler {
     /// Install the service
     pub async fn install_service(&self, skip_confirm: bool) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::ensure_root()?;
+        self.ensure_root()?;
 
         if !skip_confirm {
-            #[cfg(target_os = "linux")]
-            {
-                println!("This will install witmproxy as a system service.");
+            let what = match self.instance.name() {
+                None => "witmproxy".to_string(),
+                Some(name) => format!("witmproxy instance {name}"),
+            };
+            if self.instance.is_user() {
+                println!("This will install {what} as a user service.");
+                println!("The service will be configured to:");
+                println!("  - Run the proxy server in the background");
+                #[cfg(target_os = "linux")]
+                println!(
+                    "  - Start when you log in, and stop when you log out unless your \
+                     session manager lingers (loginctl enable-linger)"
+                );
+                #[cfg(not(target_os = "linux"))]
+                println!("  - Start automatically on login (on supported platforms)");
+            } else {
+                println!("This will install {what} as a system service.");
                 println!("The service will be configured to:");
                 println!("  - Run the proxy server in the background");
                 println!("  - Start automatically on boot");
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                println!("This will install witmproxy as a user service.");
-                println!("The service will be configured to:");
-                println!("  - Run the proxy server in the background");
-                println!("  - Start automatically on login (on supported platforms)");
             }
             println!();
             print!("Continue? [y/N] ");
@@ -465,46 +561,28 @@ impl ServiceHandler {
         // The native service manager isn't `Send`; create it only after all
         // `.await`s above so this method's future stays `Send` (the daemon
         // auto-update loop spawns `install_service`).
-        let manager = Self::get_manager()?;
-        let label = Self::service_label();
+        let manager = self.get_manager()?;
+        let label = self.service_label();
 
-        // Build arguments for the 'serve' subcommand. ALL options — including
-        // the shared --config-path/--verbose — are declared on the subcommand
-        // itself, so everything goes AFTER the subcommand name.
-        let mut args: Vec<OsString> = vec![];
-
-        // Subcommand name
-        args.push("serve".into());
-
-        args.push("--config-path".into());
-        args.push(config_path.into());
-
-        if self.verbose {
-            args.push("--verbose".into());
-        }
-
-        // Subcommand args (defined on ProxyRunOptions / Serve)
-        // Canonicalize plugin-dir to absolute path since the daemon's
-        // working directory differs from the user's current directory
-        if let Some(ref plugin_dir) = self.plugin_dir {
-            let absolute_dir = if plugin_dir.is_relative() {
+        // Canonicalize plugin-dir to an absolute path since the daemon's
+        // working directory differs from the user's current directory.
+        let plugin_dir = match &self.plugin_dir {
+            Some(dir) if dir.is_relative() => Some(
                 std::env::current_dir()
                     .context("Failed to get current directory for resolving plugin-dir")?
-                    .join(plugin_dir)
-            } else {
-                plugin_dir.clone()
-            };
-            args.push("--plugin-dir".into());
-            args.push(absolute_dir.into());
-        }
-
-        if self.auto {
-            args.push("--auto".into());
-        }
-
+                    .join(dir),
+            ),
+            other => other.clone(),
+        };
         let log_path = self.get_log_path();
-        args.push("--log-file".into());
-        args.push(log_path.clone().into());
+        let args = serve_args(
+            &self.instance,
+            &config_path,
+            self.verbose,
+            plugin_dir.as_deref(),
+            self.auto,
+            &log_path,
+        );
 
         info!("Installing service with executable: {:?}", exe_path);
         info!("Service arguments: {:?}", args);
@@ -512,8 +590,13 @@ impl ServiceHandler {
         // On Linux, generate a custom unit file with ExecStopPost for iptables cleanup
         #[cfg(target_os = "linux")]
         let contents = {
-            let unit =
-                generate_systemd_unit(&exe_path, &args, &app_dir, &config_to_save.transparent);
+            let unit = generate_systemd_unit(
+                &self.instance,
+                &exe_path,
+                &args,
+                &app_dir,
+                &config_to_save.transparent,
+            );
             Some(unit)
         };
         #[cfg(not(target_os = "linux"))]
@@ -540,10 +623,24 @@ impl ServiceHandler {
             .context("Failed to install service. On macOS, ensure ~/Library/LaunchAgents exists. On Linux, ensure you are running as root.")?;
 
         println!("✓ Service installed successfully.");
+        if let Some(name) = self.instance.name() {
+            println!("  Instance: {name}");
+        }
+        if self.instance.is_user() || self.instance.name().is_some() {
+            println!("  Unit:     {}", self.instance.service_file_name());
+        }
+        if self.instance.is_user() {
+            println!("  Scope:    user ({})", self.instance.root().display());
+        }
         println!("  Log file: {:?}", log_path);
+        if let Some(note) = linger_note(&self.instance) {
+            println!();
+            println!("{note}");
+        }
         println!();
-        println!("To start the service, run: witm service start");
-        println!("To check status, run: witm service status");
+        let flag = self.instance_flag();
+        println!("To start the service, run: witm service start{flag}");
+        println!("To check status, run: witm service status{flag}");
 
         Ok(())
     }
@@ -551,10 +648,16 @@ impl ServiceHandler {
     /// Uninstall the service
     pub async fn uninstall_service(&self, skip_confirm: bool) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::ensure_root()?;
+        self.ensure_root()?;
 
         if !skip_confirm {
-            println!("This will uninstall the witmproxy service.");
+            match self.instance.name() {
+                None => println!("This will uninstall the witmproxy service."),
+                Some(name) => println!(
+                    "This will uninstall the witmproxy service for instance {name} ({}).",
+                    self.instance.service_file_name()
+                ),
+            }
             println!("The service will be stopped if running.");
             println!();
             print!("Continue? [y/N] ");
@@ -568,8 +671,8 @@ impl ServiceHandler {
             }
         }
 
-        let manager = Self::get_manager()?;
-        let label = Self::service_label();
+        let manager = self.get_manager()?;
+        let label = self.service_label();
 
         // Try to stop the service first
         let _ = manager.stop(ServiceStopCtx {
@@ -626,7 +729,7 @@ impl ServiceHandler {
     /// the first await: this future runs inside `tokio::spawn` for auto-update
     /// restarts.
     async fn start_and_wait(&self, label: ServiceLabel) -> Result<()> {
-        Self::get_manager()?
+        self.get_manager()?
             .start(ServiceStartCtx { label })
             .context("Failed to start service")?;
         if self.wait_for_health().await {
@@ -642,12 +745,15 @@ impl ServiceHandler {
     /// Start the service
     pub async fn start_service(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::ensure_root()?;
+        self.ensure_root()?;
 
-        self.start_and_wait(Self::service_label()).await?;
+        self.start_and_wait(self.service_label()).await?;
 
         println!("✓ Service started.");
-        println!("  To view logs: witm service logs -f");
+        println!(
+            "  To view logs: witm service logs -f{}",
+            self.instance_flag()
+        );
 
         Ok(())
     }
@@ -655,11 +761,11 @@ impl ServiceHandler {
     /// Stop the service
     pub async fn stop_service(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::ensure_root()?;
+        self.ensure_root()?;
 
-        Self::get_manager()?
+        self.get_manager()?
             .stop(ServiceStopCtx {
-                label: Self::service_label(),
+                label: self.service_label(),
             })
             .context("Failed to stop service")?;
         if !self.wait_for_stop().await {
@@ -683,13 +789,13 @@ impl ServiceHandler {
     /// wait for the new process to answer.
     pub async fn restart_service(&self) -> Result<()> {
         #[cfg(target_os = "linux")]
-        Self::ensure_root()?;
+        self.ensure_root()?;
 
-        let label = Self::service_label();
+        let label = self.service_label();
 
         let was_running = matches!(self.query_service_status(), Some(ServiceStatus::Running));
         if was_running {
-            Self::get_manager()?
+            self.get_manager()?
                 .stop(ServiceStopCtx {
                     label: label.clone(),
                 })
@@ -711,14 +817,16 @@ impl ServiceHandler {
 
     /// Check if the service is installed
     pub fn is_service_installed(&self) -> bool {
-        if let Ok(manager) = Self::get_manager() {
+        if let Ok(manager) = self.get_manager() {
             // Try to query the service - if it fails, it's likely not installed
             // service-manager doesn't have a direct "is_installed" method,
             // so we check platform-specific files
             #[cfg(target_os = "macos")]
             {
-                let plist_path = dirs::home_dir()
-                    .map(|h| h.join("Library/LaunchAgents").join(SERVICE_FILE_NAME));
+                let plist_path = dirs::home_dir().map(|h| {
+                    h.join("Library/LaunchAgents")
+                        .join(self.instance.service_file_name())
+                });
                 if let Some(path) = plist_path {
                     return path.exists();
                 }
@@ -726,8 +834,13 @@ impl ServiceHandler {
 
             #[cfg(target_os = "linux")]
             {
-                let path = PathBuf::from("/etc/systemd/system").join(SERVICE_FILE_NAME);
-                if path.exists() {
+                let dir = match self.instance.scope() {
+                    Scope::System => Some(PathBuf::from("/etc/systemd/system")),
+                    Scope::User => dirs::config_dir().map(|c| c.join("systemd/user")),
+                };
+                if let Some(dir) = dir
+                    && dir.join(self.instance.service_file_name()).exists()
+                {
                     return true;
                 }
             }
@@ -735,7 +848,9 @@ impl ServiceHandler {
             #[cfg(target_os = "windows")]
             {
                 use std::process::Command;
-                let output = Command::new("sc").args(["query", SERVICE_LABEL]).output();
+                let output = Command::new("sc")
+                    .args(["query", &self.instance.service_label()])
+                    .output();
                 if let Ok(output) = output {
                     return output.status.success();
                 }
@@ -783,11 +898,20 @@ impl ServiceHandler {
         if state == ServiceState::NotInstalled {
             println!("Service status: Not installed");
             println!();
-            println!("To install: witm service install");
+            println!("To install: witm service install{}", self.instance_flag());
             return Ok(());
         }
 
         println!("Service status: Installed");
+        if let Some(name) = self.instance.name() {
+            println!("Instance:       {name}");
+        }
+        if self.instance.is_user() || self.instance.name().is_some() {
+            println!("Unit:           {}", self.instance.service_file_name());
+        }
+        if self.instance.is_user() {
+            println!("Scope:          user ({})", self.instance.root().display());
+        }
         match &state {
             ServiceState::Running => println!("Service:        Running"),
             ServiceState::Stopped(Some(reason)) => println!("Service:        Stopped ({reason})"),
@@ -805,11 +929,15 @@ impl ServiceHandler {
             None => println!("Health:         Unreachable (daemon not accepting connections)"),
         }
 
+        if let Some(note) = linger_note(&self.instance) {
+            println!("{note}");
+        }
+
         println!();
         println!("Log file: {:?}", self.current_log_file());
 
         // Show services.json if it exists
-        let services_path = self.get_app_dir().join("services.json");
+        let services_path = self.instance.services_file();
         if services_path.exists()
             && let Ok(contents) = std::fs::read_to_string(&services_path)
         {
@@ -893,8 +1021,108 @@ impl ServiceHandler {
     }
 }
 
+/// Whether this user's systemd manager keeps running without a session
+/// (`loginctl enable-linger`), which is what lets a user service outlive
+/// logout and start at boot. `None` when it cannot be told (no `loginctl`, or
+/// not Linux).
+pub fn linger_enabled() -> Option<bool> {
+    if cfg!(not(target_os = "linux")) {
+        return None;
+    }
+    let out = std::process::Command::new("loginctl")
+        .args(["show-user", "--property=Linger", "--value"])
+        .arg(whoami_uid()?)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    match String::from_utf8_lossy(&out.stdout).trim() {
+        "yes" => Some(true),
+        "no" => Some(false),
+        _ => None,
+    }
+}
+
+fn whoami_uid() -> Option<String> {
+    let out = std::process::Command::new("id").arg("-u").output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// What to tell the operator of a Linux user service about its lifetime:
+/// nothing when the manager lingers, the one command that makes it when it
+/// does not. `None` for every other kind of service.
+fn linger_note(instance: &Instance) -> Option<String> {
+    if !(cfg!(target_os = "linux") && instance.is_user()) {
+        return None;
+    }
+    match linger_enabled() {
+        Some(true) => None,
+        Some(false) => Some(
+            "Lingering is off: this service stops when you log out and does not start at boot.\n\
+             To keep it running: loginctl enable-linger  (yours to grant on systemd 256 and later; \
+             an older logind asks an admin: sudo loginctl enable-linger $USER)"
+                .to_string(),
+        ),
+        None => Some(
+            "Could not tell whether your session manager lingers (loginctl show-user). \
+             Without lingering this service stops when you log out."
+                .to_string(),
+        ),
+    }
+}
+
+/// The `witm serve` command line the service unit runs. Every option —
+/// including the shared `--config-path`/`--instance`/`--verbose` — is declared
+/// on the subcommand itself, so everything goes after the subcommand name. The
+/// default instance gets no `--instance`, so its unit is what it always was;
+/// `plugin_dir` must already be absolute (the daemon's working directory is not
+/// the operator's).
+fn serve_args(
+    instance: &Instance,
+    config_path: &Path,
+    verbose: bool,
+    plugin_dir: Option<&Path>,
+    auto: bool,
+    log_path: &Path,
+) -> Vec<OsString> {
+    let mut args: Vec<OsString> = vec!["serve".into(), "--config-path".into(), config_path.into()];
+    if let Some(name) = instance.name() {
+        args.push("--instance".into());
+        args.push(name.into());
+    }
+    if !instance.scope_flag().is_empty() {
+        args.push("--user".into());
+    }
+    if verbose {
+        args.push("--verbose".into());
+    }
+    if let Some(dir) = plugin_dir {
+        args.push("--plugin-dir".into());
+        args.push(dir.into());
+    }
+    if auto {
+        args.push("--auto".into());
+    }
+    args.push("--log-file".into());
+    args.push(log_path.into());
+    args
+}
+
+/// The unit's `Description=`: names the instance when there is one, so
+/// `systemctl status` tells two witmproxys apart.
+fn unit_description(instance: &Instance) -> String {
+    match instance.name() {
+        None => "witmproxy transparent proxy service".to_string(),
+        Some(name) => format!("witmproxy transparent proxy service (instance {name})"),
+    }
+}
+
 #[cfg(target_os = "linux")]
 fn generate_systemd_unit(
+    instance: &Instance,
     exe_path: &Path,
     args: &[OsString],
     app_dir: &Path,
@@ -923,7 +1151,13 @@ fn generate_systemd_unit(
 
     let exec_start = format!("{} {}", exe_path.display(), args_str);
 
-    let cleanup_commands = NetfilterManager::cleanup_commands(interface, redirect_port);
+    // The iptables cleanup is root's: a user unit cannot run it and has no
+    // transparent redirect to clean up after.
+    let cleanup_commands = if instance.is_user() {
+        Vec::new()
+    } else {
+        NetfilterManager::cleanup_commands(interface, redirect_port)
+    };
     let exec_stop_post_lines: Vec<String> = cleanup_commands
         .iter()
         .map(|(cmd, cmd_args)| {
@@ -935,11 +1169,17 @@ fn generate_systemd_unit(
             format!("ExecStopPost=-{} {}", path, cmd_args.join(" "))
         })
         .collect();
+    // A user manager has no multi-user.target; default.target is its
+    // equivalent.
+    let wanted_by = match instance.scope() {
+        Scope::System => "multi-user.target",
+        Scope::User => "default.target",
+    };
 
     format!(
         "\
 [Unit]
-Description=witmproxy transparent proxy service
+Description={description}
 After=network.target
 
 [Service]
@@ -951,8 +1191,9 @@ RestartSec=1
 {exec_stop_post}
 
 [Install]
-WantedBy=multi-user.target
+WantedBy={wanted_by}
 ",
+        description = unit_description(instance),
         exec_start = exec_start,
         work_dir = app_dir.display(),
         exec_stop_post = exec_stop_post_lines.join("\n"),
@@ -1065,6 +1306,7 @@ mod tests {
     #[test]
     fn generate_unit_has_valid_structure() {
         let unit = generate_systemd_unit(
+            &Instance::default(),
             Path::new("/usr/bin/witm"),
             &[
                 "serve".into(),
@@ -1076,6 +1318,7 @@ mod tests {
         );
 
         assert!(unit.contains("[Unit]"));
+        assert!(unit.contains("Description=witmproxy transparent proxy service\n"));
         assert!(unit.contains("[Service]"));
         assert!(unit.contains("[Install]"));
         assert!(unit.contains("ExecStart=/usr/bin/witm serve --config-path /etc/witm.toml"));
@@ -1084,9 +1327,185 @@ mod tests {
         assert!(unit.contains("WantedBy=multi-user.target"));
     }
 
+    /// The default instance's unit is exactly what it was: no `--instance`
+    /// in ExecStart, the historical description, the historical paths.
+    #[test]
+    fn default_instance_unit_is_unchanged() {
+        let d = Instance::default();
+        let args = serve_args(
+            &d,
+            Path::new("/var/lib/witmproxy/config.toml"),
+            false,
+            None,
+            false,
+            Path::new("/var/lib/witmproxy/witmproxy.log"),
+        );
+        let rendered: Vec<String> = args.iter().map(|a| a.to_string_lossy().into()).collect();
+        assert_eq!(
+            rendered,
+            [
+                "serve",
+                "--config-path",
+                "/var/lib/witmproxy/config.toml",
+                "--log-file",
+                "/var/lib/witmproxy/witmproxy.log",
+            ]
+        );
+        let unit = generate_systemd_unit(
+            &d,
+            Path::new("/usr/bin/witm"),
+            &args,
+            &d.root(),
+            &default_transparent_config(),
+        );
+        assert!(!unit.contains("--instance"));
+        assert!(unit.contains("Description=witmproxy transparent proxy service\n"));
+        assert!(unit.contains(
+            "ExecStart=/usr/bin/witm serve --config-path /var/lib/witmproxy/config.toml \
+             --log-file /var/lib/witmproxy/witmproxy.log\n"
+        ));
+        assert!(unit.contains("WorkingDirectory=/var/lib/witmproxy\n"));
+    }
+
+    /// A named instance's unit runs `serve` with `--instance <name>` beside
+    /// `--config-path`, so the daemon resolves the same paths the installer
+    /// did, and its Description names the instance.
+    #[test]
+    fn named_instance_unit_carries_the_instance() {
+        let i = Instance::named("agent-1").unwrap();
+        let args = serve_args(
+            &i,
+            &i.config_file(),
+            true,
+            Some(Path::new("/srv/plugins")),
+            true,
+            &i.log_file(),
+        );
+        let rendered: Vec<String> = args.iter().map(|a| a.to_string_lossy().into()).collect();
+        assert_eq!(
+            rendered,
+            [
+                "serve",
+                "--config-path",
+                "/var/lib/witmproxy/instances/agent-1/config.toml",
+                "--instance",
+                "agent-1",
+                "--verbose",
+                "--plugin-dir",
+                "/srv/plugins",
+                "--auto",
+                "--log-file",
+                "/var/lib/witmproxy/instances/agent-1/witmproxy.log",
+            ]
+        );
+        let unit = generate_systemd_unit(
+            &i,
+            Path::new("/usr/bin/witm"),
+            &args,
+            &i.root(),
+            &default_transparent_config(),
+        );
+        assert!(
+            unit.contains("Description=witmproxy transparent proxy service (instance agent-1)\n")
+        );
+        assert!(unit.contains(
+            "ExecStart=/usr/bin/witm serve --config-path \
+             /var/lib/witmproxy/instances/agent-1/config.toml --instance agent-1 --verbose \
+             --plugin-dir /srv/plugins --auto --log-file \
+             /var/lib/witmproxy/instances/agent-1/witmproxy.log\n"
+        ));
+        assert!(unit.contains("WorkingDirectory=/var/lib/witmproxy/instances/agent-1\n"));
+    }
+
+    /// A user's unit: `--user` in ExecStart so the daemon finds its own
+    /// state, `default.target` (a user manager has no multi-user.target), and
+    /// no iptables cleanup, which a user cannot run.
+    #[test]
+    fn user_instance_unit_is_a_user_unit() {
+        let i = Instance::named("agent-1").unwrap().with_scope(Scope::User);
+        let args = serve_args(&i, &i.config_file(), false, None, false, &i.log_file());
+        let rendered: Vec<String> = args.iter().map(|a| a.to_string_lossy().into()).collect();
+        assert_eq!(rendered[3..6], ["--instance", "agent-1", "--user"]);
+        let unit = generate_systemd_unit(
+            &i,
+            Path::new("/usr/bin/witm"),
+            &args,
+            &i.root(),
+            &default_transparent_config(),
+        );
+        assert!(unit.contains("WantedBy=default.target\n"), "{unit}");
+        assert!(!unit.contains("multi-user.target"), "{unit}");
+        assert!(!unit.contains("ExecStopPost="), "{unit}");
+        assert!(unit.contains(" --instance agent-1 --user "), "{unit}");
+
+        let handler = ServiceHandler::new(AppConfig::default(), i, false, None, false);
+        assert_eq!(handler.instance_flag(), " --user --instance agent-1");
+        let handler =
+            ServiceHandler::new(AppConfig::default(), Instance::user(), false, None, false);
+        assert_eq!(handler.instance_flag(), " --user");
+    }
+
+    /// What the service-manager crate derives from the label is the unit
+    /// name the instance promises, for the default and for named instances,
+    /// dotted names included.
+    #[test]
+    fn service_label_derives_the_promised_unit_name() {
+        for (name, unit) in [
+            ("default", "ez-witmproxy"),
+            ("agent-1", "ez-witmproxy@agent-1"),
+            ("agent.1", "ez-witmproxy@agent.1"),
+            ("a_b", "ez-witmproxy@a_b"),
+        ] {
+            let instance = Instance::named(name).unwrap();
+            let handler =
+                ServiceHandler::new(AppConfig::default(), instance.clone(), false, None, false);
+            let label = handler.service_label();
+            assert_eq!(label.to_script_name(), unit, "{name}");
+            assert_eq!(label.to_script_name(), instance.unit_name(), "{name}");
+            assert_eq!(
+                instance.service_file_name(),
+                format!("{unit}.service"),
+                "{name}"
+            );
+            assert_eq!(
+                handler.instance_flag(),
+                if name == "default" {
+                    String::new()
+                } else {
+                    format!(" --instance {name}")
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn unit_description_names_the_instance() {
+        assert_eq!(
+            unit_description(&Instance::default()),
+            "witmproxy transparent proxy service"
+        );
+        assert_eq!(
+            unit_description(&Instance::named("agent-1").unwrap()),
+            "witmproxy transparent proxy service (instance agent-1)"
+        );
+    }
+
+    #[test]
+    fn service_state_summaries_are_one_phrase() {
+        assert_eq!(ServiceState::Running.summary(), "running");
+        assert_eq!(ServiceState::NotInstalled.summary(), "not installed");
+        assert_eq!(ServiceState::NotStarted.summary(), "installed, not started");
+        assert_eq!(ServiceState::Stopped(None).summary(), "stopped");
+        assert_eq!(
+            ServiceState::Stopped(Some("exit 1".into())).summary(),
+            "stopped (exit 1)"
+        );
+    }
+
     #[test]
     fn generate_unit_has_exec_stop_post_lines() {
         let unit = generate_systemd_unit(
+            &Instance::default(),
             Path::new("/usr/bin/witm"),
             &["serve".into()],
             Path::new("/var/lib/witmproxy"),
@@ -1135,6 +1554,7 @@ mod tests {
         };
 
         let unit = generate_systemd_unit(
+            &Instance::default(),
             Path::new("/usr/bin/witm"),
             &["serve".into()],
             Path::new("/var/lib/witmproxy"),
@@ -1182,6 +1602,7 @@ mod tests {
 
         let config = default_transparent_config();
         let unit = generate_systemd_unit(
+            &Instance::default(),
             Path::new("/usr/bin/witm"),
             &["serve".into()],
             Path::new("/var/lib/witmproxy"),

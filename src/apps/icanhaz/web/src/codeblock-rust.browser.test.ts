@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
-import { rootPath } from "./generated/workspace";
+import { workspaceRoot } from "./workspace";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider, createCodeblock } from "@joinezco/codeblock";
 
@@ -19,12 +19,11 @@ describe("rust-analyzer in a live codeblock (the 'rust' branch, end-to-end)", ()
         const fs = await wrpcFilesystem(t, grant);
 
         // Daemon-reported host path → the rust-analyzer workspace + file:// URIs.
-        const rp = await rootPath(t, grant);
-        if (rp.tag !== "ok") throw new Error(`no workspace path: ${rp.val}`);
+        const root = await workspaceRoot(t, grant);
         setRemoteLspProvider(
             createWrpcLspProvider({
                 transport: t,
-                workspaceRoot: rp.val,
+                workspaceRoot: root,
                 servers: { rust: { image: "rust-analyzer" } },
             }),
         );

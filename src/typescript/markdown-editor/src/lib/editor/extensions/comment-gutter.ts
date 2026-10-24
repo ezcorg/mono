@@ -1,0 +1,200 @@
+/**
+ * The annotation column: a narrow column right of the note (between it
+ * and the comments panel, `.ezco-mde-annotations`) for what is said about
+ * a line from beside it. For now that is each comment's mark: a speech
+ * bubble in the comment colour on the first line of the comment's text, so
+ * where the comments are can be seen at a glance, and a resolved one,
+ * whose text reads as text again, can still be found. The comment looked
+ * at has the fuller bubble, a resolved one an empty grey one. A line two
+ * comments start on has one mark. (Reactions on a line, suggested changes
+ * and the like would stand in the same column.)
+ *
+ * The mark is the way to a comment where nothing beside the note shows
+ * them: a click opens the mark's comments within the note, all of them, and
+ * a second click closes them. With a panel or column beside the note the
+ * click looks at the comment, or at each in turn.
+ *
+ * A comment being written, or put down with its words kept (a draft), has
+ * a mark of its own on its line, dashed, in the accent: a click brings its
+ * composer back. A comment whose reply is drafted carries a dot.
+ */
+import { Extension, type Editor } from '@tiptap/core'
+import { Plugin, PluginKey } from '@tiptap/pm/state'
+import type { EditorView } from '@tiptap/pm/view'
+import { commentsKey, keptDraft, type CommentInfo } from './comments'
+import { byline, draftKey, readDraft } from './comment-render'
+import { persistenceOf } from './filesystem'
+import { button, labelled, pressable } from '../ui/dom'
+import { observeResize, rafThrottle } from '../ui/layout'
+
+/** The mark: a speech bubble, filled by how much it is looked at (CSS). */
+const BUBBLE = 'M2.5 3h11a1 1 0 0 1 1 1v6.5a1 1 0 0 1-1 1H8l-3.5 2.75V11.5h-2a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z'
+const MARK_ICON = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="${BUBBLE}" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>`
+/** A draft's: the bubble dashed, not yet said. */
+const DRAFT_ICON = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="${BUBBLE}" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-dasharray="2.4 1.8"/></svg>`
+
+class CommentGutter {
+    private readonly marks: HTMLButtonElement[] = []
+    private readonly pass = rafThrottle(() => this.layout())
+    private readonly unobserve: () => void
+
+    constructor(private readonly view: EditorView, private readonly editor: Editor) {
+        this.unobserve = observeResize(view.dom, this.pass.schedule)
+        this.pass.schedule()
+    }
+
+    /** The column beside the note, when the layout has one. */
+    private column(): HTMLElement | null {
+        return annotationColumn(this.view)
+    }
+
+    update() {
+        this.pass.schedule()
+    }
+
+    private layout() {
+        const column = this.column()
+        if (!column || !this.view.dom.isConnected) return
+        const state = commentsKey.getState(this.view.state)
+        const comments = (state?.comments ?? []).filter((c) => c.target.range && !c.target.whole && c.target.range.to > c.target.range.from)
+        const box = column.getBoundingClientRect()
+        // One mark per line comments start on, in the note's order.
+        type Line = { top: number; height: number; comments: CommentInfo[]; draft?: 'open' | 'kept' }
+        const lines: Line[] = []
+        const lineAt = (pos: number): { top: number; height: number } | null => {
+            try {
+                const at = this.view.coordsAtPos(pos, 1)
+                return at.bottom > at.top ? { top: at.top - box.top, height: at.bottom - at.top } : null
+            } catch {
+                return null
+            }
+        }
+        for (const c of [...comments].sort((a, b) => a.target.range!.from - b.target.range!.from)) {
+            const at = lineAt(c.target.range!.from)
+            if (!at) continue
+            const line = lines.find((l) => Math.abs(l.top - at.top) < 1)
+            if (line) line.comments.push(c)
+            else lines.push({ ...at, comments: [c] })
+        }
+        // The draft: the comment being written, or one put down with its
+        // words kept, on its line (with the comments there, if any).
+        const writing = state?.draft?.ranges[0] ?? null
+        const draftRange = writing ?? keptDraft(this.editor)?.range ?? null
+        if (draftRange && draftRange.to > draftRange.from) {
+            const at = lineAt(draftRange.from)
+            if (at) {
+                const kind = writing ? 'open' : 'kept'
+                const line = lines.find((l) => Math.abs(l.top - at.top) < 1)
+                if (line) line.draft = kind
+                else lines.push({ ...at, comments: [], draft: kind })
+            }
+        }
+        lines.sort((a, b) => a.top - b.top)
+        const note = persistenceOf(this.editor)?.options.filepath ?? null
+        const replyDrafted = (c: CommentInfo) => !!readDraft(draftKey(note, c.id, 'reply'))
+        while (this.marks.length > lines.length) this.marks.pop()!.remove()
+        lines.forEach((line, i) => {
+            let mark = this.marks[i]
+            if (!mark) {
+                mark = pressable(button('ezco-mde-comment-mark'), (b, e) => {
+                    e.preventDefault()
+                    this.press(b)
+                })
+                mark.contentEditable = 'false'
+                mark.innerHTML = MARK_ICON
+                column.appendChild(mark)
+                this.marks.push(mark)
+            }
+            // (As JSON: an id has spaces in it.)
+            const ids = JSON.stringify(line.comments.map((c) => c.id))
+            if (mark.dataset.comments !== ids) mark.dataset.comments = ids
+            const kind = line.comments.length ? 'comments' : 'draft'
+            if (mark.dataset.kind !== kind) {
+                mark.dataset.kind = kind
+                mark.innerHTML = kind === 'draft' ? DRAFT_ICON : MARK_ICON
+            }
+            const [first] = line.comments
+            const title = !line.comments.length
+                ? line.draft === 'open'
+                    ? 'Your comment, being written'
+                    : 'Your draft comment'
+                : line.comments.length === 1
+                  ? `${first.resolved ? 'Resolved comment' : 'Comment'} by ${byline(first)}`
+                  : `${line.comments.length} comments`
+            if (mark.title !== title) labelled(mark, title)
+            const top = `${line.top.toFixed(2)}px`
+            const height = `${line.height.toFixed(2)}px`
+            if (mark.style.top !== top) mark.style.top = top
+            if (mark.style.height !== height) mark.style.height = height
+            mark.classList.toggle('is-active', line.comments.some((c) => c.id === state?.active) || (kind === 'draft' && line.draft === 'open'))
+            mark.classList.toggle('is-open', line.comments.some((c) => state?.open.includes(c.id)))
+            mark.classList.toggle('is-resolved', line.comments.length > 0 && line.comments.every((c) => c.resolved))
+            mark.classList.toggle('is-draft', kind === 'draft')
+            mark.classList.toggle('has-draft', kind === 'comments' && (!!line.draft || line.comments.some(replyDrafted)))
+        })
+    }
+
+    private get margin() {
+        return (this.editor.storage as Record<string, any>).commentMargin as { floating?: () => boolean; focusDraft?: () => boolean; leaveInline?: (ids: string[]) => Promise<void> } | undefined
+    }
+
+    /** Whether the comments float over the note (nothing beside it shows them). */
+    private floating(): boolean {
+        return this.margin?.floating?.() ?? true
+    }
+
+    /** A mark pressed: a draft's brings its composer back (or to the
+     *  front); within the note, its comments opened, or closed (gone out
+     *  first) when they all are; beside the note, its comment looked at,
+     *  and where several start on the line, the one after the one looked at. */
+    private press(mark: HTMLButtonElement) {
+        if (mark.dataset.kind === 'draft') {
+            if (commentsKey.getState(this.view.state)?.draft) {
+                this.margin?.focusDraft?.()
+                return
+            }
+            const kept = keptDraft(this.editor)
+            if (kept) this.editor.chain().focus().setTextSelection(kept.range).startComment().run()
+            return
+        }
+        const ids = JSON.parse(mark.dataset.comments ?? '[]') as string[]
+        if (!ids.length) return
+        if (this.floating()) {
+            const open = commentsKey.getState(this.view.state)?.open ?? []
+            const closing = ids.every((id) => open.includes(id))
+            const leave = closing ? this.margin?.leaveInline?.(ids) : undefined
+            if (leave) void leave.then(() => this.editor.commands.toggleComments(ids))
+            else this.editor.commands.toggleComments(ids)
+            return
+        }
+        const active = commentsKey.getState(this.view.state)?.active ?? ''
+        this.editor.commands.focusComment(ids[(ids.indexOf(active) + 1) % ids.length])
+    }
+
+    destroy() {
+        this.pass.cancel()
+        this.unobserve()
+        for (const mark of this.marks) mark.remove()
+        this.marks.length = 0
+    }
+}
+
+/** The annotation column beside `view`'s note, when the layout has one. */
+export function annotationColumn(view: EditorView): HTMLElement | null {
+    const row = view.dom.parentElement?.parentElement
+    return row?.classList.contains('ezco-mde-content') ? row.querySelector<HTMLElement>(':scope > .ezco-mde-annotations') : null
+}
+
+export const CommentMarks = Extension.create({
+    name: 'commentMarks',
+
+    addProseMirrorPlugins() {
+        const editor = this.editor
+        return [
+            new Plugin({
+                key: new PluginKey('commentMarks'),
+                view: (view) => new CommentGutter(view, editor),
+            }),
+        ]
+    },
+})

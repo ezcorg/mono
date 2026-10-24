@@ -14,9 +14,38 @@ use crate::proxy::tenant::TenantContext;
 
 /// Pluggable trait for determining tenant identity from a TCP peer address.
 /// No auth logic belongs here -- just identity resolution.
+// async_trait marks each method it expands `#[must_use]`, over a boxed future
+// that already is one: clippy's `double_must_use` now sees into the expansion.
+#[allow(clippy::double_must_use)]
 #[async_trait]
 pub trait TenantResolver: Send + Sync {
     async fn resolve(&self, peer_addr: &SocketAddr) -> TenantContext;
+
+    /// Drop whatever this resolver remembers about `ip`, so the next
+    /// connection from it is looked up afresh. Called when a mapping for the
+    /// address is added or removed at the management API; a resolver that
+    /// caches nothing has nothing to do.
+    async fn forget_ip(&self, _ip: IpAddr) {}
+
+    /// Drop whatever this resolver remembers about `tenant_id`, every
+    /// address of it. Called when the tenant is deleted or disabled.
+    async fn forget_tenant(&self, _tenant_id: &str) {}
+}
+
+// ---------------------------------------------------------------------------
+// AnonymousResolver -- no tenant database to ask
+// ---------------------------------------------------------------------------
+
+/// Resolves every connection to anonymous. The resolver of a proxy with no
+/// tenant database (tests, embedding), and what a [`crate::ProxyServer`]
+/// starts with until given one.
+pub struct AnonymousResolver;
+
+#[async_trait]
+impl TenantResolver for AnonymousResolver {
+    async fn resolve(&self, _peer_addr: &SocketAddr) -> TenantContext {
+        TenantContext::anonymous()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -31,7 +60,13 @@ struct CacheEntry {
 pub struct IpMappingResolver {
     pool: SqlitePool,
     cache: RwLock<HashMap<IpAddr, CacheEntry>>,
-    ttl: Duration,
+    /// How long a mapped address keeps its tenant before the table is read
+    /// again. Short, so removing a mapping cuts a client off promptly.
+    hit_ttl: Duration,
+    /// How long an unmapped address stays anonymous. Shorter still, so a
+    /// mapping added at the management API applies to the client's next
+    /// connection rather than a minute later.
+    miss_ttl: Duration,
 }
 
 impl IpMappingResolver {
@@ -39,19 +74,25 @@ impl IpMappingResolver {
         Self {
             pool,
             cache: RwLock::new(HashMap::new()),
-            ttl: Duration::from_secs(60),
-        }
-    }
-
-    pub fn invalidate_cache(&self) {
-        if let Ok(mut cache) = self.cache.try_write() {
-            cache.clear();
+            hit_ttl: Duration::from_secs(5),
+            miss_ttl: Duration::from_secs(1),
         }
     }
 }
 
 #[async_trait]
 impl TenantResolver for IpMappingResolver {
+    async fn forget_ip(&self, ip: IpAddr) {
+        self.cache.write().await.remove(&ip);
+    }
+
+    async fn forget_tenant(&self, tenant_id: &str) {
+        self.cache
+            .write()
+            .await
+            .retain(|_, entry| entry.context.tenant_id.as_deref() != Some(tenant_id));
+    }
+
     async fn resolve(&self, peer_addr: &SocketAddr) -> TenantContext {
         let ip = peer_addr.ip();
 
@@ -78,12 +119,17 @@ impl TenantResolver for IpMappingResolver {
 
         // Update cache
         {
+            let ttl = if ctx.is_anonymous() {
+                self.miss_ttl
+            } else {
+                self.hit_ttl
+            };
             let mut cache = self.cache.write().await;
             cache.insert(
                 ip,
                 CacheEntry {
                     context: ctx.clone(),
-                    expires_at: Instant::now() + self.ttl,
+                    expires_at: Instant::now() + ttl,
                 },
             );
         }
@@ -135,6 +181,17 @@ impl TailscaleResolver {
 
 #[async_trait]
 impl TenantResolver for TailscaleResolver {
+    async fn forget_ip(&self, ip: IpAddr) {
+        self.cache.write().await.remove(&ip);
+    }
+
+    async fn forget_tenant(&self, tenant_id: &str) {
+        self.cache
+            .write()
+            .await
+            .retain(|_, entry| entry.context.tenant_id.as_deref() != Some(tenant_id));
+    }
+
     async fn resolve(&self, peer_addr: &SocketAddr) -> TenantContext {
         let ip = peer_addr.ip();
 
@@ -408,5 +465,65 @@ mod tests {
         let headers = hyper::HeaderMap::new();
         let ctx = resolver.resolve_from_header(&headers);
         assert!(ctx.is_anonymous());
+    }
+
+    /// A mapping removed at the management API must not keep answering from
+    /// the cache: the next guest to get that address would be dispatched as
+    /// the tenant that used to have it.
+    #[tokio::test]
+    async fn forgetting_an_ip_drops_its_cached_tenant() {
+        let (db, _tmp) = crate::test_utils::create_db().await;
+        tenants::Tenant::create(&db.pool, "t1", "Test User", None, None, None, None)
+            .await
+            .unwrap();
+        tenants::add_ip_mapping(&db.pool, "t1", "10.0.0.1")
+            .await
+            .unwrap();
+        let resolver = IpMappingResolver::new(db.pool.clone());
+        let addr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 1));
+        assert_eq!(
+            resolver.resolve(&addr).await.tenant_id.as_deref(),
+            Some("t1")
+        );
+
+        tenants::remove_ip_mapping(&db.pool, "t1", "10.0.0.1")
+            .await
+            .unwrap();
+        // Still cached: the hit TTL has not passed.
+        assert_eq!(
+            resolver.resolve(&addr).await.tenant_id.as_deref(),
+            Some("t1")
+        );
+        resolver.forget_ip(addr.ip()).await;
+        assert!(resolver.resolve(&addr).await.is_anonymous());
+    }
+
+    #[tokio::test]
+    async fn forgetting_a_tenant_drops_every_address_of_it_and_no_other() {
+        let (db, _tmp) = crate::test_utils::create_db().await;
+        for (tenant, ip) in [("t1", "10.0.0.1"), ("t1", "10.0.0.2"), ("t2", "10.0.0.3")] {
+            if tenants::Tenant::by_id(&db.pool, tenant)
+                .await
+                .unwrap()
+                .is_none()
+            {
+                tenants::Tenant::create(&db.pool, tenant, tenant, None, None, None, None)
+                    .await
+                    .unwrap();
+            }
+            tenants::add_ip_mapping(&db.pool, tenant, ip).await.unwrap();
+        }
+        let resolver = IpMappingResolver::new(db.pool.clone());
+        let a1 = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 1));
+        let a2 = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 2), 1));
+        let a3 = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 3), 1));
+        for a in [&a1, &a2, &a3] {
+            resolver.resolve(a).await;
+        }
+        tenants::Tenant::delete(&db.pool, "t1").await.unwrap();
+        resolver.forget_tenant("t1").await;
+        assert!(resolver.resolve(&a1).await.is_anonymous());
+        assert!(resolver.resolve(&a2).await.is_anonymous());
+        assert_eq!(resolver.resolve(&a3).await.tenant_id.as_deref(), Some("t2"));
     }
 }

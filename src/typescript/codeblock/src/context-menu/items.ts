@@ -6,6 +6,10 @@ import {
     findReferences, renameSymbol, formatDocument,
 } from "@codemirror/lsp-client";
 import { openSearchPanel } from "@codemirror/search";
+import { openFileEffect, setRegionEffect, currentFileField, regionField } from "../editor";
+const currentFileFieldRef = () => currentFileField;
+const regionFieldRef = () => regionField;
+import { formatLineRange, type LineRange } from "../utils/region";
 import { selectAll, toggleComment } from "@codemirror/commands";
 
 // -------------------------------------------------------------------------
@@ -21,6 +25,23 @@ export interface MenuContext {
     cursorOnIdentifier: boolean;
     hasDiagnosticsAtCursor: boolean;
     hasAI: boolean;
+    /** The file the block shows, and which of its lines (null: all). */
+    filePath: string | null;
+    region: LineRange | null;
+}
+
+/** The selected lines, numbered as the file numbers them. */
+function selectedLines(ctx: MenuContext): LineRange {
+    const { from, to } = ctx.view.state.selection.main;
+    const first = ctx.view.state.doc.lineAt(from).number;
+    const last = ctx.view.state.doc.lineAt(to).number;
+    const offset = ctx.region ? ctx.region.from - 1 : 0;
+    return { from: first + offset, to: last + offset };
+}
+
+/** `src/a.ts#L3-L9`: the link a note's fence or embed takes. */
+function lineLink(path: string, range: LineRange): string {
+    return `${path}#${formatLineRange(range)}`;
 }
 
 export interface ContextMenuItem {
@@ -178,6 +199,46 @@ export function buildMenuItems(): ContextMenuItem[] {
             group: 'clipboard',
             available: () => true,
             action: v => clipboardPaste(v),
+        },
+
+        // ---- Lines of a file ----
+        {
+            label: 'Copy link to lines',
+            group: 'clipboard',
+            available: ctx => !!ctx.filePath,
+            action: async v => {
+                const ctx = { view: v, region: null } as MenuContext;
+                const fileState = v.state.field(currentFileFieldRef(), false);
+                const path = fileState?.path;
+                if (!path) return;
+                ctx.region = v.state.field(regionFieldRef(), false) ?? null;
+                const text = lineLink(path, selectedLines(ctx));
+                try { await navigator.clipboard.writeText(text); } catch { /* the clipboard is not ours here */ }
+            },
+        },
+        {
+            label: 'Show only these lines',
+            group: 'navigation',
+            available: ctx => !!ctx.filePath,
+            action: v => {
+                const fileState = v.state.field(currentFileFieldRef(), false);
+                const path = fileState?.path;
+                if (!path) return;
+                const region = v.state.field(regionFieldRef(), false) ?? null;
+                const range = selectedLines({ view: v, region } as MenuContext);
+                v.dispatch({ effects: [openFileEffect.of({ path }), setRegionEffect.of(range)] });
+            },
+        },
+        {
+            label: 'Show the whole file',
+            group: 'navigation',
+            available: ctx => !!ctx.filePath && !!ctx.region,
+            action: v => {
+                const fileState = v.state.field(currentFileFieldRef(), false);
+                const path = fileState?.path;
+                if (!path) return;
+                v.dispatch({ effects: [openFileEffect.of({ path }), setRegionEffect.of(null)] });
+            },
         },
 
         // ---- AI ----

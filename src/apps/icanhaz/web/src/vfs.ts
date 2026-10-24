@@ -1,4 +1,4 @@
-//! A `VfsInterface`-shaped filesystem (codeblock's contract) backed by the host's
+//! A `VfsInterface` (`@joinezco/storage`'s contract) backed by the host's
 //! real `wasi:filesystem@0.2` over wRPC — the seam that lets the markdown-editor /
 //! codeblock edit host files remotely, gated + scoped by a NoCap grant.
 //!
@@ -7,37 +7,21 @@
 //! rides the generated `wasi:filesystem` bindings. Path-only ops (`stat`/`exists`/
 //! `unlink`/`mkdir`) use the `*-at` methods, so they open no descriptor.
 //!
-//! Structurally matches codeblock's `VfsInterface` (kept dependency-free here on
-//! purpose — no `@volar`/codeblock import; the editor consumes it structurally).
-//!
 //! DESCRIPTOR LIFETIME: `readFile`/`writeFile`/`readDir` open a per-op descriptor
 //! (and `readDir` a directory-entry-stream). These are guest-exported resources the
 //! host holds in its shared-resource table; without a drop they'd accumulate for the
 //! connection's life. So each of those ops **drops the handle it opened** when it's
-//! done, via `dropHandle` → the host's `icanhaz:fspass/resources@0.1.0#drop` (which
+//! done, via `dropHandle` → the host's `icanhaz:nocap/resources@0.1.0#drop` (which
 //! evicts the table entry and runs the guest destructor, closing the real fd). The
 //! long-lived mount `root` is kept. `watch` is a no-op (wasi:filesystem@0.2 has no
 //! change notifications).
 
-import { type Transport, invoke, encodeBytes, readBool, resultValue } from "./wrpc";
-import * as fsmount from "./generated/fs-mount";
+import type { Transport } from "./wrpc";
+import * as filesystem from "./generated/filesystem";
 import * as fs from "./generated/wasi-filesystem";
-import { open as watchOpen } from "./generated/watch";
-
-/** `@volar/language-service` FileType values (Unknown/File/Directory/SymbolicLink). */
-export type FileType = 0 | 1 | 2 | 64;
-
-/** Mirrors codeblock's `VfsInterface` (src/types.ts) — consumed structurally. */
-export interface VfsLike {
-    readFile(path: string): Promise<string>;
-    writeFile(path: string, data: string): Promise<void>;
-    watch(path: string, options: { signal: AbortSignal }): AsyncGenerator<{ eventType: "rename" | "change"; filename: string }>;
-    mkdir(path: string, options: { recursive: boolean }): Promise<void>;
-    readDir(path: string): Promise<[string, FileType][]>;
-    exists(path: string): Promise<boolean>;
-    stat(path: string): Promise<unknown | undefined>;
-    unlink(path: string): Promise<void>;
-}
+import { open as watchOpen, watcherWatch } from "./generated/watch";
+import { drop as dropResource } from "./generated/resources";
+import { FileType, type VfsInterface } from "@joinezco/storage";
 
 const td = new TextDecoder();
 const te = new TextEncoder();
@@ -46,7 +30,13 @@ const te = new TextEncoder();
 const rel = (p: string): string => p.replace(/^\/+/, "") || ".";
 
 const fileType = (t: fs.DescriptorType): FileType =>
-    t === "directory" ? 2 : t === "symbolic-link" ? 64 : t === "regular-file" ? 1 : 0;
+    t === "directory"
+        ? FileType.Directory
+        : t === "symbolic-link"
+          ? FileType.SymbolicLink
+          : t === "regular-file"
+            ? FileType.File
+            : FileType.Unknown;
 
 const toDate = (d: fs.Datetime | undefined): Date | undefined =>
     d ? new Date(Number(d.seconds) * 1000 + Math.floor(d.nanoseconds / 1e6)) : undefined;
@@ -60,21 +50,6 @@ function concat(chunks: Uint8Array[]): Uint8Array {
         o += c.length;
     }
     return out;
-}
-
-// The host serves this alongside the filesystem: `drop(handle: list<u8>)` evicts a
-// guest-exported resource handle (descriptor / directory-entry-stream) from the
-// shared-resource table and runs its guest destructor (closing the fd).
-const RESOURCES_INSTANCE = "icanhaz:fspass/resources@0.1.0";
-
-/** Release a guest resource handle (descriptor / directory-entry-stream) the host
- *  holds for us. Resolves to whether a live handle was actually released (the host
- *  ran its destructor + evicted it); `false` if it was already gone. Throws on
- *  transport error. Exported so a caller/test that obtained a handle directly can
- *  release it. */
-export async function dropResource(t: Transport, handle: Uint8Array): Promise<boolean> {
-    const resp = await invoke(t, RESOURCES_INSTANCE, "drop", encodeBytes(handle));
-    return readBool(resultValue(resp), 0)[0];
 }
 
 /** Best-effort drop used internally: a failure is non-fatal — the handle would just
@@ -91,8 +66,8 @@ async function dropHandle(t: Transport, handle: Uint8Array): Promise<void> {
  * Mount a NoCap filesystem grant and present it as a `VfsInterface`. Throws if the
  * grant is refused at the consent gate.
  */
-export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLike> {
-    const mounted = await fsmount.openRoot(t, grant);
+export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsInterface> {
+    const mounted = await filesystem.open(t, grant);
     if (mounted.tag !== "ok") throw new Error(`filesystem mount denied: ${mounted.val}`);
     const root = mounted.val; // the grant-scoped root descriptor (an opaque handle)
 
@@ -102,57 +77,77 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLi
         return r.val;
     };
 
+    const readBytes = async (path: string): Promise<Uint8Array> => {
+        const fd = await open(path, {}, { read: true });
+        try {
+            const chunks: Uint8Array[] = [];
+            let offset = 0n;
+            for (;;) {
+                const r = await fs.descriptorRead(t, fd, 65536n, offset);
+                if (r.tag !== "ok") throw new Error(`read ${path}: ${r.val}`);
+                const [chunk, eof] = r.val;
+                chunks.push(chunk);
+                offset += BigInt(chunk.length);
+                if (eof) break;
+            }
+            return concat(chunks);
+        } finally {
+            await dropHandle(t, fd);
+        }
+    };
+
+    const writeBytes = async (path: string, bytes: Uint8Array): Promise<void> => {
+        // Do NOT open with truncate: it empties the file on disk first, and a native
+        // watcher (rust-analyzer's cargo-check/flycheck) can read that empty window and
+        // cache a bogus error (e.g. "main function not found"). Instead overwrite in place,
+        // then set-size to trim any leftover tail — the file is never empty on disk.
+        const fd = await open(path, { create: true, truncate: false }, { read: true, write: true });
+        try {
+            let offset = 0n;
+            const len = BigInt(bytes.length);
+            while (offset < len) {
+                const r = await fs.descriptorWrite(t, fd, bytes.subarray(Number(offset)), offset);
+                if (r.tag !== "ok") throw new Error(`write ${path}: ${r.val}`);
+                if (r.val === 0n) break; // guard against a 0-byte write looping forever
+                offset += r.val;
+            }
+            // Trim to the exact length (removes any tail left when overwriting longer content).
+            const s = await fs.descriptorSetSize(t, fd, len);
+            if (s.tag !== "ok") throw new Error(`set-size ${path}: ${s.val}`);
+        } finally {
+            await dropHandle(t, fd);
+        }
+    };
+
     return {
         async readFile(path) {
-            const fd = await open(path, {}, { read: true });
-            try {
-                const chunks: Uint8Array[] = [];
-                let offset = 0n;
-                for (;;) {
-                    const r = await fs.descriptorRead(t, fd, 65536n, offset);
-                    if (r.tag !== "ok") throw new Error(`read ${path}: ${r.val}`);
-                    const [chunk, eof] = r.val;
-                    chunks.push(chunk);
-                    offset += BigInt(chunk.length);
-                    if (eof) break;
-                }
-                return td.decode(concat(chunks));
-            } finally {
-                await dropHandle(t, fd);
-            }
+            return td.decode(await readBytes(path));
         },
 
         async writeFile(path, data) {
-            // Do NOT open with truncate: it empties the file on disk first, and a native
-            // watcher (rust-analyzer's cargo-check/flycheck) can read that empty window and
-            // cache a bogus error (e.g. "main function not found"). Instead overwrite in place,
-            // then set-size to trim any leftover tail — the file is never empty on disk.
-            const fd = await open(path, { create: true, truncate: false }, { read: true, write: true });
-            try {
-                const bytes = te.encode(data);
-                let offset = 0n;
-                const len = BigInt(bytes.length);
-                while (offset < len) {
-                    const r = await fs.descriptorWrite(t, fd, bytes.subarray(Number(offset)), offset);
-                    if (r.tag !== "ok") throw new Error(`write ${path}: ${r.val}`);
-                    if (r.val === 0n) break; // guard against a 0-byte write looping forever
-                    offset += r.val;
-                }
-                // Trim to the exact length (removes any tail left when overwriting longer content).
-                const s = await fs.descriptorSetSize(t, fd, len);
-                if (s.tag !== "ok") throw new Error(`set-size ${path}: ${s.val}`);
-            } finally {
-                await dropHandle(t, fd);
-            }
+            await writeBytes(path, te.encode(data));
+        },
+
+        readBytes,
+        writeBytes,
+
+        // Both paths are under the same grant-scoped root, so the host's jail
+        // confines the move to it.
+        async rename(oldPath, newPath) {
+            const r = await fs.descriptorRenameAt(t, root, rel(oldPath), root, rel(newPath));
+            if (r.tag !== "ok") throw new Error(`rename ${oldPath} -> ${newPath}: ${r.val}`);
         },
 
         // Native change events via the host `watch` capability (a `notify` watcher
-        // under the grant's jail). Events arrive framed as [kind u8][len u16 BE][path]
+        // under the grant's jail). A `watcher` object is opened for the grant,
+        // and one watch runs on it. Events arrive framed as [kind u8][len u16 BE][path]
         // and are decoded here into codeblock's {eventType, filename} stream. The
-        // watcher stops when this generator returns (abort → session close).
+        // watch stops and the object is released when this generator returns.
         async *watch(path, options) {
             const signal = options?.signal;
-            const session = await watchOpen(t, grant, rel(path), true);
+            const watcher = await watchOpen(t, grant);
+            if (watcher.tag !== "ok") throw new Error(`watch refused: ${watcher.val}`);
+            const session = await watcherWatch(t, watcher.val, rel(path), true);
             const events: Array<{ eventType: "rename" | "change"; filename: string }> = [];
             let buf: Uint8Array = new Uint8Array(0);
             let ended = false;
@@ -196,6 +191,7 @@ export async function wrpcFilesystem(t: Transport, grant: string): Promise<VfsLi
             } finally {
                 signal?.removeEventListener("abort", onAbort);
                 session.close();
+                await dropHandle(t, watcher.val);
             }
         },
 

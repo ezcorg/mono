@@ -3,7 +3,7 @@
 //! All the wiring lives in `mac-demo.ts`; this page just picks the default file.
 //!
 //! Run with the daemon in auto-consent:
-//!   cd /Users/theo/dev/mono && ICANHAZ_CONSENT=auto ./target/debug/icanhazd
+//!   cd <repo root> && ICANHAZ_CONSENT=auto ./target/debug/icanhazd
 //!   cd src/apps/icanhaz/web && npm run dev   # then open /editor-demo.html
 
 import { mountMacDemo } from "./mac-demo";

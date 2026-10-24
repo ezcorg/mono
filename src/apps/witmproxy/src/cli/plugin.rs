@@ -5,7 +5,13 @@
 
 use super::GlobalArgs;
 use crate::cli::api_client::{ApiClient, DaemonAuthArgs, LocalDaemon};
-use crate::{config::PluginScopedConfig, db::Db, plugins::registry::PluginRegistry, wasm::Runtime};
+use crate::db::Migrate as _;
+use crate::{
+    config::{Instance, PluginScopedConfig},
+    db::Db,
+    plugins::registry::PluginRegistry,
+    wasm::Runtime,
+};
 use anyhow::Result;
 use conf::{Conf, Subcommands};
 use std::path::{Path, PathBuf};
@@ -144,14 +150,16 @@ pub struct PluginConfigureArgs {
     pub set_values: Vec<String>,
 }
 
-/// Plugin command handler that contains the resolved configuration and verbose flag
+/// Plugin command handler: the resolved configuration and the instance whose
+/// daemon and database it works on.
 pub struct PluginHandler {
     pub config: PluginScopedConfig,
+    instance: Instance,
 }
 
 impl PluginHandler {
-    pub fn new(config: PluginScopedConfig, _verbose: bool) -> Self {
-        Self { config }
+    pub fn new(config: PluginScopedConfig, instance: Instance, _verbose: bool) -> Self {
+        Self { config, instance }
     }
 
     pub async fn handle(&self, command: &PluginCommands) -> Result<()> {
@@ -173,7 +181,10 @@ impl PluginHandler {
     /// is known (no login, no local daemon): callers then work on the
     /// database directly.
     fn daemon_client(&self, auth: &DaemonAuthArgs) -> Result<Option<ApiClient>> {
-        ApiClient::resolve(auth, LocalDaemon::from_tls(&self.config.tls))
+        ApiClient::resolve(
+            auth,
+            LocalDaemon::new(&self.instance, &self.config.tls.cert_dir),
+        )
     }
 
     /// Turn a daemon reply into a result: `Ok(true)` on success, `Ok(false)`
@@ -251,7 +262,7 @@ impl PluginHandler {
     }
 
     async fn list_plugins(&self) -> Result<()> {
-        let db_password = self.config.db.resolve_password()?;
+        let db_password = self.config.db.resolve_password(&self.instance)?;
         let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
         drop(db_password);
         db.migrate().await?;
@@ -441,24 +452,28 @@ impl PluginHandler {
         }
 
         // Fall back to direct DB access
-        let db_password = self.config.db.resolve_password()?;
+        let db_password = self.config.db.resolve_password(&self.instance)?;
         let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
         drop(db_password);
         db.migrate().await?;
 
         // Create runtime and registry
         let runtime = Runtime::try_default()?;
-        let registry = PluginRegistry::new(db, runtime)?;
+        let mut registry = PluginRegistry::new(db, runtime)?;
+        if let Some(url) = &self.config.icanhaz {
+            registry.set_icanhaz(Some(crate::plugins::icanhaz::Icanhaz::connect(url)?));
+        }
 
         // Create plugin from component bytes (including signature verification)
         let mut plugin = registry
             .plugin_from_component_with_key(component_bytes, expected_key.as_deref())
             .await?;
-        // TODO: DON'T GRANT ALL THE THINGS ALWAYS
-        plugin
-            .capabilities
-            .iter_mut()
-            .for_each(|cap| cap.granted = true);
+        // What it gets of what it wants: the human's call at the icanhaz tray
+        // app when one is configured, everything as proposed otherwise.
+        if let Err(e) = registry.consent_for(&mut plugin).await {
+            registry.discard_plugin(plugin);
+            return Err(e);
+        }
 
         debug!(
             "Received plugin: {}/{}:{}",
@@ -507,7 +522,7 @@ impl PluginHandler {
             None => (plugin_name.to_string(), "default".to_string()),
         };
 
-        let db_password = self.config.db.resolve_password()?;
+        let db_password = self.config.db.resolve_password(&self.instance)?;
         let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
         drop(db_password);
         db.migrate().await?;
@@ -659,7 +674,7 @@ impl PluginHandler {
         }
 
         // Fall back to direct DB access
-        let db_password = self.config.db.resolve_password()?;
+        let db_password = self.config.db.resolve_password(&self.instance)?;
         let db = Db::from_path(self.config.db.db_path.clone(), db_password.expose()).await?;
         drop(db_password);
         db.migrate().await?;

@@ -45,14 +45,23 @@
               just
               git
               wasm-tools
+              wkg              # fetches icanhaz's WIT deps (src/apps/icanhaz/scripts/fetch-wit.sh)
               # Portable Linux release binaries from a NixOS host: `cargo zigbuild
               # --target x86_64-unknown-linux-gnu.2.28` links against an old glibc
               # instead of the Nix store's.
               cargo-zigbuild
               zig_0_14
-            ] ++ lib.optionals stdenv.isDarwin [ libiconv ];
+              perl             # openssl-src (vendored by sqlcipher) configures with perl
+            ] ++ lib.optionals stdenv.isDarwin [ libiconv ]
+              # Browser for the vitest browser tests; the Linux CI image also
+              # exposes it as /usr/bin/google-chrome for configs that hardcode it.
+              # dbus: ezdb's keyring reaches the Secret Service over D-Bus, and
+              # libdbus-sys finds dbus-1 through pkg-config.
+              ++ lib.optionals stdenv.isLinux [ chromium dbus ];
             shellHook = ''
               export CARGO_NET_GIT_FETCH_WITH_CLI=true
+              # Tools the scripts `cargo install` on demand (wasmsign2).
+              export PATH="$HOME/.cargo/bin:$PATH"
             '';
           };
         });

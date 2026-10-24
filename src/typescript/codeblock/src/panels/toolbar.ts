@@ -5,9 +5,10 @@
  * gutter-width CSS variables, loading spinner, settings compartment
  * reconfiguration, and the CM StateField / StateEffect plumbing.
  */
-import { EditorView, Panel, lineNumbers, highlightActiveLineGutter } from "@codemirror/view";
+import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { CodeblockFacet, openFileEffect, currentFileField, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, regionField, setRegionEffect, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
+import { formatLineRange, lineRange, type LineRange } from "../utils/region";
 import { foldGutter } from "@codemirror/language";
 import { LSP, LspLog } from "../utils/lsp";
 import { goBack, goForward, canGoBack, canGoForward } from "../navigation";
@@ -105,7 +106,7 @@ function handleCMSettingsEntry(view: EditorView, entry: SettingsEntry) {
         const newValue = !s[key];
         const effects: StateEffect<any>[] = [updateSettingsEffect.of({ [key]: newValue })];
         if (key === 'lineWrap') effects.push(lineWrappingCompartment.reconfigure(newValue ? EditorView.lineWrapping : []));
-        if (key === 'showLineNumbers') effects.push(lineNumbersCompartment.reconfigure(newValue ? [lineNumbers(), highlightActiveLineGutter()] : []));
+        if (key === 'showLineNumbers') effects.push(lineNumbersCompartment.reconfigure(newValue ? numberedLines() : []));
         if (key === 'showFoldGutter') effects.push(foldGutterCompartment.reconfigure(newValue ? [foldGutter()] : []));
         // autoHideToolbar handled in update cycle
         safeDispatch(view, { effects });
@@ -176,11 +177,23 @@ function safeDispatch(view: EditorView, spec: any) {
 // CM Panel
 // ---------------------------------------------------------------------------
 export const toolbarPanel = (view: EditorView): Panel => {
-    let { filepath, language, index } = view.state.facet(CodeblockFacet);
+    let { filepath, language, search, files, anonymous } = view.state.facet(CodeblockFacet);
+    /** What the field says for `path`: the language, for the stand-in file
+     *  of an unnamed block; the path with the lines shown (`a.ts#L3-L9`)
+     *  for a region; else the path. */
+    const shownAs = (path: string | null, lang: string | null | undefined, region: LineRange | null) => {
+        if (anonymous && path !== null && path === filepath) return lang ?? language ?? '';
+        return path !== null && region ? `${path}#${formatLineRange(region)}` : undefined;
+    };
 
     // --- Clear filesystem ---
     async function clearFilesystem() {
         const fs = view.state.facet(CodeblockFacet).fs;
+        // Put the open file down first, unsaved, and let a write of it
+        // already under way land: otherwise a save pending when the files
+        // are deleted brings the open one back.
+        closeFile(view);
+        await persistFile(view);
         // Recursively collect all file paths first, then delete
         const filesToDelete: string[] = [];
         const dirsToDelete: string[] = [];
@@ -209,46 +222,36 @@ export const toolbarPanel = (view: EditorView): Panel => {
             await fs.unlink(dir).catch(() => {});
         }
 
-        // Clear search index
-        if (index) {
-            index.index.removeAll();
-            if (index.savePath) {
-                await fs.writeFile(index.savePath, '{}').catch(() => {});
-            }
-        }
-
-        // Try to clear OPFS storage
-        if (typeof navigator !== 'undefined' && 'storage' in navigator && 'getDirectory' in (navigator.storage ?? {})) {
-            try {
-                const root = await navigator.storage.getDirectory();
-                // @ts-ignore - remove() may not be in all type defs
-                for await (const [name] of root.entries()) {
-                    await root.removeEntry(name, { recursive: true }).catch(() => {});
-                }
-            } catch { /* OPFS not available or permission denied */ }
-        }
-
-        // Reset editor to blank state
-        safeDispatch(view, {
-            changes: { from: 0, to: view.state.doc.length, insert: '' },
-            effects: [
-                openFileEffect.of({ path: '', skipSave: true }),
-                setSearchResults.of([]),
-            ]
-        });
+        safeDispatch(view, { effects: [setSearchResults.of([])] });
     }
 
     // --- Create ToolbarCore with CM host ---
     const core = new ToolbarCore({
         fs: view.state.facet(CodeblockFacet).fs,
-        index,
+        search,
+        files,
         cwd: view.state.facet(CodeblockFacet).cwd,
-        filepath,
+        // A stand-in file is never what the field says: the language is.
+        filepath: anonymous ? undefined : filepath,
         language,
         openFile(path, opts) {
-            safeDispatch(view, { effects: [setSearchResults.of([]), openFileEffect.of({ path, skipSave: opts?.skipSave })] });
+            // `src/a.ts#L3-L9`: those lines of the file, as a note's fence names them.
+            const hash = path.indexOf('#');
+            const range = hash > 0 ? lineRange(path.slice(hash + 1)) : null;
+            const file = range ? path.slice(0, hash) : path;
+            safeDispatch(view, {
+                effects: [setSearchResults.of([]), openFileEffect.of({ path: file, skipSave: opts?.skipSave }), ...(range ? [setRegionEffect.of(range)] : [])],
+            });
         },
         getDocContent() { return view.state.doc.toString(); },
+        persist() { return persistFile(view); },
+        closeFile() {
+            // Put down, then wait for any write of it already under way (a
+            // save whose debounce had fired): `persistFile` starts no new
+            // write once no file is open, and resolves when those land.
+            closeFile(view);
+            return persistFile(view);
+        },
         focusEditor() { view.focus(); },
         notifyFileChanged(path, type) { LSP.notifyFileChanged(path, type); },
         getCurrentFilePath() { return view.state.field(currentFileField).path; },
@@ -482,11 +485,13 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 }
             }
 
-            // Sync file path
-            if (prevFile.path !== nextFile.path) {
-                updateLspLogIcon();
+            // Sync file path (and the lines shown of it)
+            const prevRegion = update.startState.field(regionField, false) ?? null;
+            const nextRegion = update.state.field(regionField, false) ?? null;
+            if (prevFile.path !== nextFile.path || prevRegion !== nextRegion) {
+                if (prevFile.path !== nextFile.path) updateLspLogIcon();
                 if (!core.isNamingModeActive() && !lspLogOverlay && !core.isSettingsModeActive()) {
-                    core.setFilePath(nextFile.path);
+                    core.setFilePath(nextFile.path, shownAs(nextFile.path, nextFile.language, nextRegion));
                 }
             }
         },

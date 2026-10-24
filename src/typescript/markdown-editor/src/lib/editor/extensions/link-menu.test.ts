@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { userEvent } from '@vitest/browser/context'
 import { MarkdownEditor } from '../index'
 import {
     createTestContainer,
@@ -45,6 +46,37 @@ describe('Inline link popover', () => {
     it('configures the link mark to not navigate on plain click', () => {
         const link = editor.extensionManager.extensions.find((e) => e.name === 'link')
         expect(link?.options.openOnClick).toBe(false)
+    })
+
+    it('ends a link where its text ends: what is typed after a pasted URL is text, and the selection menu takes the link off a selection', async () => {
+        editor.commands.setContent('- A\n- B\n')
+        await new Promise((r) => requestAnimationFrame(r))
+        // (The first item's text, "A", is at 3; after it is 4.)
+        editor.commands.focus(4)
+        await userEvent.keyboard('{Enter}')
+        const data = new DataTransfer()
+        data.setData('text/plain', 'https://github.com/jsonnext/codemirror-json-schema')
+        editor.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }))
+        await waitFor(() => linkPos(editor) > 0)
+        expect(editor.storage.markdown.getMarkdown()).toBe('- A\n- <https://github.com/jsonnext/codemirror-json-schema>\n- B')
+        await userEvent.keyboard(' and more')
+        expect(editor.storage.markdown.getMarkdown()).toBe('- A\n- <https://github.com/jsonnext/codemirror-json-schema> and more\n- B')
+        // The link is not inclusive: typing at its end goes on outside it.
+        const link = editor.extensionManager.extensions.find((e) => e.name === 'link')!
+        expect(editor.schema.marks.link.spec.inclusive).toBe(false)
+        expect(link.options.autolink).toBe(true)
+        // Part of the link selected, "Link ✓" in the selection menu takes
+        // the link off that part alone.
+        const pos = linkPos(editor)
+        editor.commands.setTextSelection({ from: pos + 'https://github.com/jsonnext/'.length, to: pos + 'https://github.com/jsonnext/codemirror-json-schema'.length })
+        await waitFor(() => (container.querySelector('.ezco-mde-selection-menu-btn') as HTMLElement).style.opacity === '1')
+        ;(container.querySelector('.ezco-mde-selection-menu-btn') as HTMLElement).click()
+        await waitFor(() => !!document.querySelector('.ezco-mde-selection-menu'))
+        const item = [...document.querySelectorAll<HTMLElement>('.ezco-mde-selection-menu .ezco-mde-context-menu-item')].find((i) => i.textContent?.trim().endsWith('Link ✓'))
+        expect(item).toBeDefined()
+        item!.click()
+        await waitFor(() => !document.querySelector('.ezco-mde-selection-menu'))
+        expect(editor.storage.markdown.getMarkdown()).toBe('- A\n- [https://github.com/jsonnext/](https://github.com/jsonnext/codemirror-json-schema)codemirror-json-schema and more\n- B')
     })
 
     it('shows an editable URL input with Save + Remove when the caret enters a link', async () => {

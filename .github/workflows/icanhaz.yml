@@ -1,0 +1,61 @@
+# icanhaz: checked on every change (src/scripts/check-icanhaz.sh): lint, the wasm guests rebuilt
+# from the daemon's WIT, and the host + broker tests
+name: icanhaz
+
+on:
+  pull_request:
+    paths:
+      - src/apps/icanhaz/**
+      - src/rust/ezcap/**
+      - src/rust/wrpc/**
+      - src/rust/wrpc-transport-iroh/**
+      - src/scripts/check-icanhaz.sh
+      - clippy.toml
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/icanhaz.yml
+      - .github/actions/rust/**
+  push:
+    branches: [main]
+    paths:
+      - src/apps/icanhaz/**
+      - src/rust/ezcap/**
+      - src/rust/wrpc/**
+      - src/rust/wrpc-transport-iroh/**
+      - src/scripts/check-icanhaz.sh
+      - clippy.toml
+      - Cargo.toml
+      - Cargo.lock
+      - .github/workflows/icanhaz.yml
+      - .github/actions/rust/**
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  RUST_BACKTRACE: 1
+
+jobs:
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/rust
+        with:
+          targets: wasm32-wasip2
+          components: rustfmt, clippy
+          cache-key: icanhaz-${{ matrix.os }}
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
+      # wkg fetches the daemon's WIT deps (wit/deps is git-ignored, pinned by wkg.lock)
+      - run: cargo install wkg --locked
+      - run: src/scripts/check-icanhaz.sh
+        env:
+          LINT: ${{ runner.os == 'Linux' && 1 || 0 }}   # the lint-only steps once, on Linux

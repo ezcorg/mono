@@ -4,10 +4,9 @@
 #![allow(unreachable_pub)]
 
 use super::{GlobalArgs, Services};
-use crate::config::{TlsConfig, TlsScopedConfig};
+use crate::config::{Instance, TlsScopedConfig};
 use anyhow::Result;
 use conf::{Conf, Subcommands};
-use std::path::PathBuf;
 use std::process::Command;
 #[cfg(target_os = "macos")]
 use tracing::error;
@@ -16,7 +15,9 @@ use tracing::{info, warn};
 #[derive(Subcommands)]
 #[conf(serde)]
 pub enum ProxyCommands {
-    /// Enable system HTTP proxy to route through witmproxy
+    /// Enable system HTTP proxy to route through this instance's proxy
+    /// address. The OS has one system-proxy setting, so only one instance
+    /// can be the system proxy at a time; enabling another replaces it.
     #[conf(serde(rename = "config"))]
     Enable(ProxyDryRunArgs),
     /// Disable system HTTP proxy
@@ -59,13 +60,14 @@ pub struct ProxyStatusArgs {
     pub config: TlsScopedConfig,
 }
 
+/// Points the OS system-proxy setting at one instance's proxy address.
 pub struct ProxyHandler {
-    tls: TlsConfig,
+    instance: Instance,
 }
 
 impl ProxyHandler {
-    pub fn new(tls: TlsConfig) -> Self {
-        Self { tls }
+    pub fn new(instance: Instance) -> Self {
+        Self { instance }
     }
 
     pub async fn handle(&self, command: &ProxyCommands) -> Result<()> {
@@ -85,9 +87,12 @@ impl ProxyHandler {
         }
 
         println!(
-            "This will configure your system to proxy HTTP traffic through: {}",
-            proxy_url
+            "This will configure your system to proxy HTTP traffic through: {} (instance {})",
+            proxy_url, self.instance
         );
+        if !self.instance.is_default() {
+            println!("The system has one proxy setting; this replaces whichever instance held it.");
+        }
         warn!("This action requires administrator privileges and may prompt for your password.");
 
         info!("Enabling system proxy: {}", proxy_url);
@@ -146,9 +151,12 @@ impl ProxyHandler {
                 // Check if it matches our proxy
                 if let Ok(our_proxy) = self.get_proxy_url().await {
                     if proxy.contains(&our_proxy) {
-                        println!("✓ Currently using witmproxy");
+                        println!("✓ Currently using witmproxy (instance {})", self.instance);
                     } else {
-                        println!("⚠ Using different proxy (not witmproxy)");
+                        println!(
+                            "⚠ Using a different proxy (not witmproxy instance {})",
+                            self.instance
+                        );
                     }
                 }
             }
@@ -162,20 +170,13 @@ impl ProxyHandler {
     }
 
     async fn get_proxy_url(&self) -> Result<String> {
-        // Get app directory from cert_dir parent
-        let app_dir = self
-            .tls
-            .cert_dir
-            .parent()
-            .unwrap_or(&PathBuf::from("."))
-            .to_path_buf();
-
-        let services_path = app_dir.join("services.json");
+        let services_path = self.instance.services_file();
 
         if !services_path.exists() {
             anyhow::bail!(
-                "Services file not found at {:?}. Is witmproxy running?",
-                services_path
+                "Services file not found at {:?}. Is witmproxy instance {} running?",
+                services_path,
+                self.instance
             );
         }
 

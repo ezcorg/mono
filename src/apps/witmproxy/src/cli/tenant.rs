@@ -3,6 +3,7 @@ use conf::{Conf, Subcommands};
 
 use super::GlobalArgs;
 use crate::cli::api_client::{ApiClient, DaemonArgs, DaemonAuthArgs, LocalDaemon};
+use crate::config::Instance;
 
 #[derive(Subcommands)]
 #[conf(serde)]
@@ -36,6 +37,9 @@ pub struct TenantCreateArgs {
     /// Display name
     #[arg(pos)]
     pub display_name: String,
+    /// Tenant ID (generated when omitted)
+    #[arg(long)]
+    pub id: Option<String>,
     /// Email address
     #[arg(long)]
     pub email: Option<String>,
@@ -129,12 +133,19 @@ impl TenantCommands {
     }
 }
 
-pub struct TenantHandler;
+/// Talks to one instance's daemon (or the server logged in to for it).
+pub struct TenantHandler {
+    instance: Instance,
+}
 
 impl TenantHandler {
+    pub fn new(instance: Instance) -> Self {
+        Self { instance }
+    }
+
     pub async fn handle(&self, command: &TenantCommands) -> Result<()> {
         let client =
-            ApiClient::resolve_required(command.auth(), LocalDaemon::from_default_paths())?;
+            ApiClient::resolve_required(command.auth(), LocalDaemon::for_instance(&self.instance))?;
 
         match command {
             TenantCommands::List(_) => {
@@ -143,28 +154,17 @@ impl TenantHandler {
                 println!("{}", body);
             }
             TenantCommands::Create(a) => {
-                let display_name = &a.display_name;
-                let email = &a.email;
-                let mut body = serde_json::json!({
-                    "display_name": display_name,
-                });
-                if let Some(email) = email {
-                    body.as_object_mut()
-                        .ok_or_else(|| anyhow::anyhow!("request body is not a JSON object"))?
-                        .insert("email".to_string(), serde_json::json!(email));
-                }
                 let resp = client
                     .post_json(
-                        "/api/auth/register",
+                        "/api/manage/tenants",
                         &serde_json::json!({
-                            "display_name": display_name,
-                            "email": email.as_deref().unwrap_or(""),
-                            "password": "", // Placeholder for CLI tenant creation
+                            "id": a.id,
+                            "display_name": a.display_name,
+                            "email": a.email,
                         }),
                     )
                     .await?;
-                let text = client.body(resp).await?;
-                println!("{}", text);
+                println!("{}", client.body(resp).await?);
             }
             TenantCommands::Enable(a) => {
                 let resp = client

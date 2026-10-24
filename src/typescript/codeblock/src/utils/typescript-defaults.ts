@@ -1,4 +1,4 @@
-import { VfsInterface } from "../types";
+import type { VfsInterface } from "@joinezco/storage";
 
 const LIB_DIR = '/node_modules/typescript/lib';
 const TSCONFIG_PATH = '/tsconfig.json';

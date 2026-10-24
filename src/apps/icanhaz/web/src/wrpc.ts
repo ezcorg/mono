@@ -168,8 +168,21 @@ function requestFrame(instance: string, func: string, params: number[]): Uint8Ar
     ]);
 }
 
-/** Unwrap a response frame `[0x00 paths][len][result-value]` → the result value. */
+/** The daemon answered a call by closing it without a reply: wRPC carries no
+ *  error frame, so a call it refused before running (an unknown or released
+ *  handle, a chain that is gone) or that failed in the host ends this way.
+ *  The reason is in the daemon's log. */
+export class NoReply extends Error {
+    constructor() {
+        super("the daemon closed the call without a reply (refused or failed; see its log)");
+        this.name = "NoReply";
+    }
+}
+
+/** Unwrap a response frame `[0x00 paths][len][result-value]` → the result value.
+ *  A reply always carries at least its paths byte, so nothing at all is [`NoReply`]. */
 export function resultValue(resp: Uint8Array): Uint8Array {
+    if (resp.length === 0) throw new NoReply();
     const [rv] = readBytes(resp, 1); // skip the paths byte; read the length-prefixed value
     return rv;
 }
@@ -641,7 +654,7 @@ export async function brokerGranted(t: Transport): Promise<GrantInfo[]> {
     return readList(rv, 0, readGrantInfo)[0];
 }
 
-// ---- streaming (the terminal) ----------------------------------------------
+// ---- streaming ------------------------------------------------------------
 //
 // Streaming invocations multiplex sub-channels over one persistent duplex via
 // the wRPC "Conn frame": [path_len][path…][data_len][data] (all LEB128). The
@@ -803,108 +816,9 @@ class WtDuplex implements Duplex {
     }
 }
 
-/** A live terminal session (matches what the xterm renderer expects). */
-export interface TerminalHandle {
-    onOutput(cb: (bytes: Uint8Array) => void): void;
-    write(data: string): void;
-    /** No-op for now: the PTY is fixed at its open-time size (the WIT has no
-     *  mid-session resize yet). */
-    resize(cols: number, rows: number): void;
-    onExit(cb: (code: number) => void): void;
-    close(): void;
-}
-
-const TERMINAL_INSTANCE = "icanhaz:nocap/terminal@0.1.0";
-
-/** Open an interactive terminal (your login shell) over a [`Transport`]. */
-export async function openTerminal(
-    transport: Transport,
-    opts: { cols: number; rows: number; reason?: string; grant?: string },
-): Promise<TerminalHandle> {
-    // Consent gate: acquire a terminal grant from the broker first (unless the
-    // caller already holds one). The daemon's terminal refuses an open without it.
-    const grant = opts.grant ?? (await requestTerminalGrant(transport, opts.reason));
-    const duplex = await transport.openDuplex();
-    const parser = new FrameParser();
-    const stdout = new StreamChunkParser();
-
-    let onOutputCb: ((b: Uint8Array) => void) | undefined;
-    let onExitCb: ((code: number) => void) | undefined;
-    const outBacklog: Uint8Array[] = [];
-    let exited = false;
-    let pendingExit: number | null = null;
-
-    const emitOutput = (b: Uint8Array) => {
-        if (onOutputCb) onOutputCb(b);
-        else outBacklog.push(b);
-    };
-    const emitExit = (code: number) => {
-        if (exited) return;
-        exited = true;
-        if (onExitCb) onExitCb(code);
-        else pendingExit = code;
-    };
-
-    duplex.onBytes((bytes) => {
-        parser.push(bytes);
-        for (const { path, data } of parser.frames()) {
-            if (path.length === 0) {
-                // main result frame: [disc][…]. 0 = ok (stdout follows), 1 = err.
-                if (data[0] === 1) emitExit(1);
-            } else if (path.length === 1 && path[0] === 0) {
-                // stdout = the result stream, sub-channel [0]; [chunk_len][bytes] chunks.
-                stdout.push(data);
-                for (const chunk of stdout.chunks()) {
-                    if (chunk === null) emitExit(0); // zero-length chunk = stream end
-                    else emitOutput(chunk);
-                }
-            }
-        }
-    });
-    duplex.onClose(() => emitExit(0));
-
-    // Preamble + main params frame: [0x00 PROTOCOL][instance][func] + frame([], params).
-    // params (WIT order) = [grant][stdin marker 0x00][control marker 0x00][cols][rows].
-    const preamble = [0x00, ...encodeString(TERMINAL_INSTANCE), ...encodeString("open")];
-    const params = new Uint8Array([...encodeString(grant), 0x00, 0x00, ...leb128(opts.cols), ...leb128(opts.rows)]);
-    duplex.write(new Uint8Array([...preamble, ...encodeFrame([], params)]));
-
-    const enc = new TextEncoder();
-    return {
-        onOutput(cb) {
-            onOutputCb = cb;
-            for (const b of outBacklog) cb(b);
-            outBacklog.length = 0;
-        },
-        onExit(cb) {
-            onExitCb = cb;
-            if (pendingExit !== null) cb(pendingExit);
-        },
-        write(data) {
-            // stdin is a stream<u8> on sub-channel [1] — its structural index in the
-            // params (param #1, after `grant`). Each chunk is length-prefixed.
-            duplex.write(encodeFrame([1], encodeChunk(enc.encode(data))));
-        },
-        resize(cols, rows) {
-            // control sub-channel [2]: a 4-byte frame [cols u16 BE][rows u16 BE].
-            const ev = new Uint8Array([(cols >> 8) & 0xff, cols & 0xff, (rows >> 8) & 0xff, rows & 0xff]);
-            duplex.write(encodeFrame([2], encodeChunk(ev)));
-        },
-        close() {
-            // End the stdin [1] + control [2] streams (zero-length chunks), then close.
-            try {
-                duplex.write(encodeFrame([1], encodeChunk(new Uint8Array(0))));
-                duplex.write(encodeFrame([2], encodeChunk(new Uint8Array(0))));
-            } catch { /* ignore */ }
-            duplex.closeWrite();
-            duplex.close();
-        },
-    };
-}
-
 // ---- generic streaming call (for generated bindings) -----------------------
 //
-// Generalises `openTerminal`'s duplex + frame routing. Sub-channel paths follow
+// One persistent duplex per call, with the frames routed to sub-channels. Sub-channel paths follow
 // the value's *structural index* (verified against the wRPC server): an input
 // `stream` param rides path [its param index]; an output stream in the result
 // rides [0]; the main channel (path []) carries the result frame's non-stream

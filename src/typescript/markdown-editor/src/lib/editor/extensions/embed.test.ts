@@ -1,0 +1,70 @@
+import { describe, it, expect } from 'vitest'
+import { getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
+import { sectionOf } from './embed'
+
+const PNG = Uint8Array.from(
+    atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='),
+    (c) => c.charCodeAt(0),
+)
+
+const { make, openVault } = trackEditors()
+
+describe('Embed syntax', () => {
+    const roundTrips = [
+        '![[diagram.png]]',
+        '![[diagram.png|200]] beside ![[Note]]',
+        '![[Note#Heading|Shown]] and ![[#Local]]',
+        '![[src/lib.rs#L2-L3]]',
+        '| a |\n| --- |\n| ![[x.png\\|120]] |\n\nafter',
+        'A link [[Note]] is not an embed ![[Note]].',
+    ]
+
+    it.each(roundTrips)('round-trips %j byte for byte', (md) => {
+        const { editor } = make({ content: md })
+        expect(getMarkdownContent(editor)).toBe(md)
+    })
+
+    it('reads sections', () => {
+        const note = '# T\n\n## Goals\n\nShip.\n\n### Detail\n\nMore.\n\n## Later\n\nNo.'
+        expect(sectionOf(note, 'Goals')).toBe('## Goals\n\nShip.\n\n### Detail\n\nMore.')
+        expect(sectionOf(note, 'Nope')).toBeNull()
+    })
+})
+
+describe('Embeds in a vault', () => {
+    const open = (files: Record<string, string | Uint8Array>) => openVault(files, { path: 'index.md', services: ['resolver'] })
+    const embeds = (c: HTMLElement) => [...c.querySelectorAll('.ezco-mde-embed')] as HTMLElement[]
+
+    it('shows an image found by name, a note, a section, and a card for anything else', async () => {
+        const { container } = await open({
+            'index.md': '# Index\n\n![[dot.png|50]]\n\n![[Plan]]\n\n![[Plan#Goals]]\n\n![[main.rs#L2-L3]]\n\n![[paper.pdf]]\n\n![[Ghost]]',
+            'media/dot.png': PNG,
+            'projects/Plan.md': '---\nid: P\n---\n# Plan\n\nIntro.\n\n## Goals\n\nShip it.\n\n## Later\n\nNot yet.',
+            'main.rs': 'fn main() {\n    let x = 1;\n    println!("{x}");\n}',
+            'paper.pdf': '%PDF',
+        })
+        await waitFor(() => embeds(container).length === 6 && !embeds(container).some((e) => e.className === 'ezco-mde-embed'), 5000)
+        const [image, note, section, lines, file, missing] = embeds(container)
+        expect(image.classList.contains('ezco-mde-embed--image')).toBe(true)
+        expect(image.querySelector('img')?.style.width).toBe('50px')
+        expect(note.querySelector('.ezco-mde-embed-content h1')?.textContent).toBe('Plan')
+        expect(note.textContent).not.toContain('id: P')
+        expect(section.querySelector('.ezco-mde-embed-content h2')?.textContent).toBe('Goals')
+        expect(section.textContent).toContain('Ship it.')
+        expect(section.textContent).not.toContain('Not yet.')
+        // Lines of a file are a card that names them (a region to read and
+        // edit in the note is a fence: region-fence.test.ts).
+        expect(lines.classList.contains('ezco-mde-embed--file')).toBe(true)
+        expect(lines.textContent).toBe('main.rs · lines 2–3')
+        expect(file.classList.contains('ezco-mde-embed--file')).toBe(true)
+        expect(missing.classList.contains('is-missing')).toBe(true)
+    })
+
+    it('follows the embedded note as it changes', async () => {
+        const { container, vault } = await open({ 'index.md': '# Index\n\n![[Plan]]', 'Plan.md': 'First version.' })
+        const content = () => container.querySelector('.ezco-mde-embed-content')?.textContent ?? ''
+        await waitFor(() => content().includes('First version.'), 3000)
+        await vault.fs.writeFile('Plan.md', 'Second version.')
+        await waitFor(() => content().includes('Second version.'), 3000)
+    })
+})

@@ -1,3 +1,4 @@
+import type { JSONContent } from '@tiptap/core'
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { MarkdownEditor } from './index'
@@ -152,8 +153,8 @@ describe('MarkdownEditor', () => {
 
             // Code blocks render via CodeMirror node view, not <pre>.
             // Verify the node exists in the document model.
-            const json = editor.getJSON()
-            const codeNode = json.content?.find((n: any) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
+            const json: JSONContent = editor.getJSON()
+            const codeNode = json.content?.find((n) => n.type === 'ezcodeBlock' || n.type === 'codeBlock')
             expect(codeNode).toBeTruthy()
             expect(codeNode?.content?.[0]?.text).toContain('console.log')
             expect(codeNode?.content?.[0]?.text).toContain('Hello')
@@ -306,27 +307,28 @@ describe('MarkdownEditor', () => {
 
     describe('Browser-specific Features', () => {
         it('should handle copy and paste operations', async () => {
-            editor.commands.focus()
-            editor.commands.setTextSelection(0)
-            const { from } = editor.state.selection
-            editor.commands.insertContentAt(from, 'Text to copy')
-            editor.commands.setTextSelection({ from: 0, to: 12 }) // Select "Text to copy"
+            // A copy puts the selection on the clipboard as text, through the
+            // `copy` event (the clipboard itself is out of a test's reach).
+            editor.commands.setContent('Text to copy')
+            editor.commands.setTextSelection({ from: 1, to: 13 })
+            const copied = new DataTransfer()
+            const copy = new ClipboardEvent('copy', { clipboardData: copied, bubbles: true, cancelable: true })
+            editor.view.dom.dispatchEvent(copy)
+            expect(copy.defaultPrevented).toBe(true)
+            expect(copied.getData('text/plain')).toBe('Text to copy')
 
-            // Simulate copy
-            pressKey(editor, 'c', { ctrl: true })
-
-            // Move cursor and paste
-            editor.commands.setTextSelection(12)
-            const { from: newFrom } = editor.state.selection
-            editor.commands.insertContentAt(newFrom, '\n\nPasted: ')
-            pressKey(editor, 'v', { ctrl: true })
-
-            // Note: Actual clipboard operations may not work in test environment
-            // This test verifies the key events are handled without errors
-            expect(() => {
-                pressKey(editor, 'c', { ctrl: true })
-                pressKey(editor, 'v', { ctrl: true })
-            }).not.toThrow()
+            // A paste at the end, with the browser's two payloads: the HTML's
+            // marks are kept. (The clipboard suite covers each kind of payload.)
+            editor.commands.setTextSelection(13)
+            const pasted = new DataTransfer()
+            pasted.setData('text/plain', 'Pasted bold text')
+            pasted.setData('text/html', '<p>Pasted <strong>bold</strong> text</p>')
+            const paste = new ClipboardEvent('paste', { clipboardData: pasted, bubbles: true, cancelable: true })
+            editor.view.dom.dispatchEvent(paste)
+            expect(paste.defaultPrevented).toBe(true)
+            const content = editor.storage.markdown.getMarkdown()
+            expect(content).toContain('Pasted **bold** text')
+            expect(content.indexOf('Text to copy')).toBeLessThan(content.indexOf('Pasted'))
         })
 
         it('should handle undo and redo', () => {
@@ -336,19 +338,15 @@ describe('MarkdownEditor', () => {
             editor.commands.setTextSelection(0)
             const { from } = editor.state.selection
             editor.commands.insertContentAt(from, 'Added text')
+            expect(editor.storage.markdown.getMarkdown()).toContain('Added text')
 
-            // Undo
+            // Undo takes the insertion back out…
             pressKey(editor, 'z', { ctrl: true })
+            expect(editor.storage.markdown.getMarkdown()).toBe(originalContent)
 
-            // Content should be closer to original (undo may not be perfect due to test setup)
-            const undoContent = editor.storage.markdown.getMarkdown()
-            expect(undoContent).toBeDefined()
-
-            // Redo
+            // …and redo puts it back.
             pressKey(editor, 'y', { ctrl: true })
-
-            const redoContent = editor.storage.markdown.getMarkdown()
-            expect(redoContent).toBeDefined()
+            expect(editor.storage.markdown.getMarkdown()).toContain('Added text')
         })
     })
 })

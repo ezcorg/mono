@@ -28,10 +28,11 @@ use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, Res
 use crate::plugins::{WitmPlugin, capabilities::Capability};
 use crate::test_utils::{adversarial_component_path, create_plugin_registry};
 use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{ActualInput, UserInput};
+use crate::wasm::bindgen::ezco::ezcap::types::Scope;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
-    Capability as WitCapability, CapabilityKind, CapabilityScope, EventKind,
+    Capability as WitCapability, CapabilityKind, EventKind,
 };
-use crate::wasm::{LocalStorageClient, Logger, body_chunk_admitted};
+use crate::wasm::{Admission, LocalStorageClient, Logger, body_chunk_admitted};
 
 // ---------------------------------------------------------------------------
 // Unit: local storage quotas
@@ -153,7 +154,12 @@ fn logger_with(max_msgs: u64, max_bytes: u64) -> (Logger, Arc<BreachRecorder>) {
         ..ResolvedLimits::DEFAULTS
     };
     let rec = BreachRecorder::new("test/adversarial");
-    (Logger::with_limits(&limits, Arc::clone(&rec)), rec)
+    // These tests exercise the budget, not the membrane: no grant here, and
+    // said so. A logger built without one refuses every call.
+    (
+        Logger::with_limits(&limits, Arc::clone(&rec)).with_admission(Admission::Unchecked),
+        rec,
+    )
 }
 
 #[test]
@@ -252,15 +258,19 @@ async fn register_adversarial_for(
         &component_bytes,
     )?);
 
+    // The grants behind the provider capabilities are issued when
+    // `register_plugin_for_test` compiles the scopes below.
     let cap = |kind| Capability {
         granted: true,
         inner: WitCapability {
             kind,
-            scope: CapabilityScope {
-                expression: "true".into(),
+            scope: Scope {
+                when: "true".into(),
+                allow: "true".into(),
             },
         },
-        cel: None,
+        when: None,
+        token: None,
     };
 
     let plugin = WitmPlugin {

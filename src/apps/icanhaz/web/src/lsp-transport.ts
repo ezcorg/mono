@@ -9,7 +9,7 @@
 //! Our `process` provider keeps the child's **stderr** off the stream (logged
 //! host-side), so the stdout stream is clean LSP — no log lines to skip.
 
-import type { SpawnSession } from "./generated/process";
+import type { ProcessSpawnSession } from "./generated/process";
 
 /**
  * Structurally `@codemirror/lsp-client`'s `Transport` — kept dependency-free here
@@ -123,7 +123,7 @@ function headerEnd(buf: Uint8Array): number {
  * stream is de-framed back into whole JSON-RPC message strings (chunks may split a
  * message anywhere — the buffer reassembles).
  */
-export function processLspTransport(session: SpawnSession): LspTransport {
+export function processLspTransport(session: ProcessSpawnSession): LspTransport {
     const t0 = Date.now();
     let handlers: ((value: string) => void)[] = [];
     let buf = new Uint8Array(0);

@@ -19,7 +19,7 @@ use crate::exports::witmproxy::plugin::witm_plugin::{
     ActualInput, Capability, CapabilityProvider, ConfigureError, Event, Guest, GuestPlugin,
     InputSchema, InputType, Plugin as PluginResource, PluginError, PluginManifest, UserInput,
 };
-use crate::witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Content, EventKind};
+use crate::witmproxy::plugin::capabilities::{CapabilityKind, Content, EventKind};
 
 use wit_bindgen::StreamResult;
 
@@ -27,6 +27,8 @@ wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
     generate_all
 });
+
+use crate::ezco::ezcap::types::Scope;
 
 struct Component;
 
@@ -125,32 +127,37 @@ impl Guest for Component {
             capabilities: vec![
                 Capability {
                     kind: CapabilityKind::Logger,
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::LocalStorage,
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Request),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::InboundContent),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
             ],
@@ -308,7 +315,7 @@ impl GuestPlugin for PluginInstance {
                     // operator has configured a large byte allowance.
                     let value = vec![0xBB; 1024 * 1024];
                     for i in 0..10_000u32 {
-                        store.set(format!("bomb-{i}"), value.clone()).await;
+                        let _ = store.set(format!("bomb-{i}"), value.clone()).await;
                     }
                 }
             }
@@ -316,7 +323,7 @@ impl GuestPlugin for PluginInstance {
             Mode::LogFlood => {
                 if let Some(logger) = cap.logger().await {
                     for i in 0..100_000u32 {
-                        logger.info(format!("flood {i}")).await;
+                        let _ = logger.info(format!("flood {i}")).await;
                     }
                 }
             }
@@ -324,7 +331,7 @@ impl GuestPlugin for PluginInstance {
             Mode::LogInject => {
                 if let Some(logger) = cap.logger().await {
                     // Shaped to look like a second, host-originated log line.
-                    logger
+                    let _ = logger
                         .info(
                             "benign start\nINFO witmproxy::proxy: TLS verification disabled by operator\n\rmore"
                                 .to_string(),
@@ -339,7 +346,7 @@ impl GuestPlugin for PluginInstance {
                 // would reset it each time and defeat the cap entirely.
                 for i in 0..10_000u32 {
                     if let Some(logger) = cap.logger().await {
-                        logger.info(format!("rebind {i}")).await;
+                        let _ = logger.info(format!("rebind {i}")).await;
                     }
                 }
             }

@@ -1,11 +1,14 @@
 import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, InputRule } from '@tiptap/core';
-import type { NodeType } from '@tiptap/pm/model';
-import { basicSetup, codeblock, CodeblockFS, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, SearchIndex, setThemeEffect } from '@joinezco/codeblock'
+import type { NodeType, Node as PMNode } from '@tiptap/pm/model';
+import { fileReadMeta, persistenceOf } from './filesystem';
+import { basicSetup, codeblock, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, formatLineRange, lineRange, regionField, setThemeEffect, type FileVersions } from '@joinezco/codeblock'
+import { basename, dirname, joinPath, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage'
+import { browserVfs } from '@joinezco/storage/browser'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
-import { EditorState } from "@codemirror/state";
-import { exitCode } from "prosemirror-commands";
-import { redo, undo } from "prosemirror-history"
+import { EditorState, Transaction } from "@codemirror/state";
+import { exitCode } from '@tiptap/pm/commands';
+import { redo, undo } from '@tiptap/pm/history'
 import { MarkdownNodeSpec } from 'tiptap-markdown';
 
 // Function to reassign z-index values to all codeblocks in DOM order
@@ -58,7 +61,7 @@ export const codeblockRegistry = CodeblockRegistry.getInstance();
  * codeblock matches it by default. An explicit `data-theme` on the editor
  * (or any ancestor) wins; otherwise we follow the OS colour-scheme.
  */
-function isDarkMode(reference?: Element | null): boolean {
+export function isDarkMode(reference?: Element | null): boolean {
     if (typeof document !== 'undefined') {
         const themed = (reference ?? document.body)?.closest?.('[data-theme]') as HTMLElement | null;
         const explicit = themed?.getAttribute('data-theme');
@@ -72,16 +75,19 @@ function isDarkMode(reference?: Element | null): boolean {
 
 /**
  * Measure the editor's base paragraph font size in px (resolving
- * `--ezco-mde-text-base`), so an embedded codeblock can default to the same
- * size — keeping prose and code at one scale unless a consumer overrides it.
- * Returns null if it can't be measured.
+ * `--ezco-mde-text-base` where the editor is: a comment bubble or an
+ * embedded note sets its own), so an embedded codeblock can default to the
+ * same size — keeping prose and code at one scale unless a consumer
+ * overrides it. Returns null if it can't be measured.
  */
-function measureBaseFontPx(): number | null {
+export function measureBaseFontPx(near: HTMLElement | null): number | null {
     if (typeof document === 'undefined') return null;
     const probe = document.createElement('span');
     probe.style.cssText =
         'position:absolute;visibility:hidden;pointer-events:none;font-size:var(--ezco-mde-text-base)';
-    document.body.appendChild(probe);
+    // Beside the editable, not in it (the editor would take the probe for an
+    // edit), where the same variables apply.
+    (near?.parentElement ?? document.body).appendChild(probe);
     const px = parseFloat(getComputedStyle(probe).fontSize);
     probe.remove();
     return Number.isFinite(px) && px > 0 ? px : null;
@@ -99,13 +105,112 @@ if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
     else if (typeof (mql as any).addListener === 'function') (mql as any).addListener(onChange);
 }
 
-let fsWorkerPromise: Promise<any> | null = null;
+let fsWorkerPromise: Promise<VfsInterface> | null = null;
 
-function getFileSystemWorker() {
+/** Where a codeblock's files live when the editor has no filesystem of its
+ *  own: the origin's `codeblock` vault. */
+function getFileSystemWorker(): Promise<VfsInterface> {
     if (!fsWorkerPromise) {
-        fsWorkerPromise = CodeblockFS.worker();
+        fsWorkerPromise = browserVfs('codeblock');
     }
     return fsWorkerPromise;
+}
+
+/**
+ * A fence's info string, as markdown-it puts it on the `<code>` (its first
+ * word, after the class prefix): a language (`rust`), a file (`src/lib.rs`),
+ * or some lines of one (`src/lib.rs#L40-L80`, GitHub's fragment for lines).
+ * A word with a dot in it is a file.
+ */
+function fenceInfo(element: HTMLElement, prefix: string): { file: string | null; lines: string | null; language: string | undefined } {
+    const className = element.querySelector('code')?.getAttribute('class') ?? '';
+    const word = className.split(/\s+/).find((c) => c.startsWith(prefix))?.slice(prefix.length) ?? (className || undefined);
+    if (!word || !word.includes('.')) return { file: null, lines: null, language: word };
+    const hash = word.indexOf('#');
+    const range = hash > 0 ? lineRange(word.slice(hash + 1)) : null;
+    const file = range ? word.slice(0, hash) : word;
+    const ext = file.split('.').pop()?.toLowerCase() || '';
+    return {
+        file,
+        lines: range ? formatLineRange(range) : null,
+        language: extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown',
+    };
+}
+
+/**
+ * The file extension a language's stand-in file gets, for the languages
+ * that have language services: an unnamed fence of one of these
+ * (```` ```ts ````) is opened as a hidden file beside the note so the
+ * services see it (`shadowPath`); any other language has none to gain.
+ */
+const SHADOW_EXT: Record<string, string> = {
+    ts: 'ts', typescript: 'ts', mts: 'mts', cts: 'cts', tsx: 'tsx',
+    js: 'js', javascript: 'js', mjs: 'mjs', cjs: 'cjs', jsx: 'jsx',
+    py: 'py', python: 'py',
+    rs: 'rs', rust: 'rs',
+    go: 'go',
+};
+
+/**
+ * Where an unnamed fence's stand-in file goes: hidden beside the note,
+ * named by the note and by the fence's place among the note's unnamed
+ * fences of that language (`.plan.2.ts` for the second ```` ```ts ```` fence
+ * of `plan.md`), so the same fence finds the same file each time the note
+ * opens and no file is made that a later open would not use again. The
+ * note is the source of truth: the file is written from the fence before
+ * the fence opens it, and hidden files are outside the vault's index.
+ * Null for a named fence, a language without services, or an editor with
+ * no note to put it beside.
+ */
+/**
+ * The stand-in files a note has no use for any more: `.<stem>.<n>.<ext>`
+ * beside it with `n` past the count of its unnamed fences of that
+ * language. Removed when the note is loaded, so a fence deleted from the
+ * note does not leave its file to a language service's project.
+ */
+export async function removeStaleStandIns(fs: VfsInterface, note: string, doc: PMNode, type: PMNode['type']): Promise<string[]> {
+    const counts = new Map<string, number>();
+    doc.forEach((child) => {
+        if (child.type !== type || child.attrs.file) return;
+        const ext = SHADOW_EXT[String(child.attrs.language ?? '').toLowerCase()];
+        if (ext) counts.set(ext, (counts.get(ext) ?? 0) + 1);
+    });
+    const stem = basename(note).replace(/\.[^.]*$/, '');
+    const folder = dirname(note);
+    const pattern = new RegExp(`^\\.${stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.(\\d+)\\.([a-z]+)$`);
+    const removed: string[] = [];
+    let entries: [string, unknown][] = [];
+    try {
+        entries = (await fs.readDir(folder || '/')) as [string, unknown][];
+    } catch {
+        return removed;
+    }
+    for (const [name] of entries) {
+        const m = pattern.exec(name);
+        if (!m) continue;
+        if (Number(m[1]) <= (counts.get(m[2]) ?? 0)) continue;
+        const path = joinPath(folder, name);
+        try {
+            await fs.unlink(path);
+            removed.push(path);
+        } catch {
+            // Left for next time.
+        }
+    }
+    return removed;
+}
+
+function shadowPath(doc: PMNode, pos: number, node: PMNode, note: string | null | undefined): string | null {
+    if (node.attrs.file || !note) return null;
+    const ext = SHADOW_EXT[String(node.attrs.language ?? '').toLowerCase()];
+    if (!ext) return null;
+    let n = 0;
+    doc.forEach((child, offset) => {
+        if (offset > pos || child.type !== node.type || child.attrs.file) return;
+        if (SHADOW_EXT[String(child.attrs.language ?? '').toLowerCase()] === ext) n++;
+    });
+    const stem = basename(note).replace(/\.[^.]*$/, '');
+    return joinPath(dirname(note), `.${stem}.${n}.${ext}`);
 }
 
 export interface ExtendedCodeblockOptions {
@@ -120,6 +225,25 @@ export interface ExtendedCodeblockOptions {
     HTMLAttributes: Record<string, unknown>;
     /** Class prefix used when parsing/serializing the language (default `language-`). */
     languageClassPrefix: string;
+    /** Write a stand-in file beside the note for an unnamed fence of a
+     *  language with services (see `shadowPath`). Off by default: it puts
+     *  files in the host's filesystem. */
+    standIns: boolean;
+    /** Finds files for each codeblock's toolbar (the editor's vault search). */
+    search?: FileSearch;
+    /** Creates, moves and deletes files for each codeblock's toolbar. */
+    files?: FileOperations;
+}
+
+/** Backticks for a fence around `code`: three, or one more than the
+ *  longest bare run opening a line in it (backticks and nothing else, which
+ *  is what a closing fence is), so a fence inside stays inside. A run with
+ *  a language or a path after it (````ts`) can only open a fence, never
+ *  close one, and needs nothing. */
+export function fenceFor(code: string): string {
+    let longest = 2;
+    for (const run of code.match(/^ {0,3}`{3,}[ \t]*$/gm) ?? []) longest = Math.max(longest, run.trim().length);
+    return '`'.repeat(longest + 1);
 }
 
 export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
@@ -137,6 +261,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // so embedded codeblocks soft-wrap by default. Override per-editor
             // via `ExtendedCodeblock.configure({ settings: { lineWrap: false } })`.
             settings: { lineWrap: true },
+            standIns: false,
             HTMLAttributes: {},
             languageClassPrefix: 'language-',
         };
@@ -147,19 +272,8 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             language: {
                 default: 'markdown', // Default language
                 // Parse language from HTML structure if available
-                parseHTML: element => {
-                    const className = element.querySelector('code')?.getAttribute('class');
-                    const extracted = className?.replace('language-', '');
-
-                    // If the extracted value looks like a filename (contains a dot),
-                    // we'll handle this in the file attribute parseHTML instead
-                    if (extracted && extracted.includes('.')) {
-                        const ext = extracted.split('.').pop()?.toLowerCase() || '';
-                        return extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown';
-                    }
-
-                    return extracted;
-                },
+                // A language, or the one a file's extension names.
+                parseHTML: element => fenceInfo(element, this.options.languageClassPrefix ?? 'language-').language,
                 // Render language back to HTML structure
                 renderHTML: attributes => {
 
@@ -174,18 +288,15 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             },
             file: {
                 default: null,
-                // Parse filename from HTML class if it looks like a filename
-                parseHTML: element => {
-                    const className = element.querySelector('code')?.getAttribute('class');
-                    const extracted = className?.replace('language-', '');
-
-                    // If the extracted value contains a dot, treat it as a filename
-                    if (extracted && extracted.includes('.')) {
-                        return extracted;
-                    }
-
-                    return null;
-                },
+                // The file the block shows (and saves to).
+                parseHTML: element => fenceInfo(element, this.options.languageClassPrefix ?? 'language-').file,
+            },
+            lines: {
+                default: null,
+                // Which of the file's lines the block shows (`L40-L80`), as
+                // they are numbered in the file now; null for all of them.
+                parseHTML: element => fenceInfo(element, this.options.languageClassPrefix ?? 'language-').lines,
+                renderHTML: () => ({}),
             },
         };
     },
@@ -196,14 +307,17 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             markdown: {
                 serialize(state, node) {
 
+                    // A fence longer than any the code holds (a file of Markdown
+                    // with fences in it), so the code stays one block when read.
+                    const fence = fenceFor(node.textContent);
                     if (node.attrs.file) {
-                        state.write(`\`\`\`${node.attrs.file}\n`);
+                        state.write(`${fence}${node.attrs.file}${node.attrs.lines ? `#${node.attrs.lines}` : ''}\n`);
                     } else {
-                        state.write("```" + (node.attrs.language || "") + "\n");
+                        state.write(fence + (node.attrs.language || "") + "\n");
                     }
                     state.text(node.textContent, false);
                     state.ensureNewLine();
-                    state.write("```");
+                    state.write(fence);
                     state.closeBlock(node);
                 },
                 parse: {
@@ -245,11 +359,15 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
         const parseLanguageAttributes = (input: string | undefined) => {
             if (!input) return { language: 'markdown' };
 
-            // If input contains a dot, treat it as a filename
+            // If input contains a dot, treat it as a filename, and
+            // `file#L40-L80` as some of its lines
             if (input.includes('.')) {
-                const ext = input.split('.').pop()?.toLowerCase() || '';
+                const hash = input.indexOf('#');
+                const range = hash > 0 ? lineRange(input.slice(hash + 1)) : null;
+                const file = range ? input.slice(0, hash) : input;
+                const ext = file.split('.').pop()?.toLowerCase() || '';
                 const lang = extOrLanguageToLanguageId[ext as ExtensionOrLanguage] || 'markdown'
-                return { file: input, language: lang };
+                return { file, lines: range ? formatLineRange(range) : null, language: lang };
             }
 
             // Otherwise, check if it's a language name
@@ -351,13 +469,19 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 let selFrom = offset + main.from, selTo = offset + main.to
                 let pmSel = view.state.selection
 
-                if (update.docChanged || pmSel.from != selFrom || pmSel.to != selTo) {
+                // A file's text arriving as the block already has it (its
+                // fence body, or a stand-in written from it) changes nothing
+                // in the note: no transaction, so nothing to save.
+                const same = update.docChanged && update.state.doc.toString() === view.state.doc.nodeAt(pos)?.textContent
+                if (same && !cmView.hasFocus) return
+
+                if ((update.docChanged && !same) || pmSel.from != selFrom || pmSel.to != selTo) {
                     let tr = view.state.tr
 
                     // Ensure we're working within valid document bounds
-                    const docLength = tr.doc.length
+                    const docLength = tr.doc.content.size
 
-                    update.changes.iterChanges((fromA, toA, fromB, toB, text) => {
+                    if (!same) update.changes.iterChanges((fromA, toA, fromB, toB, text) => {
                         const replaceFrom = offset + fromA
                         const replaceTo = offset + toA
 
@@ -374,10 +498,19 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                         offset += (toB - fromB) - (toA - fromA)
                     })
 
+                    // A file's contents arriving (kept out of CodeMirror's
+                    // history) are kept out of the note's too: undoing them
+                    // would be an edit, and would write the lines the note
+                    // had back over the file's.
+                    if (update.transactions.length && update.transactions.every((t) => t.annotation(Transaction.addToHistory) === false)) {
+                        tr.setMeta('addToHistory', false)
+                        tr.setMeta(fileReadMeta, true)
+                    }
+
                     // Only set selection if the editor has focus or if this is a document change without focus
                     // (which happens during initial file loading)
                     if (cmView.hasFocus || update.docChanged) {
-                        const finalDocLength = tr.doc.length
+                        const finalDocLength = tr.doc.content.size
                         const clampedSelFrom = Math.max(0, Math.min(selFrom, finalDocLength))
                         const clampedSelTo = Math.max(0, Math.min(selTo, finalDocLength))
 
@@ -501,12 +634,21 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // the NodeView is ever recreated (e.g. an edit to a sibling
             // list item reflows the list) it reloads from the stale attr
             // and loses the filename + syntax/semantic highlighting.
+            // A region's lines move in their file (added above, found where
+            // they went) and grow or shrink with edits: `lines` follows.
+            /** The stand-in file of an unnamed fence, once it has one. */
+            let shadow: string | null = null;
             const syncFileAttrs = (update: ViewUpdate) => {
                 if (updating) return;
                 const next = update.state.field(currentFileField, false);
                 if (!next || next.loading) return;
+                // A stand-in is the fence's for language services only: the
+                // fence stays unnamed in the note.
+                if (shadow !== null && next.path === shadow) return;
                 const prev = update.startState.field(currentFileField, false);
-                if (prev && prev.path === next.path && prev.language === next.language) return;
+                const region = update.state.field(regionField, false) ?? null;
+                if (prev && prev.path === next.path && prev.language === next.language &&
+                    region === (update.startState.field(regionField, false) ?? null)) return;
 
                 const pos = getPos();
                 if (pos === undefined) return;
@@ -515,20 +657,36 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
 
                 const newFile = next.path ?? null;
                 const newLang = next.language ?? current.attrs.language ?? 'markdown';
-                if (current.attrs.file === newFile && current.attrs.language === newLang) return;
+                const newLines = region ? formatLineRange(region) : null;
+                if (current.attrs.file === newFile && current.attrs.language === newLang && current.attrs.lines === newLines) return;
+                // The same language under another name (`ts` for `javascript`)
+                // is no change: a note is not rewritten for being opened.
+                const id = (lang: unknown) => extOrLanguageToLanguageId[String(lang ?? '').toLowerCase() as ExtensionOrLanguage] ?? lang;
+                if (current.attrs.file === newFile && current.attrs.lines === newLines && id(current.attrs.language) === id(newLang)) return;
 
+                const tr = view.state.tr.setNodeMarkup(pos, undefined, {
+                    ...current.attrs,
+                    file: newFile,
+                    language: newLang,
+                    lines: newLines,
+                });
+                // Where the lines are is the file's doing, not an edit to undo.
+                if (current.attrs.file === newFile && current.attrs.language === newLang) tr.setMeta('addToHistory', false);
                 updating = true;
                 try {
-                    view.dispatch(view.state.tr.setNodeMarkup(pos, undefined, {
-                        ...current.attrs,
-                        file: newFile,
-                        language: newLang,
-                    }));
+                    view.dispatch(tr);
                 } finally {
                     updating = false;
                 }
             };
 
+            // In an editor that only shows (a comment's text in a card, an
+            // embedded note), the code is only shown too: nothing typed, and
+            // a fence named by a file never written through to it. The
+            // option, not `editor.isEditable`: the node views of a note given
+            // at creation are built before the editor has its view, when
+            // `isEditable` is still false.
+            const shown = editor.options.editable === false ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : [];
             // Create initial state without codeblock extension
             const initialState = EditorState.create({
                 doc: node.textContent || '',
@@ -536,6 +694,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     keymap.of(codemirrorKeymap()),
                     basicSetup,
                     EditorView.updateListener.of((update) => { forwardUpdate(cm, update) }),
+                    ...shown,
                 ]
             });
 
@@ -623,57 +782,83 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             // Use the editor's filesystem if available (so codeblocks can resolve
             // file references seeded into the same filesystem), otherwise fall back
             // to a standalone worker.
-            const editorFs = editor.storage.persistence?.options?.fs;
+            const editorFs = persistenceOf(editor)?.options.fs;
+            // And its version log, when the host gave one: a file's lines are
+            // saved on the version they were read as.
+            const versions: FileVersions | undefined = editorFs ? persistenceOf(editor)?.options.versions : undefined;
             const fsPromise = editorFs ? Promise.resolve(editorFs) : getFileSystemWorker();
-            fsPromise.then(fs => {
+            const { search, files } = this.options;
+            // The filesystem may arrive after the view is gone (a note closed,
+            // an editor destroyed, while it was still being opened).
+            let destroyed = false;
+            fsPromise.then(async fs => {
+                if (destroyed || editor.isDestroyed) return;
                 fsWorker = fs;
-                SearchIndex.get(fsWorker, '.codeblock/index.json').then(index => {
-                    // Default the code font size to the editor's paragraph
-                    // size MINUS 2px: an equal px value reads visually larger in
-                    // the monospace code font (wider glyphs, tighter leading)
-                    // than in the prose font, so we nudge it down to balance the
-                    // two. An explicit `settings.fontSize` (configured on the
-                    // extension) still wins.
-                    const baseFontPx = measureBaseFontPx();
-                    const resolvedSettings = baseFontPx
-                        ? { fontSize: Math.max(baseFontPx - 2, 1), ...codeblockSettings }
-                        : codeblockSettings;
-                    // Reconfigure with codeblock extension once fs is ready
-                    cm.setState(EditorState.create({
-                        doc: node.textContent || '',
-                        extensions: [
-                            keymap.of(codemirrorKeymap()),
-                            basicSetup,
-                            EditorView.updateListener.of((update) => forwardUpdate(cm, update)),
-                            EditorView.updateListener.of(syncFileAttrs),
-                            codeblock({
-                                content: node.textContent,
-                                fs: fsWorker,
-                                language: node.attrs.language,
-                                filepath: node.attrs.file,
-                                index,
-                                // Match the editor's light/dark mode rather
-                                // than forcing dark; respects an explicit
-                                // `data-theme`, else follows the OS.
-                                dark: isDarkMode(view.dom),
-                                // Soft-wrap by default + match the editor font
-                                // size (configurable via the `settings` option).
-                                settings: resolvedSettings,
-                            }),
-                        ]
-                    }));
-
-                    // If created via input rule (empty), focus toolbar and open dropdown
-                    if (wasCreatedEmpty) {
-                        requestAnimationFrame(() => {
-                            const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
-                            if (toolbarInput) {
-                                toolbarInput.focus();
-                                toolbarInput.click();
-                            }
-                        });
+                // An unnamed fence of a language with services gets a stand-in
+                // file beside the note, written from the fence (the note is the
+                // source of truth) before the fence opens it.
+                const at = getPos();
+                shadow = this.options.standIns && editorFs && at !== undefined ? shadowPath(view.state.doc, at, node, persistenceOf(editor)?.options.filepath) : null;
+                if (shadow) {
+                    try {
+                        await fs.writeFile(shadow, node.textContent);
+                    } catch (error) {
+                        console.warn('The stand-in file for an unnamed code block could not be written:', error);
+                        shadow = null;
                     }
-                })
+                    if (destroyed || editor.isDestroyed) return;
+                }
+                // Default the code font size to the editor's paragraph
+                // size MINUS 2px: an equal px value reads visually larger in
+                // the monospace code font (wider glyphs, tighter leading)
+                // than in the prose font, so we nudge it down to balance the
+                // two. An explicit `settings.fontSize` (configured on the
+                // extension) still wins.
+                const baseFontPx = measureBaseFontPx(editor.view.dom as HTMLElement);
+                const resolvedSettings = baseFontPx
+                    ? { fontSize: Math.max(baseFontPx - 2, 1), ...codeblockSettings }
+                    : codeblockSettings;
+                // Reconfigure with codeblock extension once fs is ready
+                cm.setState(EditorState.create({
+                    doc: node.textContent || '',
+                    extensions: [
+                        ...shown,
+                        keymap.of(codemirrorKeymap()),
+                        basicSetup,
+                        EditorView.updateListener.of((update) => forwardUpdate(cm, update)),
+                        EditorView.updateListener.of(syncFileAttrs),
+                        codeblock({
+                            content: node.textContent,
+                            fs: fsWorker,
+                            language: node.attrs.language,
+                            filepath: shadow ?? node.attrs.file,
+                            anonymous: shadow !== null,
+                            range: node.attrs.file ? lineRange(node.attrs.lines) ?? undefined : undefined,
+                            // A stand-in has no history worth keeping.
+                            versions: shadow ? undefined : versions,
+                            search,
+                            files,
+                            // Match the editor's light/dark mode rather
+                            // than forcing dark; respects an explicit
+                            // `data-theme`, else follows the OS.
+                            dark: isDarkMode(view.dom),
+                            // Soft-wrap by default + match the editor font
+                            // size (configurable via the `settings` option).
+                            settings: resolvedSettings,
+                        }),
+                    ]
+                }));
+
+                // If created via input rule (empty), focus toolbar and open dropdown
+                if (wasCreatedEmpty) {
+                    requestAnimationFrame(() => {
+                        const toolbarInput = cm.dom.querySelector<HTMLInputElement>('.cm-toolbar-input');
+                        if (toolbarInput) {
+                            toolbarInput.focus();
+                            toolbarInput.click();
+                        }
+                    });
+                }
             }).catch(error => {
                 console.error('Failed to initialize filesystem worker:', error);
             });
@@ -714,6 +899,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     updating = false
                 },
                 destroy() {
+                    destroyed = true;
                     // Unregister before destroying
                     codeblockRegistry.unregister(cm);
                     cm.destroy();
@@ -737,7 +923,8 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     // codeblock's own file picks don't trip this and lose focus.
                     if (!updating &&
                         (updated.attrs.language !== node.attrs.language ||
-                            updated.attrs.file !== node.attrs.file)) {
+                            updated.attrs.file !== node.attrs.file ||
+                            updated.attrs.lines !== node.attrs.lines)) {
                         return false
                     }
                     node = updated
@@ -778,7 +965,28 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             },
         };
     },
+
+    onCreate() {
+        if (!this.options.standIns) return;
+        const editor = this.editor;
+        const type = this.type;
+        const persistence = persistenceOf(editor);
+        // Stand-ins a loaded note has no fence for any more go when it opens.
+        const off = persistence?.subscribe((event) => {
+            const fs = persistence.options.fs;
+            if (event.type !== 'load' || !fs || persistence.options.filepath !== event.path) return;
+            void removeStaleStandIns(fs, event.path, editor.state.doc, type).catch(() => {});
+        });
+        if (off) standInCleanups.set(editor, off);
+    },
+
+    onDestroy() {
+        standInCleanups.get(this.editor)?.();
+        standInCleanups.delete(this.editor);
+    },
 });
+
+const standInCleanups = new WeakMap<object, () => void>();
 
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {

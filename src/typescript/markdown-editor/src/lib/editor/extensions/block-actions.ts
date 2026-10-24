@@ -1,15 +1,16 @@
 import { Editor, Extension } from '@tiptap/core'
-import { NodeSelection, Plugin, PluginKey, TextSelection, type Selection } from '@tiptap/pm/state'
+import { NodeSelection, Plugin, PluginKey, Selection, TextSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
-import tippy, { Instance as TippyInstance } from 'tippy.js'
+import { caretRect, menuPopover, type Popover } from '../ui/popover'
 import { ContextMenu, type ContextMenuItem } from '../ui/context-menu'
+import { foldsOf, type Fold } from './folding'
+import { button, el, labelled, pressable } from '../ui/dom'
+import { observeResize, rafThrottle, resolveMount, type Mount } from '../ui/layout'
 
 /** Where the block-action indicator should mount (same shape as the toolbar /
  *  sidebar `mount`). */
-export type BlockActionsMount =
-    | HTMLElement
-    | ((editorRoot: HTMLElement) => HTMLElement | null | void)
+export type BlockActionsMount = Mount
 
 export interface BlockActionsOptions {
     /**
@@ -22,22 +23,10 @@ export interface BlockActionsOptions {
      *
      * The mount should be a sibling laid out in the same row + scroll container
      * as the editor, so the button's vertical position tracks the active block.
+     * An element, or a function of the editor's root returning one (returning
+     * nothing keeps the overlay).
      */
     mount?: BlockActionsMount
-}
-
-/** Resolve a `mount` option to a concrete element (or null for the default
- *  in-gutter overlay behavior). */
-function resolveBlockActionsMount(
-    mount: BlockActionsMount | undefined,
-    editorRoot: HTMLElement | null,
-): HTMLElement | null {
-    if (mount instanceof HTMLElement) return mount
-    if (typeof mount === 'function' && editorRoot) {
-        const el = mount(editorRoot)
-        return el instanceof HTMLElement ? el : null
-    }
-    return null
 }
 
 interface BlockAction {
@@ -46,7 +35,11 @@ interface BlockAction {
     run: (ctx: { editor: Editor; pos: number; node: PMNode }) => void
 }
 
+/** The glyph of a fold in the gutter (folding.ts). */
+const FOLD_ICON = '▸'
+
 const TYPE_ICONS: Record<string, string> = {
+    frontMatter: '---',
     paragraph: '¶',
     heading: 'H',
     bulletList: '•',
@@ -60,12 +53,66 @@ const TYPE_ICONS: Record<string, string> = {
     image: '🖼',
 }
 
-function iconForNode(node: PMNode): string {
-    if (node.type.name === 'heading') {
-        const level = (node.attrs as { level?: number }).level ?? 1
-        return `H${level}`
+/** A task list's glyph in the gutter: a box the size of its checkboxes
+ *  (`--ezco-mde-checkbox-size`, an em of the list's text, which the glyph
+ *  is set in). */
+const TASK_ICON =
+    '<svg class="ezco-mde-block-icon-box" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="1.5" width="13" height="13" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>'
+
+/** A paragraph's glyph in the gutter: a pilcrow drawn as tall as the
+ *  text's capitals (`--ezco-mde-block-icon-cap`, measured from the face),
+ *  standing on the text's baseline: it is set inline on a line of the
+ *  text's own, which the glyph's font makes. The face's own ¶ would hang
+ *  below the line, as a descender does. */
+const PARA_ICON =
+    '<span class="ezco-mde-block-icon-line"><svg viewBox="1.5 0 10.5 16" aria-hidden="true"><path d="M12 0v16h-2V2H8v14H6V9a4.5 4.5 0 1 1 0-9z"/></svg></span>'
+
+/** How tall the capitals of text set in `font` are, from the face itself.
+ *  Measured once per font; again once the faces have loaded. */
+const caps = new Map<string, number>()
+let capsCanvas: CanvasRenderingContext2D | null | undefined
+if (typeof document !== 'undefined') document.fonts?.addEventListener('loadingdone', () => caps.clear())
+function capHeight(font: string): number {
+    let cap = caps.get(font)
+    if (cap === undefined) {
+        capsCanvas ??= document.createElement('canvas').getContext('2d')
+        if (capsCanvas) {
+            capsCanvas.font = font
+            cap = capsCanvas.measureText('H').actualBoundingBoxAscent
+        }
+        if (!cap || !Number.isFinite(cap)) cap = (parseFloat(font) || 16) * 0.7
+        caps.set(font, cap)
     }
-    return TYPE_ICONS[node.type.name] ?? '·'
+    return cap
+}
+
+/** The types whose glyph is the block's own first marker (or its text's
+ *  pilcrow), set in the text's face and size so the two read as one. */
+const TEXTUAL = new Set(['paragraph', 'bulletList', 'orderedList', 'taskList', 'blockquote'])
+
+/** What stands for `node` in the gutter: a heading's level, a list's first
+ *  marker as the list draws it (`•`, `–`, `3.`, `b)`), a box for a task
+ *  list, the type's glyph otherwise. */
+function iconForNode(node: PMNode): string {
+    const attrs = node.attrs as { level?: number; marker?: string; start?: number; type?: string; delimiter?: string }
+    switch (node.type.name) {
+        case 'heading':
+            return `H${attrs.level ?? 1}`
+        case 'bulletList':
+            return attrs.marker === 'dash' ? '–' : '•'
+        case 'orderedList':
+            return `${orderedMarker(attrs.start ?? 1, attrs.type ?? null)}${attrs.delimiter ?? '.'}`
+        default:
+            return TYPE_ICONS[node.type.name] ?? '·'
+    }
+}
+
+/** `n` as an ordered list of `type` counts it: `3`, `c`, `C`. */
+function orderedMarker(n: number, type: string | null): string {
+    if (type !== 'a' && type !== 'A') return String(n)
+    let s = ''
+    for (let k = Math.max(1, n); k > 0; k = Math.floor((k - 1) / 26)) s = String.fromCharCode(97 + ((k - 1) % 26)) + s
+    return type === 'A' ? s.toUpperCase() : s
 }
 
 /**
@@ -120,6 +167,12 @@ function computeIconOffsetY(dom: HTMLElement): number {
  * (e.g. an empty block, an `<hr>`, an image).
  */
 function firstTextLineRect(root: HTMLElement): DOMRect | null {
+    return firstTextLine(root)?.rect ?? null
+}
+
+/** The first character of the first text in `root`: its rect, and the
+ *  element it is set in. */
+function firstTextLine(root: HTMLElement): { rect: DOMRect; element: HTMLElement } | null {
     if (typeof document === 'undefined') return null
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
         acceptNode(node) {
@@ -129,7 +182,7 @@ function firstTextLineRect(root: HTMLElement): DOMRect | null {
         },
     } as NodeFilter)
     const textNode = walker.nextNode() as Text | null
-    if (!textNode || !textNode.textContent) return null
+    if (!textNode || !textNode.textContent || !textNode.parentElement) return null
     try {
         const range = document.createRange()
         range.setStart(textNode, 0)
@@ -137,11 +190,51 @@ function firstTextLineRect(root: HTMLElement): DOMRect | null {
         // Prefer the first client rect over the union bounding box so
         // we don't pick up a wrapped second line's height.
         const rects = range.getClientRects()
-        if (rects.length > 0) return rects[0] as DOMRect
-        return range.getBoundingClientRect()
+        const rect = rects.length > 0 ? (rects[0] as DOMRect) : range.getBoundingClientRect()
+        return { rect, element: textNode.parentElement }
     } catch {
         return null
     }
+}
+
+/** The box of a block's first line: where it is and how tall (the line
+ *  box, leading included), and the face it is set in: those of the block
+ *  the first text is laid out in (a `p`, not the `strong` the text may
+ *  start with), whose first line starts at the top of its content. Not
+ *  the first character's box: an engine splits a line's leading to the
+ *  pixel, so the character can stand half a pixel off the line's middle,
+ *  and a glyph centred on it stood that much off the text. Null for a
+ *  block with no text. */
+function firstLineBox(dom: HTMLElement): { top: number; height: number; font: string } | null {
+    const line = firstTextLine(dom)
+    const element = line?.element ?? (dom.matches('p, h1, h2, h3, h4, h5, h6, li, blockquote, ul, ol') ? findFirstTextElement(dom) : null)
+    if (!element) return null
+    const block = blockOf(element, dom)
+    const computed = getComputedStyle(block)
+    const fontSize = parseFloat(computed.fontSize) || 16
+    let lineHeight = parseFloat(computed.lineHeight)
+    if (!Number.isFinite(lineHeight) || lineHeight <= 0) lineHeight = fontSize * 1.2
+    const top = block.getBoundingClientRect().top + (parseFloat(computed.borderTopWidth) || 0) + (parseFloat(computed.paddingTop) || 0)
+    return { top, height: lineHeight, font: `${fontSize}px/${lineHeight}px ${computed.fontFamily}` }
+}
+
+/** The displays that lay their text out in lines of their own. */
+const LINE_BOXES = new Set(['block', 'list-item', 'flex', 'grid', 'flow-root', 'table-cell', 'table-caption'])
+
+/** The element whose lines `element` is laid out in: itself, or the
+ *  nearest ancestor within `root` that makes line boxes (an inline, or an
+ *  inline-block such as a chip, does not). */
+function blockOf(element: HTMLElement, root: HTMLElement): HTMLElement {
+    for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+        if (node === root || LINE_BOXES.has(getComputedStyle(node).display)) return node
+    }
+    return root
+}
+
+/** How big a task list draws its checkboxes, to draw the box the same. */
+function checkboxSize(dom: HTMLElement): number | null {
+    const box = dom.querySelector<HTMLElement>(':scope > li > label > input')?.getBoundingClientRect()
+    return box?.height ? box.height : null
 }
 
 function findFirstTextElement(root: HTMLElement): HTMLElement | null {
@@ -181,7 +274,15 @@ function convertList(
     const { schema } = state
     const rebuilt = rebuildListNode(node, targetListType, schema, listAttrs)
     if (!rebuilt) return
+    const { from, to } = state.selection
     const tr = state.tr.replaceRangeWith(pos, pos + node.nodeSize, rebuilt)
+    // The rebuilt list has the old one's shape (items of another kind hold
+    // the same content), so the caret's positions mean the same place in
+    // it: put it back there, rather than after the list, where the
+    // replacement's mapping sends it.
+    if (from >= pos && to <= pos + node.nodeSize && rebuilt.nodeSize === node.nodeSize) {
+        tr.setSelection(TextSelection.between(tr.doc.resolve(from), tr.doc.resolve(to)))
+    }
     editor.view.dispatch(tr)
 }
 
@@ -263,7 +364,41 @@ function collectParagraphs(listNode: PMNode): PMNode[] {
     return out
 }
 
-export function actionsForNode(node: PMNode): BlockAction[] {
+/** Whether a comment can be written in `editor` (there is an author). */
+function canComment(editor: Editor | undefined): boolean {
+    return !!(editor?.storage as { comments?: { author?: () => string | null } } | undefined)?.comments?.author?.()
+}
+
+/**
+ * What a block's menu offers: what its type can become or do, then what
+ * any block can: a comment on it (the block quoted, the composer by it)
+ * and folding it to one line; Delete last.
+ */
+export function actionsForNode(node: PMNode, editor?: Editor): BlockAction[] {
+    const actions = typeActions(node, editor)
+    const extras: BlockAction[] = []
+    const name = node.type.name
+    if (canComment(editor) && name !== 'frontMatter') {
+        extras.push({
+            label: 'Comment',
+            icon: '❝',
+            run: ({ editor, pos, node }) => {
+                const { doc } = editor.state
+                const selection = node.isLeaf || node.isAtom ? NodeSelection.create(doc, pos) : TextSelection.between(doc.resolve(pos + 1), doc.resolve(pos + node.nodeSize - 1))
+                editor.view.dispatch(editor.state.tr.setSelection(selection))
+                editor.commands.startComment()
+            },
+        })
+    }
+    if (name !== 'frontMatter' && name !== 'horizontalRule') {
+        extras.push({ label: 'Fold', icon: FOLD_ICON, run: ({ editor, pos, node }) => editor.commands.foldBlocks(pos, pos + node.nodeSize) })
+    }
+    if (!extras.length) return actions
+    const last = actions[actions.length - 1]
+    return last?.label.startsWith('Delete') ? [...actions.slice(0, -1), ...extras, last] : [...actions, ...extras]
+}
+
+function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
     const remove: BlockAction = {
         label: 'Delete',
         icon: '✕',
@@ -289,6 +424,16 @@ export function actionsForNode(node: PMNode): BlockAction[] {
     }
 
     switch (node.type.name) {
+        case 'frontMatter': {
+            // The note's properties: open them, choose whether they fold
+            // away when not being edited (the mark says they do), or drop them.
+            const folds = (editor?.storage as { frontMatter?: { autoCollapse: boolean } } | undefined)?.frontMatter?.autoCollapse ?? true
+            return [
+                { label: 'Edit properties', icon: '✎', run: ({ editor }) => editor.commands.editFrontMatter() },
+                { label: `${folds ? '✓ ' : ''}Collapse when not editing`, icon: '⇅', run: ({ editor }) => editor.commands.setFrontMatterAutoCollapse(!folds) },
+                remove,
+            ]
+        }
         case 'paragraph':
             return [
                 { label: 'Heading 1', icon: 'H1', run: ({ editor }) => editor.chain().focus().setHeading({ level: 1 }).run() },
@@ -296,7 +441,8 @@ export function actionsForNode(node: PMNode): BlockAction[] {
                 { label: 'Heading 3', icon: 'H3', run: ({ editor }) => editor.chain().focus().setHeading({ level: 3 }).run() },
                 { label: 'Bullet list', icon: '•', run: ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'bullet' }).run() },
                 { label: 'Dashed list', icon: '–', run: ({ editor }) => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'dash' }).run() },
-                { label: 'Ordered list', icon: '1.', run: ({ editor }) => editor.chain().focus().toggleOrderedList().run() },
+                { label: 'Numbered list', icon: '1.', run: ({ editor }) => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: null }).run() },
+                { label: 'Lettered list', icon: 'a.', run: ({ editor }) => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: 'a' }).run() },
                 { label: 'Task list', icon: '☐', run: ({ editor }) => editor.chain().focus().toggleTaskList().run() },
                 { label: 'Quote', icon: '"', run: ({ editor }) => editor.chain().focus().toggleBlockquote().run() },
                 remove,
@@ -325,25 +471,34 @@ export function actionsForNode(node: PMNode): BlockAction[] {
                 : { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) }
             return [
                 markerSwap,
-                { label: 'Ordered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
+                { label: 'Numbered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
+                { label: 'Lettered list', icon: 'a.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { type: 'a' }) },
                 { label: 'Task list', icon: '☐', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList') },
                 { label: 'Lift to paragraphs', icon: '¶', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
                 remove,
             ]
         }
-        case 'orderedList':
+        case 'orderedList': {
+            // Numbers or letters: the other is offered.
+            const lettered = (node.attrs as { type?: string | null }).type === 'a' || (node.attrs as { type?: string | null }).type === 'A'
+            const countSwap: BlockAction = lettered
+                ? { label: 'Numbered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { ...node.attrs, type: null }) }
+                : { label: 'Lettered list', icon: 'a.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { ...node.attrs, type: 'a' }) }
             return [
+                countSwap,
                 { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) },
                 { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) },
                 { label: 'Task list', icon: '☐', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'taskList') },
                 { label: 'Lift to paragraphs', icon: '¶', run: ({ editor, pos, node }) => liftListToParagraphs(editor, pos, node) },
                 remove,
             ]
+        }
         case 'taskList':
             return [
                 { label: 'Bullet list', icon: '•', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'bullet' }) },
                 { label: 'Dashed list', icon: '–', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'bulletList', { marker: 'dash' }) },
-                { label: 'Ordered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
+                { label: 'Numbered list', icon: '1.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList') },
+                { label: 'Lettered list', icon: 'a.', run: ({ editor, pos, node }) => convertList(editor, pos, node, 'orderedList', { type: 'a' }) },
                 {
                     label: 'Mark all complete',
                     icon: '☑',
@@ -460,10 +615,8 @@ class BlockActionsView {
     private wrapper: HTMLElement
     private btn: HTMLButtonElement
     private btnIcon: HTMLSpanElement
-    private popup: TippyInstance | null = null
-    private activeMenu: ContextMenu | null = null
-    private resizeObserver: ResizeObserver | null = null
-    private onDocumentMouseDown: ((e: MouseEvent) => void) | null = null
+    private popup: Popover | null = null
+    private readonly unobserve: () => void
     // Local source-of-truth for whether the menu is currently open.
     // We can't reliably read `popup.state.isShown` synchronously after
     // calling `show()` (it flips at different times across Tippy
@@ -503,6 +656,15 @@ class BlockActionsView {
     // Using `blockType` alone for icon caching would freeze the
     // displayed glyph at the first heading level encountered.
     private lastIconText: string | null = null
+    // A glyph for every block of the note, always in the gutter: what the
+    // block is, soft until it is the active one (which the indicator shows
+    // instead), and the handle to its menu. A fold's glyph opens the fold.
+    private icons: HTMLButtonElement[] = []
+    /** The glyphs laid out again, once, in the next frame. */
+    private readonly iconPass = rafThrottle(() => this.layoutIcons())
+    /** The blocks a selection spans (positions of its first and last), while
+     *  the indicator stands for them all: their own glyphs fold into its star. */
+    private span: { from: number; to: number } | null = null
 
     constructor(view: EditorView, editor: Editor, options: BlockActionsOptions) {
         this.view = view
@@ -510,10 +672,7 @@ class BlockActionsView {
 
         // With a `mount`, the button lives in its own column; otherwise it
         // overlays the editor's left gutter (the original behavior).
-        const mountEl = resolveBlockActionsMount(
-            options.mount,
-            view.dom.parentElement as HTMLElement | null,
-        )
+        const mountEl = resolveMount(options.mount, view.dom.parentElement as HTMLElement | null)
         this.columnMode = !!mountEl
         this.wrapper = mountEl ?? (view.dom.parentElement as HTMLElement) ?? view.dom
         const computed = getComputedStyle(this.wrapper)
@@ -529,27 +688,18 @@ class BlockActionsView {
         // sits at the top, and clicking anywhere on the column opens
         // the action menu. This makes the whole indicator hit-target
         // interactive rather than just the icon.
-        this.btn = document.createElement('button')
-        this.btn.type = 'button'
         // Just the component class — its variables live at `:root`, and the
         // bare `.ezco-mde` class would pull in content-layout rules.
-        this.btn.className = 'ezco-mde-block-action-btn'
+        this.btn = button('ezco-mde-block-action-btn')
         this.btn.style.position = 'absolute'
         this.btn.style.opacity = '0'
         this.btn.contentEditable = 'false'
         this.btn.setAttribute('aria-label', 'Block actions')
-        this.btnIcon = document.createElement('span')
-        this.btnIcon.className = 'ezco-mde-block-action-btn-icon'
-        this.btnIcon.textContent = '·'
+        this.btnIcon = el('span', 'ezco-mde-block-action-btn-icon', '·')
         this.btn.appendChild(this.btnIcon)
 
-        this.btn.addEventListener('mousedown', (e) => {
-            // Prevent ProseMirror from stealing focus before our click fires.
+        pressable(this.btn, (_, e) => {
             e.preventDefault()
-        })
-        this.btn.addEventListener('click', (e) => {
-            e.preventDefault()
-            e.stopPropagation()
             // Anchor the dropdown to the click's viewport Y so the menu
             // opens near where the user clicked, rather than always at
             // the icon at the top of the button. For tall blocks (long
@@ -561,10 +711,10 @@ class BlockActionsView {
 
         this.wrapper.appendChild(this.btn)
 
-        if (typeof ResizeObserver !== 'undefined') {
-            this.resizeObserver = new ResizeObserver(() => this.reposition())
-            this.resizeObserver.observe(view.dom)
-        }
+        this.unobserve = observeResize(view.dom, () => {
+            this.reposition()
+            this.iconPass.schedule()
+        })
 
         // Track focus moving into/out of nested editors (CodeMirror inside
         // the codeblock NodeView). These don't trigger ProseMirror state
@@ -574,47 +724,136 @@ class BlockActionsView {
         view.dom.addEventListener('focusin', this.onFocusChange)
         view.dom.addEventListener('focusout', this.onFocusChange)
 
-        // Close the menu when the user clicks anywhere outside it (we
-        // disabled Tippy's built-in `hideOnClick` to avoid spurious
-        // closes during the open keystroke; this re-implements it
-        // explicitly using `mousedown` so it only fires on real
-        // pointer interaction).
-        this.onDocumentMouseDown = (e: MouseEvent) => {
-            if (!this.isOpen) return
-            // Suppress the close that the same click which opened the
-            // menu would otherwise trigger (mousedown for the icon
-            // press happens before our open path runs).
-            if (Date.now() - this.lastOpenTime < 200) return
-            const target = e.target as Node | null
-            if (!target) return
-            if (this.activeMenu?.dom.contains(target)) return
-            if (this.btn.contains(target)) return
-            this.closeMenu()
-        }
-        document.addEventListener('mousedown', this.onDocumentMouseDown)
-
         // Initial position
-        requestAnimationFrame(() => this.reposition())
+        requestAnimationFrame(() => {
+            this.reposition()
+            this.iconPass.schedule()
+        })
     }
 
     update(view: EditorView) {
         this.view = view
         this.reposition()
+        this.iconPass.schedule()
+    }
+
+    /** A glyph for each top-level block (one for a fold, at its line), the
+     *  box of its first line: as tall as the line, centred on it, and, for
+     *  a paragraph, a list or a quote, in the line's own face and size, so
+     *  a pilcrow stands as the text does and a bullet as the list's first
+     *  bullet. A heading's level and a code block's `</>` keep the chrome's
+     *  small label. The active block's glyph stands beside the indicator;
+     *  the blocks a selection spans fold their glyphs into its star. */
+    private layoutIcons() {
+        if (!this.view.dom.isConnected) return
+        const { doc } = this.view.state
+        const folds = foldsOf(this.view.state)
+        const wrapperRect = this.wrapper.getBoundingClientRect()
+        const base = this.wrapper.scrollTop - wrapperRect.top
+        type Entry = { glyph: string; top: number; height: number; font: string; pos: number; type: string; fold: Fold | null }
+        const entries: Entry[] = []
+        doc.forEach((node, offset) => {
+            const fold = folds.find((f) => offset >= f.from && offset < f.to)
+            if (fold) {
+                if (fold.from !== offset) return
+                const line = this.view.dom.querySelector<HTMLElement>(`.ezco-mde-fold[data-from="${fold.from}"]`)
+                if (!line) return
+                const rect = line.getBoundingClientRect()
+                entries.push({ glyph: FOLD_ICON, top: rect.top + base, height: rect.height, font: '', pos: offset, type: 'fold', fold })
+                return
+            }
+            const dom = this.view.nodeDOM(offset) as HTMLElement | null
+            if (!dom || typeof dom.getBoundingClientRect !== 'function') return
+            const rect = dom.getBoundingClientRect()
+            if (!rect.height) return
+            const type = node.type.name
+            const line = firstLineBox(dom)
+            const glyph = type === 'taskList' ? TASK_ICON : type === 'paragraph' ? PARA_ICON : iconForNode(node)
+            if (line) entries.push({ glyph, top: line.top + base, height: line.height, font: TEXTUAL.has(type) ? line.font : '', pos: offset, type, fold: null })
+            else entries.push({ glyph, top: rect.top + base + computeIconOffsetY(dom) - 3, height: 20, font: '', pos: offset, type, fold: null })
+        })
+        while (this.icons.length > entries.length) this.icons.pop()!.remove()
+        const activeShown = this.btn.style.opacity === '1' && this.activePos >= 0
+        const span = this.btn.style.opacity === '1' ? this.span : null
+        entries.forEach((entry, i) => {
+            let icon = this.icons[i]
+            if (!icon) {
+                icon = pressable(button('ezco-mde-block-icon'), (b, e) => {
+                    e.preventDefault()
+                    this.iconClicked(b)
+                })
+                icon.contentEditable = 'false'
+                this.wrapper.appendChild(icon)
+                this.icons.push(icon)
+            }
+            icon.dataset.pos = String(entry.pos)
+            icon.dataset.blockType = entry.type
+            if (icon.dataset.glyph !== entry.glyph) {
+                icon.dataset.glyph = entry.glyph
+                if (entry.glyph.startsWith('<')) icon.innerHTML = entry.glyph
+                else icon.textContent = entry.glyph
+            }
+            const title = entry.fold ? 'Unfold' : 'Block actions'
+            if (icon.title !== title) labelled(icon, title)
+            // Where the line is, to the subpixel: a bullet rounded to the
+            // pixel stood a hair under the list's own.
+            const top = `${entry.top.toFixed(2)}px`
+            if (icon.style.top !== top) icon.style.top = top
+            const height = `${entry.height.toFixed(2)}px`
+            if (icon.style.height !== height) icon.style.height = height
+            if (icon.style.font !== entry.font) icon.style.font = entry.font
+            const box = entry.type === 'taskList' ? checkboxSize(this.view.nodeDOM(entry.pos) as HTMLElement) : null
+            const size = box ? `${box}px` : ''
+            if (icon.style.getPropertyValue('--ezco-mde-block-icon-size') !== size) icon.style.setProperty('--ezco-mde-block-icon-size', size)
+            const cap = entry.type === 'paragraph' && entry.font ? `${capHeight(entry.font).toFixed(2)}px` : ''
+            if (icon.style.getPropertyValue('--ezco-mde-block-icon-cap') !== cap) icon.style.setProperty('--ezco-mde-block-icon-cap', cap)
+            icon.classList.toggle('is-fold', !!entry.fold)
+            icon.classList.toggle('is-active', !entry.fold && activeShown && entry.pos === this.activePos)
+            icon.classList.toggle('is-spanned', !!span && entry.pos >= span.from && entry.pos <= span.to)
+            // In the column, centred where the indicator's star is (17px in
+            // from its line, which stands as far from the glyph's edge as
+            // from the text; see `.ezco-mde-block-action-btn` in styles.ts).
+            if (this.columnMode) {
+                if (icon.style.right !== '13px') {
+                    icon.style.right = '13px'
+                    icon.style.left = 'auto'
+                }
+            } else if (icon.style.left !== '-41px') icon.style.left = '-41px'
+        })
+    }
+
+    /** A glyph clicked: a fold's opens the fold; a block's makes the block
+     *  the active one (the selection goes into it) and opens its menu there. */
+    private iconClicked(icon: HTMLButtonElement) {
+        const pos = Number(icon.dataset.pos)
+        if (!Number.isFinite(pos)) return
+        if (icon.dataset.blockType === 'fold') {
+            this.editor.commands.unfold(pos)
+            this.editor.view.focus()
+            return
+        }
+        const { doc } = this.view.state
+        const node = doc.nodeAt(pos)
+        if (!node) return
+        if (this.isOpen) this.closeMenu()
+        const selection = node.isLeaf || node.isAtom || node.type.name === 'ezcodeBlock' ? NodeSelection.create(doc, pos) : Selection.near(doc.resolve(pos + 1), 1)
+        this.view.dispatch(this.view.state.tr.setSelection(selection).scrollIntoView())
+        this.view.focus()
+        this.reposition()
+        const rect = icon.getBoundingClientRect()
+        this.openMenu('click-point', { x: rect.left, y: rect.bottom })
     }
 
     destroy() {
-        this.activeMenu?.destroy()
-        this.activeMenu = null
+        this.iconPass.cancel()
+        for (const icon of this.icons) icon.remove()
+        this.icons = []
         this.popup?.destroy()
         this.popup = null
         this.btn.remove()
-        this.resizeObserver?.disconnect()
+        this.unobserve()
         this.view.dom.removeEventListener('focusin', this.onFocusChange)
         this.view.dom.removeEventListener('focusout', this.onFocusChange)
-        if (this.onDocumentMouseDown) {
-            document.removeEventListener('mousedown', this.onDocumentMouseDown)
-            this.onDocumentMouseDown = null
-        }
         if (!this.wrapperHadRelative) {
             this.wrapper.style.position = ''
         }
@@ -750,6 +989,17 @@ class BlockActionsView {
 
         this.activeNode = null
         this.activePos = -1
+        if (this.span?.from !== span.fromBlockPos || this.span.to !== span.toBlockPos) {
+            this.span = { from: span.fromBlockPos, to: span.toBlockPos }
+            this.iconPass.schedule()
+        }
+    }
+
+    /** The indicator stands for one block (or none): the spanned glyphs come back. */
+    private unspan() {
+        if (!this.span) return
+        this.span = null
+        this.iconPass.schedule()
     }
 
     /** Build the menu for a multi-block selection: only the block
@@ -781,7 +1031,8 @@ class BlockActionsView {
         add('Paragraph', '¶', editor.can().setParagraph(), () => editor.chain().focus().setParagraph().run())
         add('Bullet list', '•', editor.can().toggleBulletList(), () => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'bullet' }).run())
         add('Dashed list', '–', editor.can().toggleBulletList(), () => editor.chain().focus().toggleBulletList().updateAttributes('bulletList', { marker: 'dash' }).run())
-        add('Ordered list', '1.', editor.can().toggleOrderedList(), () => editor.chain().focus().toggleOrderedList().run())
+        add('Numbered list', '1.', editor.can().toggleOrderedList(), () => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: null }).run())
+        add('Lettered list', 'a.', editor.can().toggleOrderedList(), () => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: 'a' }).run())
         add('Task list', '☐', editor.can().toggleTaskList(), () => editor.chain().focus().toggleTaskList().run())
         add('Quote', '"', editor.can().toggleBlockquote(), () => editor.chain().focus().toggleBlockquote().run())
 
@@ -794,6 +1045,26 @@ class BlockActionsView {
             })
         }
 
+        // What any blocks can: a comment on the selection, the blocks folded.
+        if (canComment(editor)) {
+            items.push({
+                label: 'Comment',
+                icon: '❝',
+                onSelect: () => {
+                    this.closeMenu()
+                    editor.chain().focus().startComment().run()
+                },
+            })
+        }
+        items.push({
+            label: 'Fold',
+            icon: FOLD_ICON,
+            onSelect: () => {
+                this.closeMenu()
+                editor.commands.foldBlocks(span.from, span.to)
+                editor.view.focus()
+            },
+        })
         // Deleting the whole range always applies.
         items.push({
             label: 'Delete',
@@ -822,8 +1093,13 @@ class BlockActionsView {
     }
 
     private reposition() {
+        const wasShown = this.btn.style.opacity === '1'
         if (!this.hasFocusInside()) {
-            this.btn.style.opacity = '0'
+            if (wasShown) {
+                this.btn.style.opacity = '0'
+                this.iconPass.schedule()
+            }
+            this.unspan()
             return
         }
 
@@ -835,6 +1111,7 @@ class BlockActionsView {
             this.positionSpanning(span)
             return
         }
+        this.unspan()
 
         const resolved = this.resolveActiveBlock()
         if (!resolved) {
@@ -903,6 +1180,8 @@ class BlockActionsView {
             this.lastIconText = iconText
         }
 
+        // The glyphs follow: the active block's hides behind the indicator.
+        if (!wasShown || this.activePos !== blockPos) this.iconPass.schedule()
         this.activeNode = blockNode
         this.activePos = blockPos
     }
@@ -959,7 +1238,7 @@ class BlockActionsView {
                 this.savedSelection = null
                 return
             }
-            const actions = actionsForNode(this.activeNode)
+            const actions = actionsForNode(this.activeNode, this.editor)
             const activeNode = this.activeNode
             const activePos = this.activePos
             items = actions.map((action) => ({
@@ -992,80 +1271,34 @@ class BlockActionsView {
             items,
             onClose: () => this.closeMenu({ restoreEditorFocus: true }),
         })
-        this.activeMenu = menu
 
-        if (this.popup) {
-            this.popup.destroy()
-            this.popup = null
-        }
-
-        this.popup = tippy(this.btn, {
-            content: menu.dom,
-            interactive: true,
-            trigger: 'manual',
+        this.popup?.destroy()
+        // Where it anchors:
+        //  - `'cursor'`: the editor's text cursor (a keyboard invocation),
+        //    where the user is looking.
+        //  - `'click-point'`: the click's own height in the icon's column,
+        //    so a tall block's menu opens by the click rather than hundreds
+        //    of pixels up at its icon, at the same x as every other.
+        //  - `'icon'`: the indicator icon at the top of the button.
+        const rect =
+            at === 'cursor'
+                ? () => this.getCursorRect()
+                : at === 'click-point' && clickPoint
+                  ? () => {
+                        const iconRect = this.btnIcon.getBoundingClientRect()
+                        return new DOMRect(iconRect.left, clickPoint.y, iconRect.width, 0)
+                    }
+                  : () => this.btnIcon.getBoundingClientRect()
+        // Escape, item selection (the menu) and a press outside (the
+        // popover) close it; `Mod-/` toggles through `openMenu`.
+        this.popup = menuPopover(this.btn, menu, {
             placement: 'bottom-start',
-            theme: 'ezco-mde-block-actions',
-            appendTo: () => document.body,
-            // Anchor selection:
-            //  - `'cursor'`  → editor's text cursor (keyboard invoke).
-            //  - `'click-point'` → click's viewport Y, horizontally
-            //    aligned with the icon column. This keeps the menu's
-            //    horizontal position consistent across clicks while
-            //    putting it vertically near where the user clicked,
-            //    rather than at the top of a tall block.
-            //  - `'icon'` (default) → the indicator icon at the top of
-            //    the button (used for non-click invocations).
-            getReferenceClientRect:
-                at === 'cursor'
-                    ? () => this.getCursorRect()
-                    : at === 'click-point' && clickPoint
-                        ? () => {
-                            const iconRect = this.btnIcon.getBoundingClientRect()
-                            // Zero-height rect at the click's Y, horizontally
-                            // matching the icon's column. With Tippy's
-                            // `placement: 'bottom-start'`, the menu opens
-                            // just below this point.
-                            return new DOMRect(
-                                iconRect.left,
-                                clickPoint.y,
-                                iconRect.width,
-                                0,
-                            )
-                        }
-                        : () => this.btnIcon.getBoundingClientRect(),
-            // Tippy's default `hideOnClick: true` registers a
-            // document-level pointerdown listener even when
-            // `trigger: 'manual'` is set, and that listener has been
-            // closing the popup on the same keystroke that opened it
-            // (the `Mod-/` keydown → mousedown synthesis on some
-            // browsers, or stray pointer events fired during focus
-            // movement). Disable it; we close explicitly via Escape
-            // (handled by `ContextMenu`), item selection, or click
-            // outside (handled by `documentMousedownToClose` below).
-            hideOnClick: false,
-            // Move focus onto the first item once Tippy has finished
-            // its open transition (the item needs to be in the DOM
-            // for `.focus()` to take effect). The keyboard listener
-            // is wired up below — *before* `show()` — so Escape and
-            // arrow keys work even during the open animation.
-            onShown: () => menu.focus(),
+            rect,
             onHide: () => {
                 this.isOpen = false
-                this.activeMenu?.disable()
-                setTimeout(() => {
-                    this.activeMenu?.destroy()
-                    this.activeMenu = null
-                    this.popup?.destroy()
-                    this.popup = null
-                }, 0)
+                this.popup = null
             },
-        }) as TippyInstance
-        // Attach the document keydown listener BEFORE show() so that
-        // Escape and arrow keys work the moment the menu starts to
-        // appear — not only after Tippy's open animation completes
-        // (which is when `onShown` fires, hundreds of ms later).
-        menu.enable()
-        this.popup.show()
+        })
     }
 
     /** Compute a DOMRect at the editor's current cursor position. Used
@@ -1073,14 +1306,7 @@ class BlockActionsView {
      *  keyboard shortcut. */
     private getCursorRect(): DOMRect {
         try {
-            const { from } = this.editor.state.selection
-            const coords = this.editor.view.coordsAtPos(from)
-            return new DOMRect(
-                coords.left,
-                coords.top,
-                1,
-                Math.max(1, coords.bottom - coords.top),
-            )
+            return caretRect(this.editor.view, this.editor.state.selection.from)
         } catch {
             return this.btnIcon.getBoundingClientRect()
         }

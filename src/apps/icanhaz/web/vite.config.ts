@@ -1,4 +1,8 @@
 import { defineConfig } from "vite";
+import { fileURLToPath } from "node:url";
+
+// The monorepo root, from this file (web/ is src/apps/icanhaz/web).
+const REPO_ROOT = fileURLToPath(new URL("../../../../", import.meta.url));
 
 // Shared Vite config for both the dev server (`npm run dev`, the editor-demo
 // page) AND the vitest browser runner (vitest.config.ts merges this in). The
@@ -16,7 +20,10 @@ export default defineConfig({
         // resolves them *through* the excluded package) to avoid a mid-run
         // re-optimize + page reload (the cold-cache flake). List copied from
         // markdown-editor's own proven vitest.config.ts.
-        exclude: ["@joinezco/codeblock"],
+        // @joinezco/storage and @joinezco/vault are workspace-linked and served
+        // as built (storage's workers are found beside its modules); their own
+        // dependencies are listed below so no test's first import re-optimizes.
+        exclude: ["@joinezco/codeblock", "@joinezco/storage", "@joinezco/vault"],
         include: [
             "@joinezco/codeblock > @codemirror/autocomplete",
             "@joinezco/codeblock > @codemirror/commands",
@@ -55,15 +62,14 @@ export default defineConfig({
             "@joinezco/codeblock > @volar/language-service",
             "@joinezco/codeblock > comlink",
             "@joinezco/codeblock > lodash",
-            "@joinezco/codeblock > minisearch",
+            "@joinezco/vault > markdown-it",
+            "@joinezco/vault > minisearch",
+            "@joinezco/storage > @noble/hashes/blake3",
+            "@joinezco/storage > @noble/hashes/utils",
             "@joinezco/codeblock > path-browserify",
             "@joinezco/codeblock > @marimo-team/codemirror-ai",
             "@joinezco/codeblock > vscode-languageserver-protocol",
-            "@joinezco/codeblock > @jsonjoy.com/json-pack/lib/cbor/CborDecoder",
-            "@joinezco/codeblock > @jsonjoy.com/json-pack/lib/cbor/CborEncoder",
-            "@joinezco/codeblock > @jsonjoy.com/util/lib/buffers/Writer",
             "@joinezco/codeblock > @codemirror/lsp-client > marked",
-            "multimatch",
         ],
     },
     resolve: {
@@ -74,15 +80,14 @@ export default defineConfig({
             // re-optimize (the cold-cache reload flake). Redirect it to the tiny
             // local fixture the markdown-editor package ships for exactly this
             // reason — a non-node_modules file is never an "optimized dep".
-            "emojibase-data/en/compact.json":
-                "/Users/theo/dev/mono/src/typescript/markdown-editor/src/test/fixtures/emoji-stub.json",
+            "emojibase-data/en/compact.json": `${REPO_ROOT}src/typescript/markdown-editor/src/test/fixtures/emoji-stub.json`,
         },
     },
     server: {
         // The editor + codeblock dist are workspace-linked from outside this
         // package's root (src/typescript/*), so Vite must be allowed to serve
         // across the monorepo. Covers the emoji fixture above too.
-        fs: { allow: ["/Users/theo/dev/mono"] },
+        fs: { allow: [REPO_ROOT] },
         // Cross-origin isolation so codeblock's SharedArrayBuffer-backed workers
         // work in the dev demo (harmless for the markdown-only proof).
         headers: {

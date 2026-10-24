@@ -25,6 +25,7 @@ mod runtime;
 
 use crate::events::content::InboundContent;
 use crate::plugins::capabilities::Capability;
+use crate::plugins::grants::{self, Grants};
 use crate::plugins::limits::{BreachRecorder, LimitKind, ResolvedLimits};
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     CapabilityKind, HostAnnotatorClient, HostAnnotatorClientWithStore, HostCapabilityProvider,
@@ -32,9 +33,80 @@ use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
     HostContentWithStore, HostLocalStorageClient, HostLocalStorageClientWithStore, HostLogger,
     HostLoggerWithStore,
 };
+use bindgen::ezco::ezcap::types::CapabilityError;
+use icanhaz_broker::broker::bindings::icanhaz::nocap::types::Denied;
 pub use runtime::Runtime;
 
 pub mod bindgen;
+
+/// The per-call admission handle a minted provider resource carries.
+///
+/// A resource the registry builds for a plugin carries the grant that decides
+/// and who the caller is (`caller.plugin` = the plugin id). A resource with
+/// no grant behind it denies every call: no value of this type that
+/// production code can construct admits a call no membrane has seen.
+#[derive(Clone, Default)]
+pub enum Admission {
+    /// Every call is admitted through this grant, against its `allow` clause.
+    Granted {
+        grants: Grants,
+        token: String,
+        caller: ezcap::Caller,
+    },
+    /// No grant backs the resource: the capability was granted but its scope
+    /// was never compiled into the store, or the resource was built outside
+    /// the registry. Every call is `Unavailable`.
+    #[default]
+    Denied,
+    /// Admits everything. Exists so a unit test of a resource's own behaviour
+    /// (its budget, its sanitising) can say "no membrane here" out loud;
+    /// production code cannot construct it.
+    #[cfg(test)]
+    Unchecked,
+}
+
+impl Admission {
+    pub fn new(grants: Grants, token: String, plugin_id: &str) -> Self {
+        Self::Granted {
+            grants,
+            token,
+            caller: ezcap::Caller {
+                plugin: Some(plugin_id.to_string()),
+                ..Default::default()
+            },
+        }
+    }
+}
+
+/// Admit one call on a resource: `method` is the WIT method name, `args` the
+/// arguments to bind as `call.args.*`, `bytes` the payload size for
+/// `call.bytes`/`state.bytes`. A resource without a grant denies the call.
+fn admit(
+    admission: &Admission,
+    method: &str,
+    args: Vec<(&str, ezcap::Val)>,
+    bytes: i64,
+) -> Result<(), CapabilityError> {
+    let (grants, token, caller) = match admission {
+        Admission::Granted {
+            grants,
+            token,
+            caller,
+        } => (grants, token, caller),
+        Admission::Denied => return Err(CapabilityError::Unavailable),
+        #[cfg(test)]
+        Admission::Unchecked => return Ok(()),
+    };
+    let mut call = ezcap::Call::new(method).caller(caller.clone()).bytes(bytes);
+    for (name, val) in args {
+        call = call.arg(name, val);
+    }
+    match grants::lock(grants).admit(token, call) {
+        Ok(()) => Ok(()),
+        Err(Denied::OutOfScope(sentences)) => Err(CapabilityError::Denied(sentences)),
+        Err(_) => Err(CapabilityError::Unavailable),
+    }
+}
 
 /// A capability provider that holds the capability instances granted to a plugin.
 /// The caller/builder is responsible for providing the necessary objects.
@@ -105,34 +177,50 @@ impl CapabilityProvider {
     /// plugin, owned by the registry). A clone is handed to the provider so
     /// that writes survive across events for the same plugin. `None` disables
     /// the local-storage capability even if granted.
+    ///
+    /// `grants` is the registry's grant store and `plugin_id` the caller:
+    /// each minted resource admits its calls through the capability's grant.
+    /// A provider capability that is granted but holds no grant (its scope
+    /// was never compiled into the store) still gets its resource, and that
+    /// resource refuses every call as `Unavailable`; it is never admitted
+    /// unchecked.
     pub fn build(
         capabilities: &[Capability],
         local_storage: Option<LocalStorageClient>,
         limits: &ResolvedLimits,
         breaches: Arc<BreachRecorder>,
+        grants: &Grants,
+        plugin_id: &str,
     ) -> Self {
         let mut provider = CapabilityProvider::new();
         for cap in capabilities {
             if !cap.granted {
                 continue;
             }
+            let adm = match (grants::tag_of(&cap.inner.kind), &cap.token) {
+                (Some(_), Some(token)) => {
+                    Admission::new(Arc::clone(grants), token.clone(), plugin_id)
+                }
+                _ => Admission::Denied,
+            };
             match &cap.inner.kind {
                 CapabilityKind::Logger => {
                     // A fresh logger per provider, i.e. per event: the budget is
                     // a per-event budget by construction.
-                    provider =
-                        provider.with_logger(Logger::with_limits(limits, Arc::clone(&breaches)));
+                    provider = provider.with_logger(
+                        Logger::with_limits(limits, Arc::clone(&breaches)).with_admission(adm),
+                    );
                 }
                 CapabilityKind::Annotator => {
-                    provider = provider.with_annotator(AnnotatorClient::new());
+                    provider = provider.with_annotator(AnnotatorClient::new().with_admission(adm));
                 }
                 CapabilityKind::LocalStorage => {
                     if let Some(client) = local_storage.clone() {
-                        provider = provider.with_local_storage(client);
+                        provider = provider.with_local_storage(client.with_admission(adm));
                     }
                 }
                 CapabilityKind::Clock => {
-                    provider = provider.with_clock(ClockClient::new());
+                    provider = provider.with_clock(ClockClient::new().with_admission(adm));
                 }
                 CapabilityKind::HandleEvent(_) => {
                     // Event handling capabilities are managed separately
@@ -143,35 +231,22 @@ impl CapabilityProvider {
     }
 }
 
-impl From<&Vec<Capability>> for CapabilityProvider {
-    fn from(capabilities: &Vec<Capability>) -> Self {
-        // Fresh (non-persistent) local storage. Callers that need storage to
-        // survive across events should use `CapabilityProvider::build` with a
-        // persistent client instead.
-        Self::build(
-            capabilities,
-            Some(LocalStorageClient::new()),
-            &ResolvedLimits::DEFAULTS,
-            BreachRecorder::new("<anonymous>"),
-        )
-    }
+#[derive(Clone, Default)]
+pub struct AnnotatorClient {
+    admission: Admission,
 }
-
-#[derive(Clone)]
-pub struct AnnotatorClient {}
 
 impl AnnotatorClient {
     pub fn new() -> Self {
-        Self {}
+        Self::default()
+    }
+
+    pub fn with_admission(mut self, admission: Admission) -> Self {
+        self.admission = admission;
+        self
     }
 
     pub fn annotate(&self, _content: &InboundContent) {}
-}
-
-impl Default for AnnotatorClient {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// Custom StreamProducer for body streaming
@@ -344,6 +419,7 @@ struct LogBudget {
 #[derive(Clone)]
 pub struct Logger {
     budget: Arc<LogBudget>,
+    admission: Admission,
 }
 
 /// Longest single message admitted after escaping. Bounds one pathological
@@ -364,6 +440,7 @@ impl Logger {
                 max_messages: limits.max_log_messages_per_event,
                 breaches,
             }),
+            admission: Admission::Denied,
         }
     }
 
@@ -437,6 +514,22 @@ impl Logger {
         Some(msg)
     }
 
+    pub fn with_admission(mut self, admission: Admission) -> Self {
+        self.admission = admission;
+        self
+    }
+
+    /// The scope check for one log call: the grant's `allow` clause sees the
+    /// level as `call.method` and the message as `call.args.message`.
+    fn admitted(&self, level: &str, message: &str) -> Result<(), CapabilityError> {
+        admit(
+            &self.admission,
+            level,
+            vec![("message", ezcap::Val::from(message))],
+            message.len() as i64,
+        )
+    }
+
     pub fn info(&self, message: String) {
         if let Some(m) = self.admit(&message) {
             tracing::info!(target: "plugins::guest", "{}", m);
@@ -485,6 +578,7 @@ impl Default for Logger {
 /// can change; the registry refreshes them per event.
 #[derive(Clone)]
 pub struct LocalStorageClient {
+    admission: Admission,
     store: Arc<RwLock<HashMap<String, Bytes>>>,
     /// Current total accounted size, in bytes (keys plus values).
     bytes_used: Arc<AtomicU64>,
@@ -513,7 +607,34 @@ impl LocalStorageClient {
             max_bytes: Arc::new(AtomicU64::new(limits.max_local_storage_bytes)),
             max_keys: Arc::new(AtomicU64::new(limits.max_local_storage_keys)),
             breaches,
+            admission: Admission::Denied,
         }
+    }
+
+    pub fn with_admission(mut self, admission: Admission) -> Self {
+        self.admission = admission;
+        self
+    }
+
+    /// The scope check for one storage call (`set`/`get`/`delete`): the
+    /// grant's `allow` clause sees the key as `call.args.key` and, for `set`,
+    /// the value as `call.args.value`.
+    fn admitted(
+        &self,
+        method: &str,
+        key: &str,
+        value: Option<&[u8]>,
+    ) -> Result<(), CapabilityError> {
+        let mut args = vec![("key", ezcap::Val::from(key))];
+        if let Some(v) = value {
+            args.push(("value", ezcap::Val::Bytes(v.to_vec())));
+        }
+        admit(
+            &self.admission,
+            method,
+            args,
+            value.map_or(0, |v| v.len() as i64),
+        )
     }
 
     /// Refresh the quotas from the plugin's currently-effective limits.
@@ -588,7 +709,7 @@ impl LocalStorageClient {
             let freed = (key.len() as u64).saturating_add(removed.len() as u64);
             let _ = self
                 .bytes_used
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |cur| {
                     Some(cur.saturating_sub(freed))
                 });
         }
@@ -607,12 +728,23 @@ pub(crate) fn body_chunk_admitted(written: u64, chunk_len: u64, max_bytes: u64) 
 }
 
 /// A clock client providing access to the current system time.
-#[derive(Clone)]
-pub struct ClockClient {}
+#[derive(Clone, Default)]
+pub struct ClockClient {
+    admission: Admission,
+}
 
 impl ClockClient {
     pub fn new() -> Self {
-        Self {}
+        Self::default()
+    }
+
+    pub fn with_admission(mut self, admission: Admission) -> Self {
+        self.admission = admission;
+        self
+    }
+
+    fn admitted(&self, method: &str) -> Result<(), CapabilityError> {
+        admit(&self.admission, method, Vec::new(), 0)
     }
 
     /// Returns the current time as a Unix timestamp in seconds
@@ -641,12 +773,6 @@ impl ClockClient {
     pub fn utc_offset_seconds(&self) -> i32 {
         use chrono::Offset;
         chrono::Local::now().offset().fix().local_minus_utc()
-    }
-}
-
-impl Default for ClockClient {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -1001,47 +1127,58 @@ impl<T> HostLocalStorageClientWithStore<T> for WitmProxy {
         self_: Resource<LocalStorageClient>,
         key: String,
         value: Vec<u8>,
-    ) -> wasmtime::Result<()> {
+    ) -> wasmtime::Result<Result<(), CapabilityError>> {
         // Clone the client (cheap Arc clone) to use outside the accessor closure
         let client = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             let client = state.table.get(&self_)?;
             Ok::<LocalStorageClient, wasmtime::component::ResourceTableError>(client.clone())
         })?;
-        // Call async method on the cloned client (shares Arc storage)
-        client.set(key, value).await;
-        Ok(())
+        if let Err(denied) = client.admitted("set", &key, Some(&value)) {
+            return Ok(Err(denied));
+        }
+        // A quota refusal is reported, not swallowed: the plugin can tell a
+        // dropped write from a stored one.
+        Ok(if client.set(key, value).await {
+            Ok(())
+        } else {
+            Err(CapabilityError::Denied(
+                "local storage quota exceeded".to_string(),
+            ))
+        })
     }
 
     async fn get(
         accessor: &Accessor<T, Self>,
         self_: Resource<LocalStorageClient>,
         key: String,
-    ) -> wasmtime::Result<Option<Vec<u8>>> {
-        // Clone the client (cheap Arc clone) to use outside the accessor closure
+    ) -> wasmtime::Result<Result<Option<Vec<u8>>, CapabilityError>> {
         let client = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             let client = state.table.get(&self_)?;
             Ok::<LocalStorageClient, wasmtime::component::ResourceTableError>(client.clone())
         })?;
-        // Call async method and convert Bytes to Vec<u8> for WIT interface
-        Ok(client.get(&key).await.map(|bytes| bytes.to_vec()))
+        if let Err(denied) = client.admitted("get", &key, None) {
+            return Ok(Err(denied));
+        }
+        Ok(Ok(client.get(&key).await.map(|bytes| bytes.to_vec())))
     }
 
     async fn delete(
         accessor: &Accessor<T, Self>,
         self_: Resource<LocalStorageClient>,
         key: String,
-    ) -> wasmtime::Result<()> {
-        // Clone the client (cheap Arc clone) to use outside the accessor closure
+    ) -> wasmtime::Result<Result<(), CapabilityError>> {
         let client = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             let client = state.table.get(&self_)?;
             Ok::<LocalStorageClient, wasmtime::component::ResourceTableError>(client.clone())
         })?;
-        // Call async method on the cloned client (shares Arc storage)
+        if let Err(denied) = client.admitted("delete", &key, None) {
+            return Ok(Err(denied));
+        }
         client.delete(&key).await;
-        Ok(())
+        Ok(Ok(()))
     }
 
     async fn drop(
@@ -1061,15 +1198,22 @@ impl<T> HostAnnotatorClientWithStore<T> for WitmProxy {
         accessor: &Accessor<T, Self>,
         self_: Resource<AnnotatorClient>,
         content: Resource<InboundContent>,
-    ) -> wasmtime::Result<()> {
-        let _ = accessor.with(|mut access| {
+    ) -> wasmtime::Result<Result<(), CapabilityError>> {
+        let res = accessor.with(|mut access| {
             let state: &mut WitmProxyCtxView = &mut access.get();
             let annotator = state.table.get(&self_)?;
             let content = state.table.get(&content)?;
-            annotator.annotate(content);
-            Ok::<(), wasmtime::component::ResourceTableError>(())
-        });
-        Ok(())
+            Ok::<_, wasmtime::component::ResourceTableError>(
+                match admit(&annotator.admission, "annotate", Vec::new(), 0) {
+                    Ok(()) => {
+                        annotator.annotate(content);
+                        Ok(())
+                    }
+                    Err(denied) => Err(denied),
+                },
+            )
+        })?;
+        Ok(res)
     }
 
     async fn drop(
@@ -1084,62 +1228,37 @@ impl<T> HostAnnotatorClientWithStore<T> for WitmProxy {
     }
 }
 
+/// One log level's host method: admit through the logger's scope, then log.
+macro_rules! logger_level {
+    ($name:ident) => {
+        async fn $name(
+            accessor: &Accessor<T, Self>,
+            self_: Resource<Logger>,
+            message: String,
+        ) -> wasmtime::Result<Result<(), CapabilityError>> {
+            let res = accessor.with(|mut access| {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                let logger = state.table.get(&self_)?;
+                Ok::<_, wasmtime::component::ResourceTableError>(
+                    match logger.admitted(stringify!($name), &message) {
+                        Ok(()) => {
+                            logger.$name(message);
+                            Ok(())
+                        }
+                        Err(denied) => Err(denied),
+                    },
+                )
+            })?;
+            Ok(res)
+        }
+    };
+}
+
 impl<T> HostLoggerWithStore<T> for WitmProxy {
-    async fn info(
-        accessor: &Accessor<T, Self>,
-        self_: Resource<Logger>,
-        message: String,
-    ) -> wasmtime::Result<()> {
-        let _ = accessor.with(|mut access| {
-            let state: &mut WitmProxyCtxView = &mut access.get();
-            let logger = state.table.get(&self_)?;
-            logger.info(message);
-            Ok::<(), wasmtime::component::ResourceTableError>(())
-        });
-        Ok(())
-    }
-
-    async fn warn(
-        accessor: &Accessor<T, Self>,
-        self_: Resource<Logger>,
-        message: String,
-    ) -> wasmtime::Result<()> {
-        accessor.with(|mut access| {
-            let state: &mut WitmProxyCtxView = &mut access.get();
-            let logger = state.table.get(&self_)?;
-            logger.warn(message);
-            Ok::<(), wasmtime::component::ResourceTableError>(())
-        })?;
-        Ok(())
-    }
-
-    async fn error(
-        accessor: &Accessor<T, Self>,
-        self_: Resource<Logger>,
-        message: String,
-    ) -> wasmtime::Result<()> {
-        accessor.with(|mut access| {
-            let state: &mut WitmProxyCtxView = &mut access.get();
-            let logger = state.table.get(&self_)?;
-            logger.error(message);
-            Ok::<(), wasmtime::component::ResourceTableError>(())
-        })?;
-        Ok(())
-    }
-
-    async fn debug(
-        accessor: &Accessor<T, Self>,
-        self_: Resource<Logger>,
-        message: String,
-    ) -> wasmtime::Result<()> {
-        accessor.with(|mut access| {
-            let state: &mut WitmProxyCtxView = &mut access.get();
-            let logger = state.table.get(&self_)?;
-            logger.debug(message);
-            Ok::<(), wasmtime::component::ResourceTableError>(())
-        })?;
-        Ok(())
-    }
+    logger_level!(info);
+    logger_level!(warn);
+    logger_level!(error);
+    logger_level!(debug);
 
     async fn drop(accessor: &Accessor<T, Self>, rep: Resource<Logger>) -> wasmtime::Result<()> {
         accessor.with(|mut access| {
@@ -1150,42 +1269,29 @@ impl<T> HostLoggerWithStore<T> for WitmProxy {
     }
 }
 
+/// One clock method: admit through the clock's scope, then read.
+macro_rules! clock_method {
+    ($name:ident, $wit:literal, $ty:ty) => {
+        async fn $name(
+            accessor: &Accessor<T, Self>,
+            self_: Resource<ClockClient>,
+        ) -> wasmtime::Result<Result<$ty, CapabilityError>> {
+            let res = accessor.with(|mut access| {
+                let state: &mut WitmProxyCtxView = &mut access.get();
+                let client = state.table.get(&self_)?;
+                Ok::<_, wasmtime::component::ResourceTableError>(
+                    client.admitted($wit).map(|()| client.$name()),
+                )
+            })?;
+            Ok(res)
+        }
+    };
+}
+
 impl<T> HostClockClientWithStore<T> for WitmProxy {
-    async fn now_seconds(
-        accessor: &Accessor<T, Self>,
-        self_: Resource<ClockClient>,
-    ) -> wasmtime::Result<u64> {
-        let result = accessor.with(|mut access| {
-            let state: &mut WitmProxyCtxView = &mut access.get();
-            let client = state.table.get(&self_)?;
-            Ok::<u64, wasmtime::component::ResourceTableError>(client.now_seconds())
-        })?;
-        Ok(result)
-    }
-
-    async fn now_millis(
-        accessor: &Accessor<T, Self>,
-        self_: Resource<ClockClient>,
-    ) -> wasmtime::Result<u64> {
-        let result = accessor.with(|mut access| {
-            let state: &mut WitmProxyCtxView = &mut access.get();
-            let client = state.table.get(&self_)?;
-            Ok::<u64, wasmtime::component::ResourceTableError>(client.now_millis())
-        })?;
-        Ok(result)
-    }
-
-    async fn utc_offset_seconds(
-        accessor: &Accessor<T, Self>,
-        self_: Resource<ClockClient>,
-    ) -> wasmtime::Result<i32> {
-        let result = accessor.with(|mut access| {
-            let state: &mut WitmProxyCtxView = &mut access.get();
-            let client = state.table.get(&self_)?;
-            Ok::<i32, wasmtime::component::ResourceTableError>(client.utc_offset_seconds())
-        })?;
-        Ok(result)
-    }
+    clock_method!(now_seconds, "now-seconds", u64);
+    clock_method!(now_millis, "now-millis", u64);
+    clock_method!(utc_offset_seconds, "utc-offset-seconds", i32);
 
     async fn drop(
         accessor: &Accessor<T, Self>,
@@ -1334,4 +1440,192 @@ struct WitmProxy;
 
 impl HasData for WitmProxy {
     type Data<'a> = WitmProxyCtxView<'a>;
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+    use crate::plugins::grants::PluginKind;
+    use icanhaz_broker::broker::GrantStore;
+
+    fn scoped(tag: &'static str, allow: &str) -> (Grants, Admission) {
+        let grants = grants::shared().expect("environments");
+        let kind = match tag {
+            "logger" => CapabilityKind::Logger,
+            "local_storage" => CapabilityKind::LocalStorage,
+            "clock" => CapabilityKind::Clock,
+            _ => CapabilityKind::Annotator,
+        };
+        let token = grants::lock(&grants)
+            .issue_scoped(
+                PluginKind(kind),
+                ezcap::Scope::allow(allow),
+                tag.to_string(),
+                GrantStore::<PluginKind>::FOREVER,
+                grants::principal("ezco/test"),
+            )
+            .expect("scope compiles");
+        let admission = Admission::new(Arc::clone(&grants), token, "ezco/test");
+        (grants, admission)
+    }
+
+    #[test]
+    fn a_scoped_logger_refuses_messages_outside_its_prefix() {
+        let (_m, adm) = scoped("logger", r#"call.args.message.startsWith("[ok]")"#);
+        let logger = Logger::new().with_admission(adm);
+        assert!(logger.admitted("info", "[ok] fine").is_ok());
+        assert!(matches!(
+            logger.admitted("info", "not fine"),
+            Err(CapabilityError::Denied(_))
+        ));
+    }
+
+    /// A resource with no grant behind it is not an unscoped resource: it
+    /// refuses every call. Only a test can ask for the unchecked kind.
+    #[test]
+    fn a_resource_without_a_grant_denies_every_call() {
+        assert!(matches!(
+            Logger::new().admitted("info", "anything"),
+            Err(CapabilityError::Unavailable)
+        ));
+        assert!(matches!(
+            ClockClient::new().admitted("now-seconds"),
+            Err(CapabilityError::Unavailable)
+        ));
+        assert!(matches!(
+            LocalStorageClient::new().admitted("get", "k", None),
+            Err(CapabilityError::Unavailable)
+        ));
+        assert!(matches!(
+            admit(&AnnotatorClient::new().admission, "annotate", Vec::new(), 0),
+            Err(CapabilityError::Unavailable)
+        ));
+        assert!(
+            Logger::new()
+                .with_admission(Admission::Unchecked)
+                .admitted("info", "anything")
+                .is_ok()
+        );
+    }
+
+    /// The registry-side counterpart: a capability the plugin was granted
+    /// but no grant was issued for (its scope never compiled into the
+    /// store) builds a resource that denies, not one that admits.
+    #[test]
+    fn a_granted_capability_without_a_grant_is_denied() {
+        use crate::wasm::bindgen::ezco::ezcap::types::Scope as ScopeWire;
+        use crate::wasm::bindgen::witmproxy::plugin::capabilities::Capability as WitCapability;
+        let grants = grants::shared().expect("environments");
+        let cap = |kind| Capability {
+            inner: WitCapability {
+                kind,
+                scope: ScopeWire {
+                    when: "true".to_string(),
+                    allow: "true".to_string(),
+                },
+            },
+            granted: true,
+            when: None,
+            token: None,
+        };
+        let caps = vec![
+            cap(CapabilityKind::Logger),
+            cap(CapabilityKind::Clock),
+            cap(CapabilityKind::LocalStorage),
+            cap(CapabilityKind::Annotator),
+        ];
+        let build = |caps: &[Capability]| {
+            CapabilityProvider::build(
+                caps,
+                Some(LocalStorageClient::new()),
+                &ResolvedLimits::DEFAULTS,
+                BreachRecorder::new("ezco/test"),
+                &grants,
+                "ezco/test",
+            )
+        };
+        let provider = build(&caps);
+        assert!(matches!(
+            provider.logger().expect("granted").admitted("info", "x"),
+            Err(CapabilityError::Unavailable)
+        ));
+        assert!(matches!(
+            provider.clock().expect("granted").admitted("now-seconds"),
+            Err(CapabilityError::Unavailable)
+        ));
+        assert!(matches!(
+            provider
+                .local_storage()
+                .expect("granted")
+                .admitted("get", "k", None),
+            Err(CapabilityError::Unavailable)
+        ));
+        assert!(matches!(
+            admit(
+                &provider.annotator().expect("granted").admission,
+                "annotate",
+                Vec::new(),
+                0
+            ),
+            Err(CapabilityError::Unavailable)
+        ));
+
+        // Once the scopes are compiled into the store, the same capabilities admit.
+        let env = cel_cxx::Env::builder().build().expect("env");
+        let mut caps = caps;
+        for c in caps.iter_mut() {
+            c.compile_scope_expression(&env, &grants, "ezco/test")
+                .expect("compiles");
+        }
+        let provider = build(&caps);
+        assert!(
+            provider
+                .logger()
+                .expect("granted")
+                .admitted("info", "x")
+                .is_ok()
+        );
+        assert!(
+            provider
+                .clock()
+                .expect("granted")
+                .admitted("now-seconds")
+                .is_ok()
+        );
+        assert!(
+            provider
+                .local_storage()
+                .expect("granted")
+                .admitted("get", "k", None)
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_scoped_storage_client_confines_keys_and_sees_the_caller() {
+        let (_m, adm) = scoped(
+            "local_storage",
+            r#"caller.plugin == "ezco/test" && call.args.key.startsWith("seen/")"#,
+        );
+        let client = LocalStorageClient::new().with_admission(adm);
+        assert!(client.admitted("set", "seen/a", Some(b"v")).is_ok());
+        assert!(client.admitted("delete", "other/a", None).is_err());
+        // The clause binds `call.args.value` too: a size limit is expressible.
+        let (_m2, adm2) = scoped("local_storage", "size(call.args.value) <= 2");
+        let client = LocalStorageClient::new().with_admission(adm2);
+        assert!(client.admitted("set", "k", Some(b"ab")).is_ok());
+        assert!(client.admitted("set", "k", Some(b"abc")).is_err());
+    }
+
+    #[test]
+    fn a_budgeted_clock_stops_after_its_call_count() {
+        let (_m, adm) = scoped("clock", "state.calls < 2");
+        let clock = ClockClient::new().with_admission(adm);
+        assert!(clock.admitted("now-seconds").is_ok());
+        assert!(clock.admitted("now-millis").is_ok());
+        assert!(
+            clock.admitted("now-seconds").is_err(),
+            "third call exceeds the budget"
+        );
+    }
 }

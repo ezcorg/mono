@@ -1,0 +1,142 @@
+import { describe, it, expect } from 'vitest'
+import type { CompletionRequest, Inference } from '../inference'
+import { MarkdownEditor } from '../index'
+import { getMarkdownContent, rangeOf, trackEditors, waitFor } from '../../../test/utils'
+
+const editors = trackEditors()
+
+/** A model that answers with `reply`, a few characters at a time, and
+ *  remembers what it was asked and whether it was stopped. */
+function scripted(reply: string, pause = 5) {
+    const asked: CompletionRequest[] = []
+    const stopped: boolean[] = []
+    const inference: Inference = {
+        async *complete(request, options) {
+            asked.push(request)
+            for (const piece of reply.match(/.{1,3}/gs) ?? []) {
+                await new Promise((r) => setTimeout(r, pause))
+                if (options?.signal?.aborted) {
+                    stopped.push(true)
+                    return
+                }
+                yield { type: 'text', text: piece }
+            }
+            yield { type: 'usage', inputTokens: 1, outputTokens: 1 }
+        },
+    }
+    return { inference, asked, stopped }
+}
+
+const make = (content: string, inference?: Inference) => editors.make(content, { inference })
+
+/** Select the first occurrence of `text`. */
+const select = (editor: MarkdownEditor, text: string) => editor.commands.setTextSelection(rangeOf(editor, text))
+
+// The panel is a popover under the body (one at a time), not in the container.
+const panel = (_c: HTMLElement) => document.querySelector('.ezco-mde-ai') as HTMLElement | null
+const output = (c: HTMLElement) => panel(c)?.querySelector('.ezco-mde-ai-output')?.textContent ?? ''
+const button = (c: HTMLElement, action: string) => panel(c)!.querySelector(`button[data-action="${action}"]`) as HTMLButtonElement
+
+describe('Prose actions in the editor', () => {
+    it('rewrites the selection with the answer, as one change undo takes back', async () => {
+        const { inference, asked } = scripted('a much better sentence')
+        const { editor, container } = make('Before. A rough sentence. After.', inference)
+        select(editor, 'A rough sentence.')
+        editor.commands.runProseAction('rewrite')
+        await waitFor(() => output(container) === 'a much better sentence' && !button(container, 'apply').disabled, 3000)
+        expect(asked[0].messages.at(-1)!.content).toContain('A rough sentence.')
+        button(container, 'apply').click()
+        expect(getMarkdownContent(editor)).toBe('Before. a much better sentence After.')
+        expect(panel(container)?.hidden ?? true).toBe(true)
+        editor.commands.undo()
+        expect(getMarkdownContent(editor)).toBe('Before. A rough sentence. After.')
+    })
+
+    it('continues after the caret', async () => {
+        const { inference } = scripted('And then it rained.')
+        const { editor, container } = make('It was a quiet day.', inference)
+        editor.commands.focus('end')
+        editor.commands.runProseAction('continue')
+        await waitFor(() => output(container) === 'And then it rained.' && !button(container, 'apply').disabled, 3000)
+        expect(button(container, 'apply').textContent).toBe('Insert')
+        button(container, 'apply').click()
+        expect(getMarkdownContent(editor)).toBe('It was a quiet day.\n\nAnd then it rained.')
+    })
+
+    it('asks what to do first when the action takes an instruction', async () => {
+        const { inference, asked } = scripted('Hola.')
+        const { editor, container } = make('Hello.', inference)
+        // A new editor takes focus a frame after it is made; act after that.
+        await waitFor(() => editor.isFocused, 3000)
+        select(editor, 'Hello.')
+        editor.commands.runProseAction('ask')
+        await waitFor(() => !!panel(container) && !panel(container)!.hidden, 3000)
+        const input = panel(container)!.querySelector('input') as HTMLInputElement
+        expect(document.activeElement).toBe(input)
+        input.value = 'in Spanish'
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+        await waitFor(() => output(container) === 'Hola.' && !button(container, 'apply').disabled, 3000)
+        expect(asked[0].messages.at(-1)!.content).toContain('in Spanish')
+        button(container, 'apply').click()
+        expect(getMarkdownContent(editor)).toBe('Hola.')
+    })
+
+    it('stops the answer when discarded, and changes nothing', async () => {
+        const { inference, stopped } = scripted('x'.repeat(300), 10)
+        const { editor, container } = make('Keep this.', inference)
+        select(editor, 'Keep this.')
+        editor.commands.runProseAction('rewrite')
+        await waitFor(() => output(container).length > 0, 3000)
+        button(container, 'discard').click()
+        await waitFor(() => stopped.length === 1, 3000)
+        expect(panel(container)?.hidden ?? true).toBe(true)
+        expect(getMarkdownContent(editor)).toBe('Keep this.')
+    })
+
+    it('puts the answer where the selection went, if the note changed meanwhile', async () => {
+        const { inference } = scripted('NEW', 20)
+        const { editor, container } = make('One two three.', inference)
+        select(editor, 'two')
+        editor.commands.runProseAction('rewrite')
+        editor.commands.insertContentAt(1, 'Zero ')
+        await waitFor(() => output(container) === 'NEW' && !button(container, 'apply').disabled, 3000)
+        button(container, 'apply').click()
+        expect(getMarkdownContent(editor)).toBe('Zero One NEW three.')
+    })
+
+    it('stays on screen, by its text, when the text is at the viewport\'s edge', async () => {
+        const { inference } = scripted('y'.repeat(400), 2)
+        const { editor, container } = make(`${'Words and more words. '.repeat(12)}The very end.`, inference)
+        // The note in the viewport's bottom-right corner, its last words at
+        // the edge: no room under them, and not 400px to their right.
+        container.style.cssText = 'position: fixed; right: 0; bottom: 0; width: 360px; margin: 0;'
+        select(editor, 'The very end.')
+        const end = editor.view.coordsAtPos(editor.state.selection.to)
+        expect(end.bottom).toBeGreaterThan(window.innerHeight - 60)
+        editor.commands.runProseAction('rewrite')
+        await waitFor(() => output(container).length > 0, 3000)
+        const box = () => panel(container)!.getBoundingClientRect()
+        await waitFor(() => box().right <= window.innerWidth && box().bottom <= window.innerHeight, 3000)
+        expect(box().left).toBeGreaterThanOrEqual(0)
+        expect(box().top).toBeGreaterThanOrEqual(0)
+        // Above the text, there being no room under it, and close by it.
+        expect(box().bottom).toBeLessThanOrEqual(end.top)
+        expect(end.top - box().bottom).toBeLessThan(40)
+        // Still there once the whole answer is in, and the same width as anywhere.
+        await waitFor(() => !button(container, 'apply').disabled, 3000)
+        expect(box().right).toBeLessThanOrEqual(window.innerWidth)
+        expect(box().bottom).toBeLessThanOrEqual(window.innerHeight)
+        expect(box().width).toBe(400)
+        button(container, 'discard').click()
+        expect(panel(container)).toBeNull()
+    })
+
+    it('is offered only when the host gives a model', async () => {
+        const { editor: without } = make('Text.')
+        expect(without.commands.runProseAction('rewrite')).toBe(false)
+        const { editor, container } = make('Text.', scripted('x').inference)
+        select(editor, 'Text.')
+        expect(editor.commands.runProseAction('rewrite')).toBe(true)
+        await waitFor(() => !!panel(container), 3000)
+    })
+})

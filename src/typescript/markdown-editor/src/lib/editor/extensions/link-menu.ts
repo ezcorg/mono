@@ -1,8 +1,9 @@
 import { Editor, Extension, getMarkRange } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
-import tippy, { Instance as TippyInstance } from 'tippy.js'
+import { caretRect, popover, type Popover } from '../ui/popover'
 import { LinkPopover } from '../ui/link-popover'
+import type { WikilinkStorage } from './wikilink'
 
 /**
  * Inline link affordances:
@@ -17,11 +18,37 @@ import { LinkPopover } from '../ui/link-popover'
  * - Creating / editing a link uses the popover's inline URL input (no more
  *   `window.prompt`).
  *
- * Positioned with Tippy (same as the block-action / selection menus),
- * anchored to a dedicated zero-size element — NOT to `view.dom`: Tippy writes
- * aria-* attributes onto its reference, and the ProseMirror editable must not
- * be mutated from outside its own lifecycle.
+ * Placed by the shared popover (`ui/popover.ts`) by the link's own rect,
+ * with the editable as its reference (the popover writes nothing on it).
  */
+
+/**
+ * Follow a link's destination. A path into the vault (or a bare `#fragment`)
+ * opens in the editor through the wikilink extension's resolver, so a
+ * Markdown link and a wikilink to the same note behave the same; anything
+ * else (a URL, `mailto:`) opens in a new tab.
+ */
+function followHref(editor: Editor, href: string): void {
+    const wikilink = (editor.storage as any).wikilink as WikilinkStorage | undefined
+    if (wikilink && href && !/^[a-z][a-z0-9+.-]*:/i.test(href) && !href.startsWith('//')) {
+        const hash = href.indexOf('#')
+        const path = hash < 0 ? href : href.slice(0, hash)
+        const fragment = hash < 0 ? null : decodeFragment(href.slice(hash + 1))
+        void wikilink.follow(path, fragment, 'markdown').then((followed) => {
+            if (!followed && path) openHref(href)
+        })
+        return
+    }
+    openHref(href)
+}
+
+function decodeFragment(fragment: string): string {
+    try {
+        return decodeURIComponent(fragment)
+    } catch {
+        return fragment
+    }
+}
 
 function openHref(href: string): void {
     if (!href || typeof window === 'undefined') return
@@ -38,13 +65,7 @@ class LinkPopoverView {
     private editor: Editor
     private view: EditorView
     private popover: LinkPopover
-    private popup: TippyInstance | null = null
-    /** Dedicated Tippy reference, appended to the editor wrapper (outside the
-     *  PM-managed editable). Its own position is irrelevant — Tippy positions
-     *  via `getReferenceClientRect`. We deliberately do NOT anchor to
-     *  `view.dom`: Tippy writes aria-* attributes onto its reference and the
-     *  editable must not be mutated from outside its lifecycle. */
-    private refEl: HTMLElement
+    private popup: Popover | null = null
     private mode: 'hidden' | 'shown' = 'hidden'
     // True while the URL input has focus — `update()` won't disturb the
     // popover then (so an in-progress edit isn't reset by editor activity).
@@ -65,11 +86,6 @@ class LinkPopoverView {
         this.view = view
         this.editor = editor
 
-        this.refEl = document.createElement('span')
-        this.refEl.setAttribute('aria-hidden', 'true')
-        this.refEl.style.cssText = 'position:absolute;width:0;height:0;'
-        ;(view.dom.parentElement ?? document.body).appendChild(this.refEl)
-
         this.popover = new LinkPopover({
             onRemove: () => this.remove(),
             onSave: (href) => this.save(href),
@@ -77,6 +93,8 @@ class LinkPopoverView {
             onFocusChange: (focused) => { this.editing = focused },
         })
 
+        // A press outside the editor and the popover closes it (the popover's
+        // own `onPressOutside`); this hears the presses in the editor.
         this.onDocMouseDown = (e: MouseEvent) => {
             const t = e.target as Node | null
             // A fresh click in the editor clears any dismissal, so clicking a
@@ -88,12 +106,6 @@ class LinkPopoverView {
                 this.dismissed = false
                 requestAnimationFrame(() => { if (!this.editing) this.update(this.view) })
             }
-            if (this.mode === 'hidden') return
-            if (!t) return
-            if (this.popover.dom.contains(t)) return
-            if (this.view.dom.contains(t)) return // editor clicks → handled by update()
-            if (this.editing) this.cancel()
-            else this.hide()
         }
         document.addEventListener('mousedown', this.onDocMouseDown, true)
 
@@ -102,6 +114,10 @@ class LinkPopoverView {
         // it.
         this.onDocKeyDown = (e: KeyboardEvent) => {
             if (this.mode === 'hidden' || e.key !== 'Escape') return
+            // Only while the caret or the popover has focus: an Escape
+            // pressed in the file tree or a dialog is theirs.
+            const active = document.activeElement
+            if (!(this.view.dom.contains(active) || this.popover.dom.contains(active))) return
             e.preventDefault()
             e.stopPropagation()
             this.cancel()
@@ -142,7 +158,6 @@ class LinkPopoverView {
         this.popup?.destroy()
         this.popup = null
         this.popover.destroy()
-        this.refEl.remove()
     }
 
     // ── selection / link helpers ────────────────────────────────
@@ -175,8 +190,7 @@ class LinkPopoverView {
             } catch { /* fall through */ }
         }
         try {
-            const c = this.view.coordsAtPos(this.view.state.selection.from)
-            return new DOMRect(c.left, c.top, 1, Math.max(1, c.bottom - c.top))
+            return caretRect(this.view, this.view.state.selection.from)
         } catch {
             return new DOMRect()
         }
@@ -184,18 +198,13 @@ class LinkPopoverView {
 
     private ensurePopup() {
         if (this.popup) return
-        this.popup = tippy(this.refEl, {
-            getReferenceClientRect: () => this.getRect(),
-            appendTo: () => document.body,
-            content: this.popover.dom,
-            interactive: true,
-            trigger: 'manual',
+        this.popup = popover(this.view.dom, this.popover.dom, {
+            rect: () => this.getRect(),
             placement: 'top',
-            theme: 'ezco-mde-block-actions',
-            hideOnClick: false,
-            // Quick fade in, but close instantly when the caret leaves a link.
-            duration: [150, 0],
-        }) as TippyInstance
+            // A press in the editor is the editor's (`update` decides); one
+            // elsewhere dismisses it, or cancels an edit in progress.
+            onPressOutside: () => (this.editing ? this.cancel() : this.hide()),
+        })
     }
 
     // ── states ──────────────────────────────────────────────────
@@ -218,7 +227,7 @@ class LinkPopoverView {
         this.popup!.show()
         this.mode = 'shown'
         this.shownKey = key
-        if (reanchor) this.popup!.popperInstance?.forceUpdate()
+        if (reanchor) this.popup!.update()
     }
 
     /** Open the popover with its input focused — used by the selection menu's
@@ -296,9 +305,12 @@ export const LinkMenu = Extension.create<unknown, LinkMenuStorage>({
                         click: (_view, event) => {
                             if (!(event.metaKey || event.ctrlKey)) return false
                             const a = (event.target as HTMLElement | null)?.closest?.('a') as HTMLAnchorElement | null
-                            if (a?.href) {
+                            // The attribute as written (`a.href` is resolved
+                            // against the page, which a vault path is not).
+                            const href = a?.getAttribute('href')
+                            if (a && href && !a.hasAttribute('data-wikilink')) {
                                 event.preventDefault()
-                                openHref(a.href)
+                                followHref(editor, href)
                                 return true
                             }
                             return false
@@ -325,7 +337,7 @@ export const LinkMenu = Extension.create<unknown, LinkMenuStorage>({
             'Mod-Enter': () => {
                 const href = (this.editor.getAttributes('link').href as string | undefined) ?? ''
                 if (!href) return false
-                openHref(href)
+                followHref(this.editor, href)
                 return true
             },
         }

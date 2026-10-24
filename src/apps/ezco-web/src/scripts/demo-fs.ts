@@ -1,43 +1,21 @@
-import { CodeblockFS, SearchIndex, type VfsInterface } from "@joinezco/codeblock";
+import { browserVfs } from "@joinezco/storage/browser";
+import { type VfsInterface } from "@joinezco/storage";
+import { Vault } from "@joinezco/vault";
 import { files } from "../data/demo-files.js";
 
-// `SearchIndex.get` doesn't cache — each caller builds and saves a new
-// instance. Multiple consumers on the same page (our two demo codeblocks
-// plus every codeblock embedded inside the markdown-editor's content)
-// then concurrently call `fs.writeFile('.codeblock/index.json', ...)`,
-// which the OPFS worker's sync access handle rejects with
-// `NoModificationAllowedError`. Dedup by path here so all consumers
-// share one Promise<SearchIndex> and only one save races to the file.
-const _searchIndexOrigGet = SearchIndex.get.bind(SearchIndex);
-const _searchIndexCache = new Map<string, Promise<SearchIndex>>();
-(SearchIndex as { get: typeof SearchIndex.get }).get = ((
-    fs: VfsInterface,
-    path: string,
-) => {
-    let cached = _searchIndexCache.get(path);
-    if (!cached) {
-        cached = _searchIndexOrigGet(fs, path);
-        _searchIndexCache.set(path, cached);
-    }
-    return cached;
-}) as typeof SearchIndex.get;
-
-// Shared singleton for the `ezco-demo` OPFS bucket.
+// The `ezco-demo` vault (the origin's OPFS, through storage's workers) as
+// one Vault: one index behind every demo on the page (the codeblocks, the
+// editor and every codeblock embedded in it search the same one, and see each
+// other's files). With Astro's ClientRouter both demo pages can run their init
+// scripts in one session, so the vault is kept on `globalThis` and handed to
+// every later caller rather than indexed twice.
 //
-// `CodeblockFS.worker(undefined, "ezco-demo")` opens sync access handles in
-// the codeblock SharedWorker's OPFS layer; calling it twice in the same
-// document throws `NoModificationAllowedError` because the previous handles
-// haven't been released. With Astro's ClientRouter, both demo pages can run
-// their init scripts in a single session, so we keep one mounted fs on
-// `globalThis` and hand it to every subsequent caller.
-//
-// Seed errors are swallowed per-file so a partial failure (e.g. a single
-// locked handle) doesn't leave the cache holding a rejected Promise — the
-// fs itself is still usable for everything else.
+// Seed errors are swallowed per file so one failure doesn't leave the cache
+// holding a rejected Promise; the vault is still usable for everything else.
 
 declare global {
     // eslint-disable-next-line no-var
-    var __ezcoDemoFs: Promise<VfsInterface> | undefined;
+    var __ezcoDemoVault: Promise<Vault> | undefined;
 }
 
 async function seed(fs: VfsInterface) {
@@ -60,12 +38,13 @@ async function seed(fs: VfsInterface) {
     );
 }
 
-export function getDemoFs(): Promise<VfsInterface> {
-    if (globalThis.__ezcoDemoFs) return globalThis.__ezcoDemoFs;
-    const promise = CodeblockFS.worker(undefined, "ezco-demo").then(async (fs) => {
-        await seed(fs);
-        return fs;
+export function getDemoVault(): Promise<Vault> {
+    if (globalThis.__ezcoDemoVault) return globalThis.__ezcoDemoVault;
+    const promise = browserVfs("ezco-demo").then(async (store) => {
+        const vault = new Vault(store);
+        await seed(vault.fs);
+        return vault;
     });
-    globalThis.__ezcoDemoFs = promise;
+    globalThis.__ezcoDemoVault = promise;
     return promise;
 }

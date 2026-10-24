@@ -3,13 +3,15 @@ use crate::{
         Capability, CapabilityProvider, ConfigureError, Guest, GuestPlugin,
         Plugin as PluginResource, PluginError, PluginManifest, UserInput,
     },
-    witmproxy::plugin::capabilities::{CapabilityKind, CapabilityScope, Event, EventKind},
+    witmproxy::plugin::capabilities::{CapabilityKind, Event, EventKind},
 };
 
 wit_bindgen::generate!({
     world: "witmproxy:plugin/plugin",
     generate_all
 });
+
+use crate::ezco::ezcap::types::Scope;
 
 const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 
@@ -29,20 +31,23 @@ impl Guest for Component {
             capabilities: vec![
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Request),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
             ],

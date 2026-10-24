@@ -12,7 +12,7 @@
 import type { RemoteLspProvider, LspConnection, ClientOptions } from "@joinezco/codeblock";
 import type { Transport } from "./wrpc";
 import { requestProcessGrant } from "./wrpc";
-import { spawn } from "./generated/process";
+import { open, processSpawn } from "./generated/process";
 import { processLspTransport } from "./lsp-transport";
 
 /** How to launch one language server on the host. */
@@ -68,7 +68,11 @@ export function createWrpcLspProvider(config: WrpcLspConfig): RemoteLspProvider 
                 false,
                 `language server for ${opts.language} (${spec.image})`,
             );
-            const session = await spawn(config.transport, grant, args);
+            // The `process` object is the capability for this grant; it lives
+            // as long as the connection, like the server it runs.
+            const opened = await open(config.transport, grant);
+            if (opened.tag !== "ok") throw new Error(`process capability refused: ${opened.val}`);
+            const session = await processSpawn(config.transport, opened.val, args);
 
             return {
                 transport: processLspTransport(session),

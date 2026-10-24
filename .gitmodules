@@ -1,15 +1,9 @@
-[submodule "src/typescript/memfs"]
-	path = src/typescript/memfs
-	url = https://github.com/ezcorg/memfs
 [submodule "src/rust/hello-wasip3-http"]
 	path = src/rust/hello-wasip3-http
 	url = https://github.com/ezcorg/hello-wasip3-http
 [submodule "src/typescript/tiptap-markdown"]
 	path = src/typescript/tiptap-markdown
 	url = https://github.com/ezcorg/tiptap-markdown
-[submodule "src/rust/witmproxy-plugin-template-rust"]
-	path = src/rust/witmproxy-plugin-template-rust
-	url = https://github.com/ezcorg/witmproxy-plugin-template-rust
 [submodule "src/typescript/lsp-client"]
 	path = src/typescript/lsp-client
 	url = https://github.com/ezcorg/lsp-client
@@ -20,3 +14,6 @@
 	path = src/rust/conf-rs
 	url = https://github.com/ezcorg/conf-rs
 	branch = ezco
+[submodule "src/typescript/codemirror-json-schema"]
+	path = src/typescript/codemirror-json-schema
+	url = https://github.com/ezcorg/codemirror-json-schema

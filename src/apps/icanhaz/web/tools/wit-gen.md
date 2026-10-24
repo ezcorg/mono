@@ -5,6 +5,10 @@ interface. It's the TS counterpart to `wit-bindgen-wrpc` (which does this for
 Rust). Run:
 
     node tools/wit-gen.mjs ../wit broker src/generated/broker.ts
+    node tools/wit-gen.mjs ../wit wasi:filesystem@0.2.12/types src/generated/wasi-filesystem.ts
+
+The interface is a bare name when unique across the resolved packages, else
+qualified (`ns:pkg@ver/name`).
 
 ## How it works
 

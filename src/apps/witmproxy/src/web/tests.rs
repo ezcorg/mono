@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::db::Migrate as _;
 use crate::plugins::registry::PluginRegistry;
 use crate::test_utils::{create_ca_and_config, test_component_path};
 use crate::wasm::Runtime;
@@ -65,6 +66,79 @@ async fn test_plugin_upsert() -> Result<()> {
             .await
             .unwrap_or_else(|_| "Unable to read response body".to_string())
     );
+    Ok(())
+}
+
+/// PUT /api/plugins/{ns}/{name}/config sets a plugin's global configuration:
+/// a plugin that is not installed is 404, a setting the plugin does not
+/// declare is refused with the declared ones named, and nothing is written.
+#[tokio::test]
+async fn plugin_config_endpoint_refuses_what_the_plugin_does_not_declare() -> Result<()> {
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let (ca, config) = create_ca_and_config().await;
+    let temp_dir = tempdir().unwrap();
+    let db = Db::from_path(temp_dir.path().join("test.db"), "test_password")
+        .await
+        .unwrap();
+    db.migrate().await.unwrap();
+    let pool = db.pool.clone();
+    let runtime = Runtime::try_default().unwrap();
+    let plugin_registry = Arc::new(PluginRegistry::new(db, runtime)?);
+
+    let mut web_server = WebServer::new(ca.clone(), Some(plugin_registry), config);
+    web_server.start().await.unwrap();
+    let bind_addr = web_server.listen_addr().unwrap();
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()
+        .unwrap();
+
+    // Install the test component, which declares no settings.
+    let form = reqwest::multipart::Form::new()
+        .file("file", test_component_path()?)
+        .await
+        .unwrap();
+    let response = client
+        .post(format!("https://{}/api/plugins", bind_addr))
+        .multipart(form)
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_success());
+
+    let response = client
+        .put(format!(
+            "https://{}/api/plugins/ezco/nonexistent/config",
+            bind_addr
+        ))
+        .json(&serde_json::json!({"config": {"rules": "[]"}}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+
+    let response = client
+        .put(format!(
+            "https://{}/api/plugins/ezco/wasm-test-component/config",
+            bind_addr
+        ))
+        .json(&serde_json::json!({"config": {"rules": "[]"}}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("no setting named `rules`"), "{body}");
+    assert!(body.contains("declares: none"), "{body}");
+
+    let rows: Vec<(String,)> =
+        sqlx::query_as("SELECT input_name FROM plugin_configuration WHERE name = ?")
+            .bind("wasm-test-component")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(rows.is_empty(), "nothing was written: {rows:?}");
     Ok(())
 }
 

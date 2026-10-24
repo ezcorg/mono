@@ -1,5 +1,6 @@
 import { Node, mergeAttributes } from '@tiptap/core'
 import type { MarkdownNodeSpec } from 'tiptap-markdown'
+import { eachToken, setupOnce } from './markdown-it'
 
 /**
  * Paragraph with empty-paragraph round-tripping.
@@ -16,6 +17,8 @@ import type { MarkdownNodeSpec } from 'tiptap-markdown'
  * survives re-parsing as its own block; a markdown-it core rule then strips
  * that NBSP back out on load so the editor still sees a *truly* empty paragraph
  * (no stray whitespace to trip over when the user starts typing in it).
+ * Empty paragraphs at the very end of the document are not spacing and
+ * write nothing.
  */
 export const Paragraph = Node.create({
     name: 'paragraph',
@@ -56,7 +59,23 @@ export const Paragraph = Node.create({
     addStorage() {
         return {
             markdown: {
-                serialize(state, node) {
+                serialize(state, node, parent, index) {
+                    // Empty paragraphs after the last content are where the
+                    // caret sits at the end of the note, not spacing between
+                    // blocks: they write nothing (so a note emptied, or holding
+                    // only front matter, does not save a stray NBSP line).
+                    // The same goes for the top of a copied slice, whose
+                    // parent is a Fragment (no type): what is copied ends
+                    // with its last content, not a blank.
+                    const atTop = !parent || !('type' in parent) || parent.type.name === 'doc'
+                    if (node.content.size === 0 && atTop) {
+                        let trailing = true
+                        for (let i = index; i < parent.childCount && trailing; i++) {
+                            const next = parent.child(i)
+                            trailing = next.type === node.type && next.content.size === 0
+                        }
+                        if (trailing) return
+                    }
                     if (node.content.size === 0) {
                         // NBSP keeps an otherwise-empty paragraph from
                         // collapsing into adjacent blank lines on re-parse.
@@ -69,22 +88,18 @@ export const Paragraph = Node.create({
                     state.closeBlock(node)
                 },
                 parse: {
-                    setup(markdownit: any) {
-                        if (markdownit.__ezcoEmptyPara) return
-                        markdownit.__ezcoEmptyPara = true
+                    setup: (markdownit: any) => setupOnce(markdownit, 'emptyParagraph', () => {
                         // Reverse of the serializer: a paragraph that is just
                         // our NBSP marker becomes a truly empty paragraph. The
                         // separate block token still survives, so the blank line
                         // (the user's spacing) is preserved.
-                        markdownit.core.ruler.push('ezco_empty_paragraph', (state: any) => {
-                            for (const token of state.tokens) {
-                                if (token.type === 'inline' && token.content === '\u00A0') {
-                                    token.content = ''
-                                    token.children = []
-                                }
+                        eachToken(markdownit, 'ezco_empty_paragraph', 'inline', (token) => {
+                            if (token.content === '\u00A0') {
+                                token.content = ''
+                                token.children = []
                             }
                         })
-                    },
+                    }),
                 },
             } as MarkdownNodeSpec,
         }

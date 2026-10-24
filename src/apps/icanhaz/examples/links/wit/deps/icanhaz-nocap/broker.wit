@@ -1,0 +1,129 @@
+package icanhaz:nocap@0.1.0;
+
+/// The consent gate. Authority is never ambient: a caller must `request` a
+/// capability — which raises a consent decision on the host — and is issued an
+/// unforgeable bearer **grant** token (a secret + its caveats, recorded host-side
+/// as principal · kind · caveats · expiry). The capability interfaces then
+/// require that token. Grants are scoped and revocable. Built-in attenuators and
+/// policy components (the membrane) narrow what a grant actually permits.
+interface broker {
+  use types.{ capability-kind, denied, grant-info };
+  use ezco:ezcap/types@0.1.0.{ scope, capability };
+
+  /// A successful grant. `token` is the bearer to present when claiming/using the
+  /// capability. `pairing` is set only when the host *first* pairs this origin: a
+  /// durable, origin-bound secret the client stores (origin-partitioned) and
+  /// presents on later `request`s to skip re-consent. `none` once already paired
+  /// (or when there is no origin to pair, e.g. a non-browser peer).
+  record grant {
+    token: string,
+    pairing: option<string>,
+  }
+
+  /// Ask for authority. `pairing` is a previously-issued pairing secret for this
+  /// origin (or `none`); a valid one skips the consent prompt. Otherwise consent
+  /// is raised, and on approval the origin is paired (a new secret may be
+  /// returned) before the grant is issued.
+  request: func(want: capability-kind, reason: string, pairing: option<string>) -> result<grant, denied>;
+
+  /// `request` with an admission scope (`ezco:ezcap/types.scope`). The provider
+  /// parameters in `want` say what to instantiate (which roots, which image); the
+  /// scope says how calls on it may be used: `when` is checked at grant time and
+  /// `allow` before every operation, with `call.method`, `call.args.*`, `caller.*`
+  /// and `state.*` bound. The consent surface may append further clauses; it can
+  /// never remove one. A scope that does not compile against the capability's
+  /// interface is `denied(invalid-scope)`. `request` is this call with an
+  /// unrestricted scope.
+  request-scoped: func(want: capability-kind, scope: scope, reason: string, pairing: option<string>) -> result<grant, denied>;
+
+  /// Pledge-style self-narrowing: mint a child grant whose scope is this grant's
+  /// conjoined with `extra` (a field of `"true"` leaves that field unchanged).
+  /// The child inherits the parent's provider parameters, expiry and revocation;
+  /// revoking the parent revokes the child. No consent is raised: a holder may
+  /// always give authority away.
+  narrow: func(token: string, extra: scope) -> result<grant, denied>;
+
+  /// Who may redeem a certificate. Checked at `redeem` against what the
+  /// transport proved about the presenter: a browser's attested origin, or
+  /// the peer key a QUIC handshake authenticated.
+  variant audience {
+    /// Anyone holding it: a bearer.
+    any,
+    origin(string),
+    /// A peer's Ed25519 public key, base64url.
+    peer(string),
+  }
+
+  /// Turn a grant the caller holds into a **certificate**: a sturdy reference
+  /// to it, bound to `audience`, valid for `ttl-secs`, narrowed by `extra`
+  /// (`"true"` fields add nothing), signed by this broker. The certificate is
+  /// a string that travels: in a share bundle, a link, a message. It carries
+  /// no bearer secret; redeeming it at this broker yields a fresh grant.
+  /// Holders may append clauses offline (an `ezco:ezcap` link chain);
+  /// nothing can be removed. Revoking the source grant voids every
+  /// certificate on it.
+  certify: func(token: string, audience: audience, ttl-secs: u64, extra: scope) -> result<string, denied>;
+
+  /// Present a certificate. The broker verifies it was issued here, that the
+  /// chain's signatures hold, that it has not expired, and that the caller
+  /// is its audience; it then issues the caller a grant narrowed by every
+  /// clause in the chain, whose lifetime is the shorter of the source grant's
+  /// and the certificate's. No consent is raised: the human consented when
+  /// the source grant was issued, and the holder chose to share it.
+  redeem: func(cert: string) -> result<grant, denied>;
+
+  /// What the human decided about a capability another host asked on behalf
+  /// of its own caller (see `consent`).
+  record approval {
+    /// The requested scope conjoined with whatever the human appended.
+    scope: scope,
+    ttl-secs: u64,
+    remember: bool,
+  }
+
+  /// Ask the human on behalf of another host. `capability.kind` names a kind
+  /// this broker does not provide (`witmproxy:plugin/capabilities.logger`):
+  /// the human sees the kind, the scope as sentences and the reason, and may
+  /// append clauses. No grant is issued here; the caller enforces the
+  /// returned scope in its own store (and type-checks it there, since this
+  /// broker has no environment for a foreign kind). `summary` is the
+  /// caller's one-liner for the prompt; `requester` who is asking.
+  consent: func(capability: capability, summary: string, reason: string, requester: string) -> result<approval, denied>;
+
+  /// What a token the caller holds is: for a peer daemon that redeemed a
+  /// certificate here and proxies the grant to its own caller.
+  record grant-detail {
+    kind: capability-kind,
+    scope: scope,
+    expires-in-secs: u64,
+    summary: string,
+  }
+  inspect: func(token: string) -> result<grant-detail, denied>;
+
+  /// Where this broker can be reached by peers: `iroh:<identity>?addr=…`.
+  /// A share bundle carries it so a recipient's daemon can redeem here.
+  locator: func() -> string;
+
+  /// Redeem a certificate at another broker, named by locator, and hold the
+  /// resulting grant on the caller's behalf: the caller gets a token of this
+  /// broker's whose calls are forwarded to the issuer over the peer
+  /// transport. The certificate's audience must be this daemon's identity
+  /// (or anyone). Requires the peer transport to be up.
+  redeem-at: func(locator: string, cert: string) -> result<grant, denied>;
+
+  /// This broker's public key (base64url Ed25519): what a certificate's
+  /// issuer field must match, and how a peer audience names itself.
+  identity: func() -> string;
+
+  /// What the caller currently holds — for the audit view.
+  granted: func() -> list<grant-info>;
+
+  /// Drop a grant now (and anything attenuated from it).
+  revoke: func(token: string);
+}
+
+/// Loopback world for the native wRPC bridge (client stub + server Handler).
+world broker-wrpc {
+  import broker;
+  export broker;
+}

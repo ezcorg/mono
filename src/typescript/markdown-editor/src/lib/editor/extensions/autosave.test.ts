@@ -3,6 +3,7 @@ import { Editor } from '@tiptap/core'
 import StarterKit from '@tiptap/starter-kit'
 import { Markdown } from 'tiptap-markdown'
 import { FileSystem } from './filesystem'
+import { tick } from '../../../test/utils'
 
 /**
  * Autosave + file-navigation race.
@@ -36,8 +37,6 @@ function makeMockFs(initial: Files) {
     }
     return { fs, files, writes }
 }
-
-const tick = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 function makeEditor(fs: any, filepath: string, autoSave: boolean) {
     const el = document.createElement('div')
@@ -95,6 +94,34 @@ describe('FileSystem autosave / file navigation', () => {
         // written to README.
         expect(files['test.md']).toMatch(/Test edited/)
         expect(files['test.md']).not.toMatch(/Readme/)
+        expect(files['README.md']).toBe('# Readme\n')
+    })
+
+    it('keeps the last edits when the open file is opened again', async () => {
+        const { fs, files } = makeMockFs({ 'test.md': '# Test\n' })
+        ;({ editor, el } = makeEditor(fs, 'test.md', true))
+        await tick(150)
+
+        // Within the debounce, open the same file again (from the file tree, the palette).
+        editor!.commands.setContent('# Test edited\n')
+        await (editor!.storage as any).persistence.loadFile('test.md')
+
+        expect((editor!.storage as any).markdown.getMarkdown()).toMatch(/Test edited/)
+        await tick(700)
+        expect(files['test.md']).toMatch(/Test edited/)
+    })
+
+    it('keeps opening a file out of the undo history', async () => {
+        const { fs, files } = makeMockFs({ 'test.md': '# Test\n', 'README.md': '# Readme\n' })
+        ;({ editor, el } = makeEditor(fs, 'test.md', true))
+        await tick(150)
+        await (editor!.storage as any).persistence.loadFile('README.md')
+        // Undo must not bring back the file shown before (for autosave to write
+        // into this one), nor empty the file just opened.
+        editor!.commands.undo()
+        editor!.commands.undo()
+        expect((editor!.storage as any).markdown.getMarkdown()).toBe('# Readme')
+        await tick(700)
         expect(files['README.md']).toBe('# Readme\n')
     })
 

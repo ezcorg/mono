@@ -6,7 +6,8 @@
 # the wasm32-wasip2 plugin builds and ezfilter's Tauri Android builds keep working.
 [toolchain]
 channel = "stable"
-components = ["clippy", "rust-src", "rustfmt"]
+# rust-analyzer: icanhaz's LSP browser tests spawn it through the process capability.
+components = ["clippy", "rust-analyzer", "rust-src", "rustfmt"]
 targets = [
     "wasm32-wasip2",
     "wasm32-unknown-unknown",

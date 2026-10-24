@@ -1,0 +1,17 @@
+package example:reader@0.1.0;
+
+/// A novel capability that builds on the filesystem: it reads files under
+/// the filesystem grant delegated to it. Resource-shaped: the token once, at
+/// `open`; the object holds the root descriptor the delegated grant yields.
+interface reader {
+  resource reader {
+    /// The UTF-8 contents of `path`, relative to the delegated grant's root.
+    read: func(path: string) -> result<string, string>;
+  }
+  open: func(grant: string) -> result<reader, string>;
+}
+
+/// The wRPC client side, for the daemon's tests.
+world reader-client {
+  import reader;
+}

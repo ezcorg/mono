@@ -1,0 +1,47 @@
+{
+  "name": "@joinezco/storage",
+  "version": "0.0.1",
+  "description": "Folders of files behind one environment-agnostic contract: the VFS (text, bytes, directories, rename, watch), its implementations (memory, Node, the browser's OPFS, any of them over a message port), snapshots, file operations, and a per-file version log. No Markdown, no DOM outside /browser.",
+  "type": "module",
+  "sideEffects": [
+    "./dist/browser/*.worker.js"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./browser": {
+      "types": "./dist/browser/index.d.ts",
+      "import": "./dist/browser/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:run": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.5",
+    "@vitest/browser-playwright": "^4.1.11",
+    "playwright": "^1.63.0",
+    "typescript": "~5.9.3",
+    "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "@noble/hashes": "^1.8.0"
+  }
+}

@@ -20,7 +20,7 @@ use tauri_plugin_notification::NotificationExt as _;
 
 use icanhaz_host::approve::{PendingConsent, PendingRequest};
 use icanhaz_host::broker::{Consent, GrantStore, Hosts, Pairings};
-use icanhaz_host::daemon::DaemonConfig;
+use icanhaz_host::daemon::{DaemonConfig, Services};
 
 fn env_or(key: &str, default: &str) -> String {
     std::env::var(key).unwrap_or_else(|_| default.to_string())
@@ -58,23 +58,26 @@ fn daemon_config() -> DaemonConfig {
     let root = std::env::var("ICANHAZ_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir().join("icanhaz-demo-root"));
-    let fs_component = std::env::var("ICANHAZ_FS_COMPONENT").unwrap_or_else(|_| {
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../policies/fs-passthrough/target/wasm32-wasip2/debug/fs_passthrough.wasm"
-        )
-        .to_string()
-    });
     DaemonConfig {
         ws_bind: env_or("ICANHAZ_WS_BIND", "127.0.0.1:7777"),
         wt_bind: env_or("ICANHAZ_WT_BIND", "127.0.0.1:7778")
             .parse()
             .expect("invalid ICANHAZ_WT_BIND"),
         root,
-        fs_component: PathBuf::from(fs_component),
+        capabilities_dir: std::env::var("ICANHAZ_CAPABILITIES_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../capabilities")
+            }),
+        registry_bind: std::env::var("ICANHAZ_REGISTRY_BIND")
+            .ok()
+            .map(|b| b.parse().expect("invalid ICANHAZ_REGISTRY_BIND")),
         cert: std::env::var("ICANHAZ_CERT").ok(),
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label: "native consent window".to_string(),
+        iroh: std::env::var("ICANHAZ_IROH")
+            .map(|v| v != "0")
+            .unwrap_or(true),
     }
 }
 
@@ -85,6 +88,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             consent::list_pending,
             consent::decide,
+            consent::check_narrowing,
             consent::list_grants,
             consent::revoke_grant,
             consent::list_capabilities,
@@ -98,7 +102,11 @@ pub fn run() {
             consent::dismiss_error,
             consent::app_info,
             consent::clear_pairings,
-            consent::clear_hosts
+            consent::clear_hosts,
+            consent::list_configuration,
+            consent::list_components,
+            consent::set_configuration,
+            consent::remove_configuration
         ])
         .setup(|app| {
             // Tray: left-click summons the window; the menu offers Show + Quit.
@@ -158,9 +166,16 @@ pub fn run() {
             // port already in use) is visible instead of vanishing to stderr.
             let errors = consent::AppErrors::new();
             app.manage(errors.clone());
+            let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
+                // The store + configured capabilities: opened here so the
+                // settings surface (list/set/remove configuration) shares them
+                // with the daemon.
+                let services = Services::open().await;
+                handle.manage(services.clone());
                 if let Err(err) =
-                    icanhaz_host::daemon::run(config, grants, pairings, hosts, consent).await
+                    icanhaz_host::daemon::run(config, grants, pairings, hosts, consent, services)
+                        .await
                 {
                     errors.push(format!("daemon stopped: {err}"));
                 }

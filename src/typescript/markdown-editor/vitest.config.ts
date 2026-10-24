@@ -49,6 +49,10 @@ export default defineConfig({
     },
     // Resolve configuration for tests
     resolve: {
+        // One CodeMirror: the fork's own node_modules hold copies of these,
+        // and an extension made by another copy of @codemirror/state is not
+        // recognised by the editor's.
+        dedupe: ['@codemirror/state', '@codemirror/view', '@codemirror/language', '@codemirror/lint', '@codemirror/autocomplete', '@lezer/common', '@lezer/highlight'],
         alias: {
             '@': path.resolve(__dirname, './src'),
             '@/lib': path.resolve(__dirname, './src/lib'),
@@ -67,8 +71,15 @@ export default defineConfig({
     // Vite serves its source directly. Its transitive deps must be listed with
     // the "package > dep" syntax so Vite can resolve them through the excluded package.
     optimizeDeps: {
-        exclude: ['@joinezco/codeblock'],
+        exclude: ['@joinezco/codeblock', '@joinezco/storage', '@joinezco/vault', '@joinezco/config'],
         include: [
+            '@joinezco/config > yaml',
+            '@joinezco/config > zod',
+            // The settings file's schema support (the fork, a workspace
+            // package: pre-bundled only because it is named here), loaded
+            // when one is opened.
+            '@joinezco/codemirror-json-schema',
+            '@joinezco/codemirror-json-schema/yaml',
             '@joinezco/codeblock > @codemirror/autocomplete',
             '@joinezco/codeblock > @codemirror/commands',
             '@joinezco/codeblock > @codemirror/lang-cpp',
@@ -104,17 +115,28 @@ export default defineConfig({
             '@joinezco/codeblock > @lezer/highlight',
             '@joinezco/codeblock > @m234/nerd-fonts/fs',
             '@joinezco/codeblock > @volar/language-service',
+            // The TypeScript language server a code block starts in its worker:
+            // listed so the first file to open one does not trigger a
+            // re-optimize and reload mid-run.
+            '@joinezco/codeblock > @volar/language-server/browser',
+            '@joinezco/codeblock > volar-service-typescript',
+            '@joinezco/codeblock > vscode-languageserver/browser',
+            '@joinezco/codeblock > typescript',
             '@joinezco/codeblock > comlink',
             '@joinezco/codeblock > lodash',
-            '@joinezco/codeblock > minisearch',
+            '@joinezco/vault > markdown-it',
+            '@joinezco/vault > minisearch',
+            '@joinezco/storage > @noble/hashes/blake3',
+            '@joinezco/storage > @noble/hashes/utils',
             '@joinezco/codeblock > path-browserify',
             '@joinezco/codeblock > @marimo-team/codemirror-ai',
             '@joinezco/codeblock > vscode-languageserver-protocol',
-            '@joinezco/codeblock > @jsonjoy.com/json-pack/lib/cbor/CborDecoder',
-            '@joinezco/codeblock > @jsonjoy.com/json-pack/lib/cbor/CborEncoder',
-            '@joinezco/codeblock > @jsonjoy.com/util/lib/buffers/Writer',
             '@joinezco/codeblock > @codemirror/lsp-client > marked',
-            'multimatch',
+            // Loaded lazily by the math and front-matter views: listed so the
+            // first test to show a formula or a property table does not
+            // trigger a re-optimize and reload mid-run.
+            'katex',
+            'yaml',
         ],
     },
     // Server configuration for tests

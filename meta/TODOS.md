@@ -56,6 +56,7 @@
 
 ## Simple
 
+- [ ] **Bug (filter bypass): intercepted requests are forwarded to the `Host` header's host, not the SNI host, and the two are never compared.** `run_tls_mitm` (`src/apps/witmproxy/src/proxy/mod.rs`) mints the client-facing certificate for the SNI/CONNECT authority, but each decrypted request goes upstream to the URL built from its own `Host`/`:authority` (`convert_hyper_request_to_reqwest`, `proxy/utils.rs:192`). A client that trusts witm's CA can send `SNI=allowed.com` with `Host: evil.com`: witm mints for `allowed.com` and forwards to `evil.com`. Policy expressed at the `connect` level (CEL on `connect.host()`, which is also what decides whether to MITM at all) is bypassed; request-level CEL still sees `evil.com`. Affects both explicit (CONNECT) and transparent mode, since both share `run_tls_mitm`. Fix: pass the SNI/CONNECT host into the per-request service and answer `421 Misdirected Request` (RFC 9110 §15.5.20) when the request's authority host differs. Legitimate clients never hit it: the minted certificate covers only the SNI name, so HTTP/2 connection coalescing cannot put another origin on that connection. Add an e2e test for the mismatch (expect 421, and no upstream connection to the `Host` target). Found 2026-09-22 while evaluating witm as an egress filter for a rig VM.
 - [ ] Investigate whether it's currently possible to emit structured logs/traces with our existing logging infrastructure
 
 ## Medium

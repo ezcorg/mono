@@ -10,13 +10,15 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager as _, State};
 
 use icanhaz_host::approve::{Approval, PendingConsent};
 use icanhaz_host::broker::{
-    CapabilityKind, FsRequest, FsRights, GrantStore, GrantView, Hosts, Pairings, PathGrant,
-    ProcessRequest, TerminalRequest,
+    CapabilityKind, FsRequest, FsRights, GrantStore, GrantView, Hosts, InferenceRequest, Pairings,
+    PathGrant, ProcessRequest, ScopeText, TerminalRequest, Want,
 };
+use icanhaz_host::configuration::{Declared, Instance, UserInput};
+use icanhaz_host::daemon::Services;
 
 /// Reflect the pending-request count on the tray (menubar badge + tooltip). Driven by
 /// a backend poll loop (see `lib.rs`) so it stays correct even when the window is hidden
@@ -55,6 +57,27 @@ pub enum CapabilityDto {
         endpoints: Vec<String>,
         may_listen: bool,
     },
+    /// LLM inference; `models` empty = any model the host has configured. The
+    /// human may narrow the list; token budgets live in the grant's scope.
+    Inference {
+        models: Vec<String>,
+    },
+    /// A kind another host asked about on behalf of its caller (witmproxy's
+    /// plugin capabilities): known by path, narrowed only through the scope.
+    Foreign {
+        path: String,
+        summary: String,
+    },
+    /// A capability a store component provides: the interface, and the
+    /// component the requester suggested (a store hash), if any.
+    Component {
+        provides: String,
+        provider: Option<String>,
+        /// Grants the requester lends the component for what it imports.
+        delegated: Vec<String>,
+        /// Where the provider was to be fetched from, if the request said.
+        source: Option<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -70,6 +93,18 @@ pub struct FsRightsDto {
     pub create: bool,
     pub delete: bool,
     pub watch: bool,
+}
+
+impl From<&Want> for CapabilityDto {
+    fn from(w: &Want) -> Self {
+        match w {
+            Want::Native(k) => CapabilityDto::from(k),
+            Want::Foreign { kind, summary } => CapabilityDto::Foreign {
+                path: kind.clone(),
+                summary: summary.clone(),
+            },
+        }
+    }
 }
 
 impl From<&CapabilityKind> for CapabilityDto {
@@ -100,6 +135,9 @@ impl From<&CapabilityKind> for CapabilityDto {
                 shell: t.shell.clone(),
                 jailed: t.jailed,
             },
+            CapabilityKind::Inference(i) => CapabilityDto::Inference {
+                models: i.models.clone(),
+            },
             CapabilityKind::Sockets(s) => CapabilityDto::Sockets {
                 endpoints: s
                     .allow
@@ -107,6 +145,12 @@ impl From<&CapabilityKind> for CapabilityDto {
                     .map(|e| format!("{}:{}-{} ({:?})", e.host, e.lo_port, e.hi_port, e.proto))
                     .collect(),
                 may_listen: s.may_listen,
+            },
+            CapabilityKind::Component(c) => CapabilityDto::Component {
+                provides: c.provides.clone(),
+                provider: c.provider.clone(),
+                delegated: c.delegated.clone(),
+                source: c.source.clone(),
             },
         }
     }
@@ -156,8 +200,50 @@ impl CapabilityDto {
             CapabilityDto::Terminal { shell, jailed } => {
                 Some(CapabilityKind::Terminal(TerminalRequest { shell, jailed }))
             }
-            CapabilityDto::Sockets { .. } => None,
+            CapabilityDto::Inference { models } => {
+                Some(CapabilityKind::Inference(InferenceRequest { models }))
+            }
+            CapabilityDto::Component {
+                provides,
+                provider,
+                delegated,
+                source,
+            } => Some(CapabilityKind::Component(
+                icanhaz_host::broker::ComponentRequest {
+                    provides,
+                    provider,
+                    delegated,
+                    source,
+                },
+            )),
+            CapabilityDto::Sockets { .. } | CapabilityDto::Foreign { .. } => None,
         }
+    }
+}
+
+/// `ezco:ezcap` scope on the IPC: the raw CEL, for the window to show on
+/// request, next to its sentences.
+#[derive(Serialize, Deserialize, Clone)]
+pub struct ScopeDto {
+    pub when: String,
+    pub allow: String,
+}
+
+/// Clauses the human adds to a request's scope. Either field may be blank.
+#[derive(Deserialize, Clone, Default)]
+pub struct NarrowingDto {
+    pub when: Option<String>,
+    pub allow: Option<String>,
+}
+
+impl NarrowingDto {
+    fn into_narrowing(self) -> Option<ezcap::Narrowing> {
+        let clean = |s: Option<String>| s.map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+        let n = ezcap::Narrowing {
+            when: clean(self.when),
+            allow: clean(self.allow),
+        };
+        (n.when.is_some() || n.allow.is_some()).then_some(n)
     }
 }
 
@@ -169,25 +255,58 @@ pub struct PendingDto {
     pub summary: String,
     pub reason: String,
     pub capability: CapabilityDto,
+    pub scope: ScopeDto,
+    /// The scope as sentences; both lists empty for an unrestricted request.
+    pub text: ScopeText,
+    /// Store components that could provide this grant (their exports match
+    /// an interface the kind is used through); the human may pick some.
+    pub offers: Vec<icanhaz_host::components::ComponentInfo>,
 }
 
 /// The requests currently awaiting a decision (the window polls this). Also refreshes
 /// the tray badge, so the menubar count tracks the live poll.
 #[tauri::command]
-pub fn list_pending(app: AppHandle, pending: State<'_, PendingConsent>) -> Vec<PendingDto> {
-    let out: Vec<PendingDto> = pending
-        .list()
-        .into_iter()
-        .map(|r| PendingDto {
+pub async fn list_pending(
+    app: AppHandle,
+    pending: State<'_, PendingConsent>,
+) -> Result<Vec<PendingDto>, ()> {
+    let store = app
+        .try_state::<Services>()
+        .map(|s| Arc::clone(&s.components));
+    let components = match &store {
+        Some(store) => store.list().await,
+        None => Vec::new(),
+    };
+    let mut out: Vec<PendingDto> = Vec::new();
+    for r in pending.list() {
+        // Store components that can provide this grant: for a native kind,
+        // those exporting an interface the kind is used through (derived from
+        // the components consuming that kind's gate); for a component kind,
+        // those exporting the interface itself.
+        let mut offers = Vec::new();
+        if let (Some(kind), Some(store)) = (r.want.native(), &store) {
+            for c in &components {
+                if store.offers(kind, c).await {
+                    offers.push(c.clone());
+                }
+            }
+        }
+        out.push(PendingDto {
             id: r.id,
             requester: r.requester,
             summary: r.summary,
             reason: r.reason,
             capability: (&r.want).into(),
-        })
-        .collect();
+            text: ScopeText::of(&r.scope),
+            scope: ScopeDto {
+                when: r.scope.when,
+                allow: r.scope.allow,
+            },
+            offers,
+        });
+    }
     set_tray_badge(&app, out.len());
-    out
+    Ok(out)
 }
 
 /// Every live grant, for the app's audit view.
@@ -214,19 +333,56 @@ pub struct CapabilityView {
     pub id: String,
     pub icon: String,
     pub description: String,
+    /// The interfaces a grant of this kind is used through, derived from the
+    /// components in the store that consume its gate.
+    pub interfaces: Vec<String>,
+    /// The store components that can provide a grant of this kind (the
+    /// shipped one, and any wrapper exporting one of its interfaces).
+    pub served_by: Vec<icanhaz_host::components::ComponentInfo>,
+    /// Whether this capability declares configuration to fill in.
+    pub configurable: bool,
 }
 
-/// The installed host capabilities, described in `lang` (else the host locale).
+/// The installed host capabilities, described in `lang` (else the host
+/// locale), with what the store knows about each.
 #[tauri::command]
-pub fn list_capabilities(lang: Option<String>) -> Vec<CapabilityView> {
-    icanhaz_host::capabilities::registry()
-        .iter()
-        .map(|c| CapabilityView {
+pub async fn list_capabilities(app: AppHandle, lang: Option<String>) -> Vec<CapabilityView> {
+    let services = app.try_state::<Services>();
+    let components = match &services {
+        Some(s) => s.components.list().await,
+        None => Vec::new(),
+    };
+    let declared: Vec<String> = match &services {
+        Some(s) => s
+            .registry
+            .declared()
+            .await
+            .into_iter()
+            .map(|d| d.capability)
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut out = Vec::new();
+    for c in icanhaz_host::capabilities::registry() {
+        let interfaces = match &services {
+            Some(s) => s.components.interfaces_of(c.id).await,
+            None => Vec::new(),
+        };
+        let served_by = components
+            .iter()
+            .filter(|info| info.exports.iter().any(|e| interfaces.contains(e)))
+            .cloned()
+            .collect();
+        out.push(CapabilityView {
             id: c.id.to_string(),
             icon: c.icon.to_string(),
             description: c.describe(lang.as_deref()).to_string(),
-        })
-        .collect()
+            interfaces,
+            served_by,
+            configurable: declared.iter().any(|d| d == c.id),
+        });
+    }
+    out
 }
 
 /// A site with durable pairing trust: origin + the capability kinds it covers.
@@ -360,6 +516,82 @@ pub fn app_info() -> AppInfo {
     }
 }
 
+/// One declared configuration and what is configured against it, for the
+/// capabilities tab: the schema renders as a form, the instances as rows.
+#[derive(Serialize)]
+pub struct ConfigurationView {
+    #[serde(flatten)]
+    pub declared: Declared,
+    pub icon: String,
+    pub instances: Vec<Instance>,
+    /// Whether writes can persist (false while the store is unavailable).
+    pub writable: bool,
+}
+
+/// Every declared configuration with its instances (secrets masked). Empty
+/// until the daemon's services are up.
+#[tauri::command]
+pub async fn list_configuration(app: AppHandle) -> Result<Vec<ConfigurationView>, String> {
+    let Some(services) = app.try_state::<Services>() else {
+        return Ok(Vec::new());
+    };
+    let writable = services.store.is_some();
+    let all = services.configuration().await.map_err(|e| e.to_string())?;
+    Ok(all
+        .into_iter()
+        .map(|(declared, instances)| ConfigurationView {
+            icon: icanhaz_host::capabilities::icon_for(&declared.capability).to_string(),
+            declared,
+            instances,
+            writable,
+        })
+        .collect())
+}
+
+/// The capability components in the store, by hash (the Capabilities tab).
+#[tauri::command]
+pub async fn list_components(
+    app: AppHandle,
+) -> Result<Vec<icanhaz_host::components::ComponentInfo>, String> {
+    let Some(services) = app.try_state::<Services>() else {
+        return Ok(Vec::new());
+    };
+    Ok(services.components.list().await)
+}
+
+/// Create or update one configured instance from the form's inputs.
+#[tauri::command]
+pub async fn set_configuration(
+    app: AppHandle,
+    capability: String,
+    instance: String,
+    inputs: Vec<UserInput>,
+) -> Result<(), String> {
+    let Some(services) = app.try_state::<Services>() else {
+        return Err("the daemon is still starting".to_string());
+    };
+    services
+        .configure(&capability, &instance, &inputs)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Remove one configured instance.
+#[tauri::command]
+pub async fn remove_configuration(
+    app: AppHandle,
+    capability: String,
+    instance: String,
+) -> Result<bool, String> {
+    let Some(services) = app.try_state::<Services>() else {
+        return Err("the daemon is still starting".to_string());
+    };
+    services
+        .unconfigure(&capability, &instance)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 /// Forget every remembered site (durable pairings).
 #[tauri::command]
 pub fn clear_pairings(pairings: State<'_, Arc<Mutex<Pairings>>>) {
@@ -375,18 +607,26 @@ pub fn clear_hosts(hosts: State<'_, Arc<Mutex<Hosts>>>) {
 /// Resolve a parked request. `allow=false` denies; otherwise approve with the optional
 /// attenuated `grant` (null ⇒ as-requested), the "remember this site" choice, and TTL.
 /// Returns whether a request matched (false ⇒ it already timed out / was resolved).
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a Tauri command's parameters are its IPC interface: the consent dialog sends each of these by name"
+)]
 #[tauri::command]
 pub fn decide(
     pending: State<'_, PendingConsent>,
     id: String,
     allow: bool,
     grant: Option<CapabilityDto>,
+    narrowing: Option<NarrowingDto>,
+    via: Option<Vec<String>>,
     remember: bool,
     ttl_secs: u64,
 ) -> bool {
     let decision = if allow {
         Some(Approval {
             grant: grant.and_then(CapabilityDto::into_capability),
+            narrowing: narrowing.and_then(NarrowingDto::into_narrowing),
+            via: via.unwrap_or_default(),
             remember,
             ttl_secs,
         })
@@ -394,6 +634,31 @@ pub fn decide(
         None
     };
     pending.resolve(&id, decision)
+}
+
+/// Check the clauses the human is typing against the pending request's kind:
+/// the resulting scope's sentences when it compiles, else the error to show.
+/// Nothing is granted here; `decide` applies the narrowing.
+#[tauri::command]
+pub fn check_narrowing(
+    pending: State<'_, PendingConsent>,
+    grants: State<'_, Arc<Mutex<GrantStore>>>,
+    id: String,
+    narrowing: NarrowingDto,
+) -> Result<ScopeText, String> {
+    let Some(req) = pending.list().into_iter().find(|r| r.id == id) else {
+        return Err("that request is no longer pending".to_string());
+    };
+    let scope = match narrowing.into_narrowing() {
+        Some(extra) => req.scope.narrowed(&extra),
+        None => req.scope,
+    };
+    // A foreign kind has no environment here: the asking host type-checks
+    // the scope when it enforces it; only the sentences can be shown.
+    if let Some(kind) = req.want.native() {
+        grants.lock().unwrap().check_scope(kind, &scope)?;
+    }
+    Ok(ScopeText::of(&scope))
 }
 
 #[cfg(test)]

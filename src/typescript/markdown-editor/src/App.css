@@ -1,38 +1,31 @@
-@font-face {
-  font-family: "Source Serif 4";
-  src: url("/fonts/Source_Serif_4/SourceSerif4-VariableFont_opsz,wght.ttf") format("truetype-variations");
-  font-weight: 200 900;
-  font-style: normal;
-}
-
-@font-face {
-  font-family: "Source Serif 4";
-  src: url("/fonts/Source_Serif_4/SourceSerif4-Italic-VariableFont_opsz,wght.ttf") format("truetype-variations");
-  font-weight: 200 900;
-  font-style: italic;
-}
-
 /* ──────────────────────────────────────────────────────────────
-   Dev preview page: a neutral "desktop" so the simulated windows
-   read as floating app windows. Two variants are shown one at a
-   time via the toggle: the DEFAULT (out-of-the-box library look)
-   and a CUSTOM theme (showing how far a consumer can take it).
+   Dev preview page: a neutral "desktop" so the simulated window
+   reads as a floating app window around the editor as it ships.
    ────────────────────────────────────────────────────────────── */
+/* Both may shrink below their content's widest part (the page's body is a
+   flex row): without `min-width: 0` the editor's row would widen the window
+   past the viewport instead of the comments panel giving way to the note. */
+#root {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
 .dev-page {
   min-height: 100vh;
+  min-width: 0;
   box-sizing: border-box;
   padding: 20px 20px 96px;
   font-family: system-ui, -apple-system, Avenir, Helvetica, Arial, sans-serif;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 
 .dev-header,
-.dev-note,
 .mac-window,
 .dev-output {
   width: 100%;
-  /* Roomier than the editor-only width so the outline sidebar + editor both
-     have comfortable space. */
-  max-width: 980px;
   margin-left: auto;
   margin-right: auto;
 }
@@ -43,7 +36,7 @@
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
-  margin-bottom: 4px;
+  margin-bottom: 20px;
 }
 
 .dev-title {
@@ -66,48 +59,20 @@
   letter-spacing: 0.06em;
 }
 
-/* macOS-style segmented control */
-.variant-toggle {
-  display: inline-flex;
-  padding: 2px;
-  background: rgba(0, 0, 0, 0.06);
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  border-radius: 9px;
-}
-
-.variant-toggle button {
-  appearance: none;
-  border: none;
-  background: transparent;
-  padding: 5px 16px;
-  font: inherit;
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.6);
-  border-radius: 7px;
-  cursor: pointer;
-  transition: background-color 120ms ease, color 120ms ease;
-}
-
-.variant-toggle button.is-active {
-  background: #fff;
-  color: #000;
-  font-weight: 600;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
-}
-
-.dev-note {
-  margin: 0 auto 20px;
-  font-size: 13px;
-  color: rgba(0, 0, 0, 0.5);
-}
-
 /* ──────────────────────────────────────────────────────────────
    Simulated macOS window
    ────────────────────────────────────────────────────────────── */
+/* The window takes the page's width, and is resized by its edges (App.tsx
+   sets `--mac-window-width` while dragging; a double-click on an edge gives
+   the width back). Centred, so both edges move. */
 .mac-window {
+  position: relative;
+  width: var(--mac-window-width, 100%);
+  max-width: 100%;
+  min-width: 480px;
   display: flex;
   flex-direction: column;
-  height: min(72vh, 660px);
+  height: min(78vh, 900px);
   /* Follow the editor's theme so dark mode is cohesive (the editor itself is
      transparent and renders over this surface). */
   background: var(--ezco-mde-bg, #fff);
@@ -278,54 +243,62 @@
   overflow-y: auto;
 }
 
-/* Flex row INSIDE the scroller. It grows to the editor's full (scroll) height,
-   so the sticky sidebar column stays pinned while the document scrolls — a flex
-   item placed directly in the scroller is instead clipped to the scroller's
-   client box (one viewport) and scrolls out of view. */
-.mac-body-row {
-  display: flex;
-  flex-direction: row;
-  min-height: 100%;
-}
-
-/* Left outline column. Stretches to the row's full height (default
-   `align-items: stretch`) so the sidebar's sticky <nav> can stay pinned. */
-.mac-sidebar {
-  flex: none;
-}
-
-.mac-sidebar:has(.ezco-mde-sidebar--empty) {
-  display: none;
-}
-
-/* Editor column. The library's `.ezco-mde` wrapper — which now owns the
-   block-action gutter and the editable — renders inside it; `display: flex`
-   lets that wrapper fill the column's height. A small right inset balances the
-   layout. */
+/* Editor column. The library's `.ezco-mde` wrapper — its rail, the
+   block-action gutter, the editable and the comments — renders inside it;
+   `display: flex` lets that wrapper fill the column's height. */
 .mac-editor {
   flex: 1;
   min-width: 0;
+  min-height: 100%;
   display: flex;
 }
 
-/* Editor element fills the inset body; its own padding lives on .ezco-mde
-   (top/bottom only — horizontal insets come from .mac-body) so the focus
-   ring hugs the text and the left text column aligns with the gutter. */
+/* Editor element fills the inset body; its vertical padding lives here
+   (horizontal insets come from .mac-body, and the note keeps the editor's
+   own 4px before its text, which the block indicator's spacing is set
+   against) so the focus ring hugs the text. */
 .mac-body .ezco-mde-body {
-  padding: 10px 0;
+  padding-top: 10px;
+  padding-bottom: 10px;
   outline: none;
 }
 
-.mac-window--custom .mac-body .ezco-mde-body {
-  font-family: "Source Serif 4", system-ui, Georgia, serif;
+/* The window's resizable edges: a strip at each side, the pointer an
+   east-west arrow over it, a hairline while it is held. */
+.mac-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 10px;
+  cursor: ew-resize;
+  z-index: 6;
+  touch-action: none;
 }
 
-/* In the Custom variant the outline adopts the document's serif, so the table
-   of contents reads in the same voice as the prose it maps. The library's
-   `.ezco-mde-sidebar` sets its own `font-family` (Inter), so override it on the
-   nav itself (an ancestor font-family wouldn't win against that explicit rule). */
-.mac-window--custom .mac-sidebar .ezco-mde-sidebar {
-  font-family: "Source Serif 4", system-ui, Georgia, serif;
+.mac-resize--left { left: -5px; }
+.mac-resize--right { right: -5px; }
+
+.mac-resize::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 4px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--ezco-mde-accent, #2490e9);
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.mac-resize:hover::after,
+.mac-resize.is-held::after {
+  opacity: 0.7;
+}
+
+.dev-page.is-resizing {
+  cursor: ew-resize;
+  user-select: none;
 }
 
 /* ── Live markdown output (QA aid) ── */

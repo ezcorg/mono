@@ -21,8 +21,10 @@ futures = "0.3"
 # in the vendored wrpc workspace) — a version/source mismatch across the
 # path-dep boundary yields two incompatible `wasmtime` crates and the
 # component-model types won't unify.
-wasmtime = { version = "48", features = ["async", "component-model", "cranelift", "runtime"] }
+wasmtime = { version = "48", features = ["async", "component-model", "component-model-async", "component-model-bytes", "cranelift", "runtime"] }
 wasmtime-wasi = { version = "48", features = ["p2"] }
+# Opening a grant's root directory on the host for `jail.open` (what wasmtime-wasi uses for preopens).
+cap-primitives = "4"
 
 # Vendored wrpc (submodule at src/rust/wrpc), referenced by path. Its own
 # [workspace] governs these crates; the mono workspace excludes that subtree.
@@ -33,6 +35,10 @@ wrpc-wasmtime = { path = "../../../../src/rust/wrpc/crates/wasmtime" }
 wrpc-websockets = { path = "../../../../src/rust/wrpc/crates/websockets", features = ["ring", "rand"] }
 wit-bindgen-wrpc = { path = "../../../../src/rust/wrpc/crates/wit-bindgen" }
 wrpc-webtransport = { path = "../../../../src/rust/wrpc/crates/webtransport" }
+# The peer path: wRPC over iroh QUIC, the remote endpoint id authenticated by
+# the handshake and handed to every invocation as its context.
+wrpc-transport-iroh = { path = "../../../rust/wrpc-transport-iroh" }
+iroh = "1"
 wtransport = { version = "0.7.0", features = ["self-signed"] }
 portable-pty = "0.8"
 tokio-stream = "0.1"
@@ -40,6 +46,30 @@ tokio-util = { version = "0.7", features = ["io"] }
 bytes = "1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1", features = ["v4"] }
+# Decoding the Basic credential the served registry checks.
+base64 = "0.22"
+# The consent broker as a library: grant store, certificates, consent, store.
+icanhaz-broker = { path = "../broker" }
+# The shared capability scope model (ezco:ezcap): per-call admission membranes.
+ezcap = { path = "../../../rust/ezcap" }
+# The encrypted store's key sources (tests open temp stores).
+ezdb = { path = "../../../rust/ezdb" }
+# Inference providers over HTTP (OpenAI-compatible, Anthropic).
+reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
+# Component inspection (the Tier 3 validator) and the content-addressed store.
+wit-parser = { version = "0.244", features = ["decoding"] }
+sha2 = "0.10"
+# The `icanhaz` CLI (capability authoring) and composition with wac.
+clap = { version = "4.5", features = ["derive", "env"] }
+wac-graph = "0.11"
+wac-types = "0.11"
+# Pulling components from OCI registries (`oci://…`), the way wkg and wassette publish them.
+oci-wasm = { version = "0.6", default-features = false, features = ["rustls-tls"] }
+oci-client = { version = "0.17", default-features = false, features = ["rustls-tls"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+hyper = { version = "1", features = ["server", "http1"] }
+docker_credential = "1"
 
 [dev-dependencies]
 tempfile = "3"

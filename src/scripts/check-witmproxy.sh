@@ -5,6 +5,9 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 LINT=${LINT:-1}
 command -v wasmsign2 >/dev/null || cargo install wasmsign2-cli
+# witmproxy builds icanhaz-broker (plugin capabilities are grants in its store), whose build script
+# resolves icanhaz's WIT: its deps are fetched, not committed.
+src/apps/icanhaz/scripts/fetch-wit.sh
 if [ "$LINT" = 1 ]; then
   cargo fmt --all --check
   cargo clippy --package witmproxy --all-targets -- -D warnings

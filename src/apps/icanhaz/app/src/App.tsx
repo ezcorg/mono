@@ -8,13 +8,86 @@ type Capability =
   | { kind: "filesystem"; roots: PathGrant[] }
   | { kind: "process"; image: string; args: string[]; guest_chooses_argv: boolean }
   | { kind: "terminal"; shell: string | null; jailed: boolean }
-  | { kind: "sockets"; endpoints: string[]; may_listen: boolean };
-type Pending = { id: string; requester: string; summary: string; reason: string; capability: Capability };
+  | { kind: "sockets"; endpoints: string[]; may_listen: boolean }
+  | { kind: "inference"; models: string[] }
+  | { kind: "foreign"; path: string; summary: string }
+  | { kind: "component"; provides: string; provider: string | null; delegated: string[]; source: string | null };
+type ScopeText = { when: string[]; allow: string[] };
+type Pending = {
+  id: string;
+  requester: string;
+  summary: string;
+  reason: string;
+  capability: Capability;
+  scope: { when: string; allow: string };
+  text: ScopeText;
+  offers: ComponentInfo[];
+};
 // Mirror the Rust command DTOs.
-type GrantView = { id: string; holder: string; summary: string; icon: string; expires_in_secs: number };
-type CapabilityView = { id: string; icon: string; description: string };
+type GrantView = { id: string; holder: string; summary: string; via: string[]; icon: string; expires_in_secs: number };
+type CapabilityView = {
+  id: string;
+  icon: string;
+  description: string;
+  interfaces: string[];
+  served_by: ComponentInfo[];
+  configurable: boolean;
+};
+/** What the Capabilities tab is showing: the list, one native capability, one
+ *  store component, or one configuration another host declared here. */
+type Page = { view: "list" } | { view: "capability"; id: string } | { view: "component"; hash: string } | { view: "foreign"; id: string };
+/** Configuration that belongs to Settings rather than to a capability. */
+const SETTINGS_CONFIG = new Set(["registry", "registries"]);
+/** The grant kinds a store component serves, read off the gates it imports. */
+const servesKinds = (c: ComponentInfo): string[] =>
+  c.imports.flatMap((i) => {
+    const m = /^icanhaz:nocap\/gate-([a-z]+)@/.exec(i);
+    return m ? [m[1]!] : [];
+  });
+const shortIface = (x: string) => x.replace(/@.*$/, "");
+// Mirrors `icanhaz_host::configuration` (ezco:ezcap/forms as JSON): a unit input
+// type is its name, `select` carries its options; values are externally tagged.
+type InputType = "str" | "boolean" | "number" | "datetime" | "daterange" | "file" | "binary" | "secret" | { select: string[] };
+type Value =
+  | { str: string }
+  | { boolean: boolean }
+  | { number: number }
+  | { select: string }
+  | { datetime: string }
+  | { daterange: [string, string] }
+  | { secret: string };
+type Field = { name: string; input_type: InputType; optional: boolean; default: Value | null; description: string | null };
+type Configured = { name: string; value: Value | null; set: boolean };
+type Instance = { name: string; owner: string; values: Configured[] };
+type ConfigurationView = {
+  capability: string;
+  instance_noun: string;
+  owner_prefix: string;
+  single: boolean;
+  fields: Field[];
+  description: string | null;
+  icon: string;
+  instances: Instance[];
+  writable: boolean;
+};
 type SiteView = { origin: string; kinds: string[] };
 
+type Provenance = { source: string; revision: string | null; build: string | null; builder: string | null };
+type ComponentInfo = {
+  hash: string;
+  name: string | null;
+  size: number;
+  imports: string[];
+  exports: string[];
+  added: number;
+  provenance: Provenance | null;
+  reproducible: boolean;
+};
+/** Where a component came from, for the human deciding whether to run it. */
+const origin = (c: ComponentInfo): string =>
+  c.provenance
+    ? `${c.provenance.source}${c.provenance.revision ? ` @ ${c.provenance.revision.replace(/^sha256:/, "").slice(0, 12)}` : ""}${c.reproducible ? " · reproducible" : ""}`
+    : "no provenance";
 type ErrorEntry = { id: number; message: string };
 type AppInfo = { version: string; ws: string; wt: string; root: string };
 
@@ -35,6 +108,7 @@ type FsCap = Extract<Capability, { kind: "filesystem" }>;
 type ProcCap = Extract<Capability, { kind: "process" }>;
 type TermCap = Extract<Capability, { kind: "terminal" }>;
 type SockCap = Extract<Capability, { kind: "sockets" }>;
+type InfCap = Extract<Capability, { kind: "inference" }>;
 
 const RIGHTS: (keyof FsRights)[] = ["read", "write", "create", "delete", "watch"];
 const TTLS: [string, number][] = [
@@ -48,6 +122,8 @@ export function App() {
   const [pending, setPending] = createSignal<Pending[]>([]);
   const [grants, setGrants] = createSignal<GrantView[]>([]);
   const [caps, setCaps] = createSignal<CapabilityView[]>([]);
+  const [config, setConfig] = createSignal<ConfigurationView[]>([]);
+  const [components, setComponents] = createSignal<ComponentInfo[]>([]);
   const [sites, setSites] = createSignal<SiteView[]>([]);
   const [approvedHosts, setApprovedHosts] = createSignal<string[]>([]);
   const [unknownHosts, setUnknownHosts] = createSignal<SiteView[]>([]);
@@ -55,13 +131,14 @@ export function App() {
   const [info, setInfo] = createSignal<AppInfo | null>(null);
   const [ttl, setTtl] = createSignal(defaultTtl());
   const [tab, setTab] = createSignal<Tab>("grants");
+  const [page, setPage] = createSignal<Page>({ view: "list" });
   const [newHost, setNewHost] = createSignal("");
 
   const capIcon = (id: string) => caps().find((c) => c.id === id)?.icon ?? "🔑";
 
   const refresh = async () => {
     try {
-      const [p, g, c, s, ah, uh, er] = await Promise.all([
+      const [p, g, c, s, ah, uh, er, cf, cm] = await Promise.all([
         invoke<Pending[]>("list_pending"),
         invoke<GrantView[]>("list_grants"),
         invoke<CapabilityView[]>("list_capabilities", { lang: null }),
@@ -69,18 +146,27 @@ export function App() {
         invoke<string[]>("list_hosts"),
         invoke<SiteView[]>("list_unknown_hosts"),
         invoke<ErrorEntry[]>("list_errors"),
+        invoke<ConfigurationView[]>("list_configuration"),
+        invoke<ComponentInfo[]>("list_components"),
       ]);
       // Preserve object identity for pending ids so an in-progress card keeps its edits.
       setPending((prev) => {
         const byId = new Map(prev.map((x) => [x.id, x]));
         return p.map((f) => byId.get(f.id) ?? f);
       });
-      setGrants(g);
-      setCaps(c);
-      setSites(s);
-      setApprovedHosts(ah);
-      setUnknownHosts(uh);
-      setErrors(er);
+      // Every second the poll hands back fresh arrays of fresh objects. Anything
+      // keyed on them (a `For` row, a `Show` with a callback) would remount, and a
+      // form open inside would vanish mid-edit. Replace a list only when it changed.
+      const stable = <T,>(set: (f: (prev: T) => T) => void, next: T) =>
+        set((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      stable(setGrants, g);
+      stable(setCaps, c);
+      stable(setSites, s);
+      stable(setApprovedHosts, ah);
+      stable(setUnknownHosts, uh);
+      stable(setErrors, er);
+      stable(setConfig, cf);
+      stable(setComponents, cm);
     } catch {
       /* transient — the backend may still be starting */
     }
@@ -160,7 +246,7 @@ export function App() {
       <nav class="tabs">
         <For each={TABS}>
           {([id, label]) => (
-            <button class="tab" classList={{ active: tab() === id }} onClick={() => setTab(id)}>
+            <button class="tab" classList={{ active: tab() === id }} onClick={() => { setTab(id); setPage({ view: "list" }); }}>
               {label}
             </button>
           )}
@@ -168,18 +254,141 @@ export function App() {
       </nav>
 
       <Show when={tab() === "capabilities"}>
-        <p class="dim intro">// capabilities installed on this host</p>
-        <For each={caps()} fallback={<p class="empty">No capabilities installed.</p>}>
+        <Show when={page().view === "list"}>
+          <p class="dim intro">// what this host can grant. Open one for its interfaces, the components that provide it, and its settings; keys never leave this machine.</p>
+          <For each={caps()} fallback={<p class="empty">No capabilities installed.</p>}>
+            {(c) => (
+              <button class="row nav" onClick={() => setPage({ view: "capability", id: c.id })}>
+                <span class="ico">{c.icon}</span>
+                <div class="grow">
+                  <div class="row-title">{c.id}</div>
+                  <div class="desc dim">{c.description}</div>
+                </div>
+                <div class="row-meta">
+                  <Show when={c.configurable}><span class="chip">settings</span></Show>
+                  <span class="chev">›</span>
+                </div>
+              </button>
+            )}
+          </For>
+          <div class="section-label">capability components</div>
+          <p class="dim intro">// code the daemon can link as a capability, kept by hash. Adding one grants nothing; linking it to a provider is a grant like any other.</p>
+          <For each={components()} fallback={<p class="empty">No components in the store.</p>}>
+            {(c) => (
+              <button class="row nav" onClick={() => setPage({ view: "component", hash: c.hash })}>
+                <span class="ico">🧩</span>
+                <div class="grow">
+                  <div class="row-title">{c.name ?? c.hash.slice(7, 19)}</div>
+                  <div class="desc dim">
+                    {servesKinds(c).length > 0 ? `${servesKinds(c).join(", ")} · ` : ""}exports {c.exports.map(shortIface).join(", ")}
+                  </div>
+                </div>
+                <div class="row-meta"><span class="chev">›</span></div>
+              </button>
+            )}
+          </For>
+          <Show when={config().some((cfg) => !caps().some((c) => c.id === cfg.capability) && !SETTINGS_CONFIG.has(cfg.capability))}>
+            <div class="section-label">from other hosts on this machine</div>
+            <p class="dim intro">// settings other programs declared here (witmproxy's plugins). They read the values back; keys stay in the store.</p>
+            <For each={config().filter((cfg) => !caps().some((c) => c.id === cfg.capability) && !SETTINGS_CONFIG.has(cfg.capability))}>
+              {(cfg) => (
+                <button class="row nav" onClick={() => setPage({ view: "foreign", id: cfg.capability })}>
+                  <span class="ico">{cfg.icon}</span>
+                  <div class="grow">
+                    <div class="row-title">{cfg.capability}</div>
+                    <Show when={cfg.description}>{(d) => <div class="desc dim">{d()}</div>}</Show>
+                  </div>
+                  <div class="row-meta"><span class="chip">settings</span><span class="chev">›</span></div>
+                </button>
+              )}
+            </For>
+          </Show>
+        </Show>
+
+        <Show when={page().view === "capability" ? caps().find((c) => c.id === (page() as { id: string }).id) : undefined}>
           {(c) => (
-            <div class="row">
-              <span class="ico">{c.icon}</span>
-              <div class="grow">
-                <div class="row-title">{c.id}</div>
-                <div class="desc dim">{c.description}</div>
+            <div class="page">
+              <button class="back" onClick={() => setPage({ view: "list" })}>‹ capabilities</button>
+              <div class="page-head">
+                <span class="ico big">{c().icon}</span>
+                <div class="grow">
+                  <div class="page-title">{c().id}</div>
+                  <div class="dim">{c().description}</div>
+                </div>
               </div>
+              <div class="section-label">interfaces</div>
+              <p class="dim small">// what a page or component talks to when it holds a {c().id} grant</p>
+              <For each={c().interfaces} fallback={<p class="empty small">No component in the store serves this kind yet.</p>}>
+                {(i) => <div class="row sub"><code class="grow">{i}</code></div>}
+              </For>
+              <div class="section-label">provided by</div>
+              <p class="dim small">// the components a {c().id} grant can be provided through; the shipped one by default, a wrapper when chosen at consent</p>
+              <For each={c().served_by} fallback={<p class="empty small">Nothing in the store provides it.</p>}>
+                {(comp) => (
+                  <button class="row sub nav" onClick={() => setPage({ view: "component", hash: comp.hash })}>
+                    <span class="grow"><b>{comp.name ?? comp.hash.slice(7, 19)}</b> <span class="dim">{origin(comp)}</span></span>
+                    <span class="chev">›</span>
+                  </button>
+                )}
+              </For>
+              <Show when={config().find((cfg) => cfg.capability === c().id)}>
+                {(cfg) => (
+                  <>
+                    <div class="section-label">settings</div>
+                    <Show when={cfg().description}>{(d) => <p class="dim small">// {d()}</p>}</Show>
+                    <ConfigurationPanel cfg={cfg()} onChanged={refresh} />
+                  </>
+                )}
+              </Show>
             </div>
           )}
-        </For>
+        </Show>
+
+        <Show when={page().view === "component" ? components().find((c) => c.hash === (page() as { hash: string }).hash) : undefined}>
+          {(c) => (
+            <div class="page">
+              <button class="back" onClick={() => setPage({ view: "list" })}>‹ capabilities</button>
+              <div class="page-head">
+                <span class="ico big">🧩</span>
+                <div class="grow">
+                  <div class="page-title">{c().name ?? c().hash.slice(7, 19)}</div>
+                  <div class="dim">a capability component · {Math.round(c().size / 1024)} KB · added {new Date(c().added * 1000).toLocaleDateString()}</div>
+                </div>
+              </div>
+              <div class="about">
+                <div><span class="dim">hash</span> <code>{c().hash}</code></div>
+                <div><span class="dim">from</span> {origin(c())}</div>
+                <Show when={c().provenance?.build}>{(b) => <div><span class="dim">built by</span> <code>{b()}</code></div>}</Show>
+                <Show when={servesKinds(c()).length > 0}>
+                  <div><span class="dim">provides</span> {servesKinds(c()).map((k) => `${capIcon(k)} ${k}`).join("  ")}</div>
+                </Show>
+              </div>
+              <div class="section-label">exports</div>
+              <p class="dim small">// the interfaces a grant provided through this component is used through</p>
+              <For each={c().exports}>{(e) => <div class="row sub"><code class="grow">{e}</code></div>}</For>
+              <div class="section-label">imports</div>
+              <p class="dim small">// what it needs from the daemon: WASI, the raw host layer behind the gates it consumes, or another capability lent to it</p>
+              <For each={c().imports}>{(i) => <div class="row sub"><code class="grow">{i}</code></div>}</For>
+            </div>
+          )}
+        </Show>
+
+        <Show when={page().view === "foreign" ? config().find((cfg) => cfg.capability === (page() as { id: string }).id) : undefined}>
+          {(cfg) => (
+            <div class="page">
+              <button class="back" onClick={() => setPage({ view: "list" })}>‹ capabilities</button>
+              <div class="page-head">
+                <span class="ico big">{cfg().icon}</span>
+                <div class="grow">
+                  <div class="page-title">{cfg().capability}</div>
+                  <Show when={cfg().description}>{(d) => <div class="dim">{d()}</div>}</Show>
+                </div>
+              </div>
+              <div class="section-label">settings</div>
+              <ConfigurationPanel cfg={cfg()} onChanged={refresh} />
+            </div>
+          )}
+        </Show>
       </Show>
 
       <Show when={tab() === "grants"}>
@@ -189,6 +398,9 @@ export function App() {
               <span class="ico">{g.icon}</span>
               <div class="grow">
                 <span class="chip">{g.summary}</span> <span class="dim">{g.holder}</span>
+                <Show when={g.via.length > 0}>
+                  <span class="dim"> via {g.via.map((h) => h.slice(7, 15)).join(" → ")}</span>
+                </Show>
               </div>
               <div class="row-meta">
                 <span class="dim">{fmtDur(g.expires_in_secs)}</span>
@@ -273,6 +485,25 @@ export function App() {
           <button class="mini danger" onClick={clearHosts}>clear all</button>
         </div>
 
+        <Show when={config().find((cfg) => cfg.capability === "registry")}>
+          {(cfg) => (
+            <>
+              <div class="section-label">this daemon's registry</div>
+              <p class="dim small">// {cfg().description}</p>
+              <ConfigurationPanel cfg={cfg()} onChanged={refresh} />
+            </>
+          )}
+        </Show>
+        <Show when={config().find((cfg) => cfg.capability === "registries")}>
+          {(cfg) => (
+            <>
+              <div class="section-label">other registries</div>
+              <p class="dim small">// {cfg().description}</p>
+              <ConfigurationPanel cfg={cfg()} onChanged={refresh} />
+            </>
+          )}
+        </Show>
+
         <div class="section-label">about</div>
         <Show when={info()}>
           {(i) => (
@@ -289,6 +520,181 @@ export function App() {
   );
 }
 
+// One declared configuration: its configured instances as rows, and a form
+// (generated from the `forms` schema) to add one or edit one in place.
+function ConfigurationPanel(props: { cfg: ConfigurationView; onChanged: () => void }) {
+  type Draft = Record<string, string | boolean>;
+  const [editing, setEditing] = createSignal<string | null>(null); // instance name, "" = new
+  const [name, setName] = createSignal("");
+  const [draft, setDraft] = createSignal<Draft>({});
+  const [error, setError] = createSignal<string | null>(null);
+  const [busy, setBusy] = createSignal(false);
+
+  const isSelect = (t: InputType): t is { select: string[] } => typeof t === "object" && "select" in t;
+  const text = (v: Value | null): string => {
+    if (!v) return "";
+    if ("str" in v) return v.str;
+    if ("select" in v) return v.select;
+    if ("datetime" in v) return v.datetime;
+    if ("number" in v) return String(v.number);
+    if ("boolean" in v) return v.boolean ? "yes" : "no";
+    return "";
+  };
+  const blank = (): Draft => {
+    const d: Draft = {};
+    for (const f of props.cfg.fields) {
+      if (f.input_type === "boolean") d[f.name] = f.default && "boolean" in f.default ? f.default.boolean : false;
+      else if (isSelect(f.input_type)) d[f.name] = text(f.default) || f.input_type.select[0] || "";
+      else d[f.name] = f.input_type === "secret" ? "" : text(f.default);
+    }
+    return d;
+  };
+  const open = (inst: Instance | null) => {
+    setError(null);
+    setName(inst?.name ?? "");
+    const d = blank();
+    for (const v of inst?.values ?? []) {
+      const f = props.cfg.fields.find((f) => f.name === v.name);
+      if (!f || f.input_type === "secret") continue;
+      d[v.name] = f.input_type === "boolean" ? (v.value && "boolean" in v.value ? v.value.boolean : false) : text(v.value);
+    }
+    setDraft(d);
+    setEditing(inst?.name ?? "");
+  };
+  const secretSet = (field: string) =>
+    props.cfg.instances.find((i) => i.name === editing())?.values.find((v) => v.name === field)?.set ?? false;
+  const value = (f: Field): Value | null => {
+    const raw = draft()[f.name];
+    if (f.input_type === "boolean") return { boolean: raw === true };
+    const s = typeof raw === "string" ? raw.trim() : "";
+    if (isSelect(f.input_type)) return { select: s };
+    if (f.input_type === "number") return s === "" ? null : { number: Number(s) };
+    if (f.input_type === "secret") return { secret: s }; // blank keeps the stored secret
+    if (f.input_type === "datetime") return { datetime: s };
+    return { str: s };
+  };
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const inputs = props.cfg.fields
+        .map((f) => ({ name: f.name, value: value(f) }))
+        .filter((i): i is { name: string; value: Value } => i.value !== null);
+      await invoke("set_configuration", { capability: props.cfg.capability, instance: props.cfg.single ? "default" : name(), inputs });
+      setEditing(null);
+      props.onChanged();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const remove = async (instance: string) => {
+    if (!confirm(`Remove ${props.cfg.instance_noun} "${instance}"?`)) return;
+    try {
+      await invoke("remove_configuration", { capability: props.cfg.capability, instance });
+      if (editing() === instance) setEditing(null);
+      props.onChanged();
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  const summary = (inst: Instance) =>
+    inst.values
+      .filter((v) => v.value !== null && !(v.value && "boolean" in v.value) && text(v.value) !== "")
+      .map((v) => text(v.value))
+      .join(" · ");
+
+  return (
+    <div class="config">
+      <div class="config-head">
+        <span class="section-label">{props.cfg.single ? props.cfg.instance_noun : `${props.cfg.instance_noun}s`}</span>
+        <Show when={props.cfg.writable} fallback={<span class="dim">store unavailable — read-only</span>}>
+          <Show when={!props.cfg.single || props.cfg.instances.length === 0}>
+            <button class="mini" disabled={editing() === ""} onClick={() => open(null)}>
+              {props.cfg.single ? "set up" : `add ${props.cfg.instance_noun}`}
+            </button>
+          </Show>
+        </Show>
+      </div>
+      <For each={props.cfg.instances} fallback={<p class="empty small">No {props.cfg.instance_noun} configured.</p>}>
+        {(inst) => (
+          <div class="row sub" classList={{ active: editing() === inst.name }}>
+            <div class="grow">
+              <b>{inst.name}</b> <span class="dim">{summary(inst)}</span>
+            </div>
+            <div class="row-meta">
+              <button class="mini" disabled={!props.cfg.writable} onClick={() => open(inst)}>edit</button>
+              <button class="mini danger" disabled={!props.cfg.writable} onClick={() => remove(inst.name)}>remove</button>
+            </div>
+          </div>
+        )}
+      </For>
+      <Show when={editing() !== null}>
+        <form class="form" onSubmit={(e) => { e.preventDefault(); save(); }}>
+          <Show when={!props.cfg.single}>
+            <label class="field">
+              <span class="field-name">name</span>
+              <input
+                id={`cfg-${props.cfg.capability}-name`}
+                value={name()}
+                disabled={editing() !== ""}
+                placeholder={`e.g. local`}
+                onInput={(e) => setName(e.currentTarget.value)}
+              />
+              <span class="field-desc dim">how this {props.cfg.instance_noun} is referred to here</span>
+            </label>
+          </Show>
+          <For each={props.cfg.fields}>
+            {(f) => (
+              <label class="field" classList={{ check: f.input_type === "boolean" }}>
+                <span class="field-name">{f.name}{f.optional ? <span class="dim"> (optional)</span> : ""}</span>
+                <Show when={isSelect(f.input_type)}>
+                  <select
+                    id={`cfg-${props.cfg.capability}-${f.name}`}
+                    value={String(draft()[f.name] ?? "")}
+                    onChange={(e) => setDraft({ ...draft(), [f.name]: e.currentTarget.value })}
+                  >
+                    <For each={isSelect(f.input_type) ? f.input_type.select : []}>
+                      {(o) => <option value={o} selected={draft()[f.name] === o}>{o}</option>}
+                    </For>
+                  </select>
+                </Show>
+                <Show when={f.input_type === "boolean"}>
+                  <input
+                    id={`cfg-${props.cfg.capability}-${f.name}`}
+                    type="checkbox"
+                    checked={draft()[f.name] === true}
+                    onChange={(e) => setDraft({ ...draft(), [f.name]: e.currentTarget.checked })}
+                  />
+                </Show>
+                <Show when={!isSelect(f.input_type) && f.input_type !== "boolean"}>
+                  <input
+                    id={`cfg-${props.cfg.capability}-${f.name}`}
+                    type={f.input_type === "secret" ? "password" : f.input_type === "number" ? "number" : "text"}
+                    autocomplete={f.input_type === "secret" ? "off" : undefined}
+                    value={String(draft()[f.name] ?? "")}
+                    placeholder={f.input_type === "secret" && secretSet(f.name) ? "unchanged — leave blank to keep" : ""}
+                    onInput={(e) => setDraft({ ...draft(), [f.name]: e.currentTarget.value })}
+                  />
+                </Show>
+                <Show when={f.description}>{(d) => <span class="field-desc dim">{d()}</span>}</Show>
+              </label>
+            )}
+          </For>
+          <Show when={error()}>{(e) => <div class="form-err">{e()}</div>}</Show>
+          <div class="actions">
+            <button type="submit" class="approve" disabled={busy()}>
+              {editing() === "" ? "Add" : "Save"}
+            </button>
+            <button type="button" disabled={busy()} onClick={() => setEditing(null)}>Cancel</button>
+          </div>
+        </form>
+      </Show>
+    </div>
+  );
+}
+
 function fmtDur(secs: number): string {
   if (secs >= 86400) return `${Math.round(secs / 86400)}d`;
   if (secs >= 3600) return `${Math.round(secs / 3600)}h`;
@@ -302,12 +708,57 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
   const [ttl, setTtl] = createSignal(defaultTtl());
   const [remember, setRemember] = createSignal(false);
   const [busy, setBusy] = createSignal(false);
+  // An extra `allow` clause the human appends; checked live against the kind's
+  // interface, and shown back as sentences before it is applied.
+  const [extra, setExtra] = createSignal("");
+  // Store components the human chose to provide the grant through, outermost first.
+  // A component kind starts with the requester's suggested provider ticked:
+  // without a component to run it, there is nothing to grant.
+  const [via, setVia] = createSignal<string[]>(
+    props.req.capability.kind === "component" && props.req.capability.provider
+      ? [props.req.capability.provider]
+      : [],
+  );
+  const toggleVia = (hash: string, on: boolean) =>
+    setVia((v) => (on ? [...v.filter((h) => h !== hash), hash] : v.filter((h) => h !== hash)));
+  const [extraText, setExtraText] = createSignal<ScopeText | null>(null);
+  const [extraError, setExtraError] = createSignal<string | null>(null);
+  let checkTimer: ReturnType<typeof setTimeout> | undefined;
+  const check = (allow: string) => {
+    clearTimeout(checkTimer);
+    if (!allow.trim()) {
+      setExtraText(null);
+      setExtraError(null);
+      return;
+    }
+    checkTimer = setTimeout(async () => {
+      try {
+        setExtraText(await invoke<ScopeText>("check_narrowing", { id: props.req.id, narrowing: { allow } }));
+        setExtraError(null);
+      } catch (e) {
+        setExtraText(null);
+        setExtraError(String(e));
+      }
+    }, 250);
+  };
+  onCleanup(() => clearTimeout(checkTimer));
+  const restricted = () => props.req.text.when.length + props.req.text.allow.length > 0;
+  const shown = () => extraText() ?? props.req.text;
 
   const decide = async (allow: boolean) => {
     setBusy(true);
     try {
-      // Send the narrowed capability; the broker clamps it to a subset of the request.
-      await invoke("decide", { id: props.req.id, allow, grant: allow ? cap() : null, remember: remember(), ttlSecs: ttl() });
+      // Send the narrowed capability and clauses; the broker clamps the former
+      // to a subset of the request and conjoins the latter onto its scope.
+      await invoke("decide", {
+        id: props.req.id,
+        allow,
+        grant: allow ? cap() : null,
+        narrowing: allow && extra().trim() ? { allow: extra() } : null,
+        via: allow ? via() : null,
+        remember: remember(),
+        ttlSecs: ttl(),
+      });
     } finally {
       setBusy(false);
       props.onResolved();
@@ -323,6 +774,44 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
         <div class="reason">{props.req.reason}</div>
       </Show>
       <CapabilityEditor orig={props.req.capability} cap={cap} setCap={setCap} />
+      <div class="cap scope">
+        <div class="cap-title">{restricted() || extra().trim() ? "only" : "no further limits proposed"}</div>
+        <Show when={shown().when.length > 0}>
+          <ul class="sentences" title={props.req.scope.when}>
+            <For each={shown().when}>{(t) => <li><span class="dim">when </span>{t}</li>}</For>
+          </ul>
+        </Show>
+        <Show when={shown().allow.length > 0}>
+          <ul class="sentences" title={props.req.scope.allow}>
+            <For each={shown().allow}>{(t) => <li>{t}</li>}</For>
+          </ul>
+        </Show>
+        <input
+          id={`narrow-${props.req.id}`}
+          class="narrow"
+          classList={{ bad: !!extraError() }}
+          placeholder="add a limit, e.g. state.tokens < 20000"
+          value={extra()}
+          onInput={(e) => { setExtra(e.currentTarget.value); check(e.currentTarget.value); }}
+        />
+        <Show when={extraError()}>{(e) => <div class="form-err">{e()}</div>}</Show>
+      </div>
+      <Show when={props.req.offers.length > 0}>
+        <div class="cap">
+          <div class="cap-title">provide through</div>
+          <p class="dim small">// components from the store that can sit in front of this capability; the native provider is the default. Ticked ones run outermost first.</p>
+          <For each={props.req.offers}>
+            {(c) => (
+              <label class="toggle">
+                <input type="checkbox" checked={via().includes(c.hash)} onChange={(e) => toggleVia(c.hash, e.currentTarget.checked)} />
+                <span class="path">{c.name ?? c.hash.slice(7, 19)}</span>
+                <span class="dim">{c.exports.map((x) => x.replace(/@.*$/, "")).join(", ")}</span>
+                <span class="dim small">{origin(c)}</span>
+              </label>
+            )}
+          </For>
+        </div>
+      </Show>
       <div class="controls">
         <label>
           expires{" "}
@@ -336,7 +825,7 @@ function RequestCard(props: { req: Pending; onResolved: () => void }) {
         </label>
       </div>
       <div class="actions">
-        <button class="approve" disabled={busy()} onClick={() => decide(true)}>
+        <button class="approve" disabled={busy() || !!extraError()} onClick={() => decide(true)}>
           Approve
         </button>
         <button class="deny" disabled={busy()} onClick={() => decide(false)}>
@@ -427,6 +916,38 @@ function CapabilityEditor(props: { orig: Capability; cap: () => Capability; setC
         <div class="cap-title">network{sock().may_listen ? " — may listen" : ""}</div>
         <For each={sock().endpoints}>{(e) => <div class="root"><span class="path">{e}</span></div>}</For>
       </Show>
+
+      <Show when={props.cap().kind === "foreign"}>
+        <div class="cap-title">on behalf of another host</div>
+        <div class="root">
+          <span class="path">{(props.cap() as Extract<Capability, { kind: "foreign" }>).path}</span>
+        </div>
+        <div class="dim">{(props.cap() as Extract<Capability, { kind: "foreign" }>).summary}</div>
+      </Show>
+
+      <Show when={props.cap().kind === "component"}>
+        <div class="cap-title">a capability from the store</div>
+        <div class="root">
+          <span class="path">{(props.cap() as Extract<Capability, { kind: "component" }>).provides}</span>
+        </div>
+        <p class="dim small">// nothing native provides this; it runs from the component(s) ticked under "provide through"</p>
+        <Show when={(props.cap() as Extract<Capability, { kind: "component" }>).source}>
+          {(src) => <div class="dim">fetched from {src()}</div>}
+        </Show>
+        <Show when={(props.cap() as Extract<Capability, { kind: "component" }>).delegated.length > 0}>
+          <div class="dim">lent {(props.cap() as Extract<Capability, { kind: "component" }>).delegated.length} of the requester's grant(s) for what it imports</div>
+        </Show>
+      </Show>
+
+      <Show when={props.cap().kind === "inference"}>
+        <div class="cap-title">language model</div>
+        <Show
+          when={(props.cap() as InfCap).models.length > 0}
+          fallback={<div class="root"><span class="path">any configured model</span></div>}
+        >
+          <For each={(props.cap() as InfCap).models}>{(m) => <div class="root"><span class="path">{m}</span></div>}</For>
+        </Show>
+      </Show>
     </div>
   );
 }
@@ -455,6 +976,11 @@ h1 { font-size: .95rem; margin: 0 0 .8rem; font-weight: 700; }
 .reason { opacity: .8; margin: .45rem 0; border-left: 2px solid var(--border); padding-left: .6rem; }
 .cap { margin: .55rem 0; }
 .cap-title { opacity: .55; font-size: .8em; text-transform: uppercase; letter-spacing: .06em; margin-bottom: .4rem; }
+.scope { border-top: 1px dashed var(--border); padding-top: .5rem; }
+.sentences { margin: 0 0 .4rem; padding-left: 1.1rem; }
+.sentences li { padding: .05rem 0; }
+.narrow { width: 100%; font: inherit; padding: .3rem .45rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; }
+.narrow.bad { border-color: var(--danger); }
 .cmd { display: block; background: var(--inset); padding: .4rem .55rem; border-radius: 6px; white-space: pre-wrap; word-break: break-all; }
 .cmd .prompt { opacity: .45; }
 .root { display: flex; gap: .55rem; align-items: baseline; flex-wrap: wrap; padding: .2rem 0; }
@@ -481,6 +1007,16 @@ button:disabled { opacity: .5; cursor: default; }
 .ico { font-size: 1.1rem; line-height: 1; flex: none; }
 .grow { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 .row-title { font-weight: 700; }
+button.row.nav { width: 100%; text-align: left; cursor: pointer; font: inherit; }
+button.row.nav:hover { border-color: color-mix(in srgb, CanvasText 45%, transparent); }
+.chev { opacity: .45; font-size: 1.2em; line-height: 1; }
+.back { background: none; border: none; padding: 0; opacity: .6; cursor: pointer; margin: .2rem 0 .6rem; }
+.back:hover { opacity: 1; }
+.page-head { display: flex; align-items: center; gap: .8rem; margin-bottom: .4rem; }
+.page-title { font-weight: 700; font-size: 1.05rem; }
+.ico.big { font-size: 1.7rem; }
+.page .config { margin-left: 0; padding-left: 0; border-left: none; }
+.page .row.sub code { font-size: .9em; }
 .desc { font-size: .88em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .row-meta { display: inline-flex; align-items: center; gap: .7rem; font-size: .88em; flex: none; }
 .mini { padding: .2rem .75rem; font-size: .85em; }
@@ -493,6 +1029,23 @@ button:disabled { opacity: .5; cursor: default; }
 .about { font-size: .9em; }
 .about > div { padding: .12rem 0; overflow-wrap: anywhere; }
 .about .dim { display: inline-block; min-width: 6.5rem; }
+.config { margin: -.1rem 0 .9rem .9rem; padding-left: .8rem; border-left: 2px solid var(--border); }
+.config-head { display: flex; align-items: center; justify-content: space-between; gap: .6rem; }
+.config-head .section-label { margin: .4rem 0 .2rem; }
+.row.sub { padding: .35rem .6rem; margin: .3rem 0; }
+.row.sub.active { border-color: var(--accent); }
+.empty.small { padding: .5rem .7rem; margin: .3rem 0; font-size: .9em; }
+p.small { font-size: .85em; margin: .2rem 0 .4rem; }
+.form { display: flex; flex-direction: column; gap: .55rem; border: 1px solid var(--border); border-radius: 8px; padding: .7rem .8rem; margin: .4rem 0; background: var(--panel); }
+.field { display: grid; grid-template-columns: 7rem 1fr; gap: .15rem .6rem; align-items: center; }
+.field.check { grid-template-columns: 7rem auto; justify-content: start; }
+.field-name { font-weight: 700; }
+.field-desc { grid-column: 2; font-size: .85em; }
+.field input:not([type=checkbox]), .field select { width: 100%; font: inherit; padding: .3rem .45rem; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: inherit; }
+.field input[type=checkbox] { accent-color: var(--accent); justify-self: start; }
+.form-err { color: var(--danger); font-size: .9em; }
+.form .actions { margin-top: .2rem; }
+@media (max-width: 30rem) { .field, .field.check { grid-template-columns: 1fr; } .field-desc { grid-column: 1; } }
 .add-host { display: flex; gap: .5rem; margin: .5rem 0; }
 .add-host input { flex: 1; min-width: 0; font: inherit; padding: .35rem .5rem; border-radius: 6px; border: 1px solid var(--border); background: var(--panel); color: inherit; }
 `;

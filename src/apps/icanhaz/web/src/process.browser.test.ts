@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestProcessGrant } from "./wrpc";
-import { spawn } from "./generated/process";
+import { open, processSpawn } from "./generated/process";
+import { drop } from "./generated/resources";
 
 // Needs a running daemon (`ICANHAZ_CONSENT=auto icanhazd`) serving the process
 // capability. `cat` is on PATH on the host.
@@ -22,7 +23,11 @@ describe("process capability over wRPC (browser → host)", () => {
         const t = await connect({ ws: WS });
         // Consent for the `cat` image specifically — the grant pins which program.
         const grant = await requestProcessGrant(t, "cat", [], false, "echo over wRPC");
-        const session = await spawn(t, grant, []);
+        // The token once, at open: the `process` object is the capability.
+        const proc = await open(t, grant);
+        expect(proc.tag, proc.tag === "err" ? proc.val : "").toBe("ok");
+        if (proc.tag !== "ok") return;
+        const session = await processSpawn(t, proc.val, []);
 
         const chunks: Uint8Array[] = [];
         const done = new Promise<void>((resolve, reject) => {
@@ -39,23 +44,20 @@ describe("process capability over wRPC (browser → host)", () => {
 
         await done;
         session.close();
+        // Done with the object: release it on the daemon.
+        expect(await drop(t, proc.val)).toBe(true);
         t.close();
 
         expect(new TextDecoder().decode(concat(chunks))).toContain("hello from the browser");
     }, 15000);
 
-    it("refuses a spawn whose grant pins a different image", async () => {
+    it("refuses to open the capability for an unknown token", async () => {
         const t = await connect({ ws: WS });
-        // The grant pins `cat`; but a token for the wrong *kind* (or none) is the
-        // gate we can exercise from the client. Use a bogus token: refused before spawn.
-        const session = await spawn(t, "bogus-token", []);
-        const refused = await new Promise<string>((resolve) => {
-            session.onError((e) => resolve(e));
-            session.onData((chunk) => {
-                if (chunk === null) resolve("(no error, stream closed)");
-            });
-        });
+        // The gate runs once, at `open`: a token that is not a live process
+        // grant yields no object, so there is nothing to spawn on.
+        const refused = await open(t, "bogus-token");
         t.close();
-        expect(refused).toContain("denied");
+        expect(refused.tag).toBe("err");
+        if (refused.tag === "err") expect(refused.val).toContain("denied");
     }, 15000);
 });

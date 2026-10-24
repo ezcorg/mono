@@ -1,18 +1,20 @@
-import { Compartment, EditorState, Extension, Facet, StateEffect, StateField, TransactionSpec } from "@codemirror/state";
+import { Compartment, EditorState, Extension, Facet, StateEffect, StateField, Transaction, TransactionSpec } from "@codemirror/state";
 import { EditorView, ViewPlugin, ViewUpdate, keymap, KeyBinding, showPanel, tooltips, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine } from "@codemirror/view";
 import { debounce } from "lodash";
 import { codeblockTheme } from "./themes/index";
 import { vscodeLightDark, vscodeStyleMod } from "./themes/vscode";
-import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { defaultKeymap, history, historyKeymap, indentWithTab, invertedEffects } from "@codemirror/commands";
 import { detectIndentationUnit } from "./utils";
 import { completionKeymap, closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
 import { bracketMatching, defaultHighlightStyle, foldGutter, foldKeymap, HighlightStyle, indentOnInput, indentUnit, syntaxHighlighting } from "@codemirror/language";
 import { searchKeymap, highlightSelectionMatches } from "@codemirror/search";
-import { VfsInterface } from "./types";
+import { conflictCopyPath, type FileOperations, type FileSearch, type VersionLog, type VfsInterface } from "@joinezco/storage";
+
+/** What a code block needs of a version log (a vault's `versions`). */
+export type FileVersions = Pick<VersionLog, 'head' | 'put' | 'read'>;
 import { ExtensionOrLanguage, extOrLanguageToLanguageId, getLanguageSupport } from "./lsps";
 import { lintKeymap, setDiagnostics } from "@codemirror/lint";
 import { highlightCode } from "@lezer/highlight";
-import { SearchIndex } from "./utils/search";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/toolbar";
@@ -24,18 +26,21 @@ import { contextMenu } from "./context-menu";
 import { navigationHistory } from "./navigation";
 import { StyleModule } from "style-mod";
 import { dirname } from "path-browserify";
+import { clampRange, findRegion, followRange, lineCount, rangeOf, sliceLines, spliceLines, type LineRange } from "./utils/region";
 export type { CommandResult, BrowseEntry } from "./panels/toolbar";
 
 // --- File change notification bus for multi-view sync ---
 type FileChangeListener = {
     view: EditorView;
-    callback: (content: string) => void;
+    /** The file's new text, and the version it is when saved through a log. */
+    callback: (content: string, version?: string) => void;
 };
 
+/** The views of each path over one filesystem. */
 class FileChangeBus {
     private listeners: Map<string, Set<FileChangeListener>> = new Map();
 
-    subscribe(path: string, view: EditorView, callback: (content: string) => void): () => void {
+    subscribe(path: string, view: EditorView, callback: (content: string, version?: string) => void): () => void {
         let set = this.listeners.get(path);
         if (!set) {
             set = new Set();
@@ -50,18 +55,40 @@ class FileChangeBus {
     }
 
     /** Notify all listeners for `path` except the source view. */
-    notify(path: string, content: string, sourceView: EditorView) {
+    notify(path: string, content: string, sourceView: EditorView, version?: string) {
         const set = this.listeners.get(path);
         if (!set) return;
         for (const listener of set) {
             if (listener.view !== sourceView) {
-                listener.callback(content);
+                listener.callback(content, version);
             }
         }
     }
 }
 
-export const fileChangeBus = new FileChangeBus();
+/**
+ * A file is a path on a filesystem, so each filesystem has a bus of its
+ * own: two code blocks showing `a.txt` over different stores are showing
+ * different files, and a save in one is nothing to the other. A filesystem
+ * that is dropped takes its listeners with it.
+ */
+const buses = new WeakMap<VfsInterface, FileChangeBus>();
+const busOf = (fs: VfsInterface): FileChangeBus => {
+    let bus = buses.get(fs);
+    if (!bus) buses.set(fs, (bus = new FileChangeBus()));
+    return bus;
+};
+
+export const fileChangeBus = {
+    /** Hear saves of `path` on `fs` made by views other than `view`. */
+    subscribe(fs: VfsInterface, path: string, view: EditorView, callback: (content: string, version?: string) => void): () => void {
+        return busOf(fs).subscribe(path, view, callback);
+    },
+    /** Tell every other view of `path` on `fs` that `sourceView` saved `content`. */
+    notify(fs: VfsInterface, path: string, content: string, sourceView: EditorView, version?: string): void {
+        buses.get(fs)?.notify(path, content, sourceView, version);
+    },
+};
 
 // --- Settings propagation across editors on the same page ---
 type SettingsChangeCallback = (settings: Partial<import("./panels/settings").EditorSettings>) => void;
@@ -96,7 +123,26 @@ export type CodeblockConfig = {
      *  editor's line-number gutter so they line up with the code (the look inside the markdown-editor); `compact` keeps
      *  them tight to the text, for a toolbar hosted away from the editor — a window's title bar, say. */
     toolbarLayout?: 'gutter' | 'compact';
-    index?: SearchIndex;
+    /** Finds files for the toolbar (a vault's search). */
+    search?: FileSearch;
+    /** Creates, moves and deletes files for the toolbar (a vault's keep links working). */
+    files?: FileOperations;
+    /** Loads and saves go through this log when given: a save names the
+     *  version it was made on, and one made on a stale version becomes a
+     *  conflict copy beside the file (see `FileEvent`'s `conflict`). */
+    versions?: FileVersions;
+    /** Show and edit only these lines of `filepath` (a region, as a note's
+     *  ```` ```src/lib.rs#L40-L80 ```` fence is). The file is the source of
+     *  truth: the lines are read from it (found again by `content`, the
+     *  region's text as last seen, when they have moved), and an edit is
+     *  put back where they are when it is saved. `regionField` has where
+     *  they are now. */
+    range?: LineRange;
+    /** `filepath` is a stand-in the host keeps for an unnamed block (a
+     *  note's ```` ```ts ```` fence): opened and saved like any file, so the
+     *  language services see it, but shown as what it is, an unnamed block
+     *  of its language, never by the stand-in's name. */
+    anonymous?: boolean;
     language?: ExtensionOrLanguage;
     dark?: boolean;
     settings?: Partial<EditorSettings>;
@@ -124,14 +170,18 @@ export const configCompartment = new Compartment();
 export const languageSupportCompartment = new Compartment();
 export const languageServerCompartment = new Compartment();
 export const indentationCompartment = new Compartment();
-export const readOnlyCompartment = new Compartment();
 export const lineWrappingCompartment = new Compartment();
 export const lineNumbersCompartment = new Compartment();
 export const foldGutterCompartment = new Compartment();
 
 // Effects + Fields for async file handling
 export const openFileEffect = StateEffect.define<{ path: string; skipSave?: boolean }>();
-export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null }>();
+/** A file's contents arrived. `preview` marks a file shown rather than
+ *  edited (an image, or bytes that are not text): read-only, never written. */
+export const fileLoadedEffect = StateEffect.define<{ path: string; content: string; language: ExtensionOrLanguage | null; preview?: boolean }>();
+/** Put the open file down without writing its unsaved edits (it is being
+ *  deleted): the view is left empty, showing no file. */
+export const closeFileEffect = StateEffect.define<void>();
 
 // Light mode/dark mode theme toggle
 export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
@@ -145,34 +195,158 @@ export const currentFileField = StateField.define<{
     content: string;
     language: ExtensionOrLanguage | null;
     loading: boolean;
+    /** Shown rather than edited (an image, or bytes that are not text):
+     *  read-only, never written. */
+    preview: boolean;
 }>({
     create(state) {
         const cfg = state.facet(CodeblockFacet);
         if (cfg.filepath) {
             // Seed an initial load; the plugin will react after init without dispatching during construction
-            return { path: cfg.filepath, content: "", language: null, loading: true };
+            return { path: cfg.filepath, content: "", language: null, loading: true, preview: false };
         }
         // No initial file; start with provided content
-        return { path: null, content: cfg.content || "", language: cfg.language || null, loading: false };
+        return { path: null, content: cfg.content || "", language: cfg.language || null, loading: false, preview: false };
     },
     update(value, tr) {
         for (let e of tr.effects) {
             if (e.is(openFileEffect)) {
-                return { path: e.value.path, content: "", language: null, loading: true };
+                return { path: e.value.path, content: "", language: null, loading: true, preview: false };
             }
             if (e.is(fileLoadedEffect)) {
-                return { path: e.value.path, content: e.value.content, language: e.value.language, loading: false };
+                return { path: e.value.path, content: e.value.content, language: e.value.language, loading: false, preview: !!e.value.preview };
+            }
+            if (e.is(closeFileEffect)) {
+                return { path: null, content: "", language: value.language, loading: false, preview: false };
             }
         }
         return value;
     }
 });
 
-// A safe dispatcher to avoid nested-update errors from UI events during CM updates
-function safeDispatch(view: EditorView, spec: TransactionSpec) {
+/** Which lines of the file the view shows, as they are numbered in the file
+ *  now (a region: `CodeblockConfig.range`), or null for the whole file. */
+export const setRegionEffect = StateEffect.define<LineRange | null>();
+export const regionField = StateField.define<LineRange | null>({
+    create(state) {
+        const cfg = state.facet(CodeblockFacet);
+        return cfg.filepath && cfg.range ? cfg.range : null;
+    },
+    update(value, tr) {
+        for (const e of tr.effects) {
+            if (e.is(setRegionEffect)) value = e.value;
+            // Another file is opened whole; a region belongs to its file.
+            else if (e.is(openFileEffect) && e.value.path !== tr.startState.field(currentFileField).path) value = null;
+            else if (e.is(closeFileEffect)) value = null;
+        }
+        return value;
+    },
+});
+
+/** The line-number gutter, which numbers a region's lines as the file does. */
+export function numberedLines(): Extension {
+    return [
+        lineNumbers({ formatNumber: (n, state) => String(n + (state.field(regionField, false)?.from ?? 1) - 1) }),
+        highlightActiveLineGutter(),
+    ];
+}
+
+/** Nothing can be typed into a file that is still loading, or one only shown. */
+const fileReadOnly = EditorState.readOnly.compute([currentFileField], (state) => {
+    const file = state.field(currentFileField);
+    return file.loading || file.preview;
+});
+
+/** `bytes` as UTF-8 text, or null when they are not text (a NUL early on,
+ *  or a sequence that is not UTF-8): such a file is shown, not edited, since
+ *  decoding it would change it and saving would write the change back. */
+export function textOf(bytes: Uint8Array): string | null {
+    if (bytes.subarray(0, 8192).includes(0)) return null;
+    try {
+        return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch {
+        return null;
+    }
+}
+
+const persisters = new WeakMap<EditorView, () => Promise<void>>();
+
+/** What happens to the file a code block shows: `load`, its contents are in
+ *  the view (editable, unless it is only shown); `save`, a write of its
+ *  edits has landed; `close`, it was put down unsaved (`closeFile`);
+ *  `error`, it could not be opened or a save failed (the edits stay
+ *  unsaved). */
+export type FileEvent =
+    | { type: 'load' | 'save' | 'close'; path: string }
+    /** A save was refused (the file changed since it was loaded): the edits
+     *  are at `copy`, and the view now shows the file as it is. */
+    | { type: 'conflict'; path: string; copy: string }
+    | { type: 'error'; path: string; error: unknown };
+
+const fileListeners = new WeakMap<EditorView, Set<(event: FileEvent) => void>>();
+
+function emitFileEvent(view: EditorView, event: FileEvent) {
+    for (const listener of fileListeners.get(view) ?? []) listener(event);
+}
+
+/** Be told when `view` loads or saves a file. Returns an unsubscribe. */
+export function onFileEvent(view: EditorView, listener: (event: FileEvent) => void): () => void {
+    let listeners = fileListeners.get(view);
+    if (!listeners) fileListeners.set(view, (listeners = new Set()));
+    listeners.add(listener);
+    return () => listeners.delete(listener);
+}
+
+/** Put down the file open in `view` without writing its unsaved edits
+ *  (it is being deleted): the view is left empty, showing no file. */
+export function closeFile(view: EditorView): void {
+    const clearDiag = setDiagnostics(view.state, []);
+    view.dispatch({
+        ...clearDiag,
+        changes: { from: 0, to: view.state.doc.length, insert: '' },
+        effects: [
+            ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
+            closeFileEffect.of(undefined),
+            languageServerCompartment.reconfigure([]),
+        ],
+        annotations: Transaction.addToHistory.of(false),
+    });
+}
+
+/** Resolves once `view` shows `path` loaded (at once when it already does);
+ *  without a path, once it shows any file. Rejects if opening it fails. */
+export function whenFileLoaded(view: EditorView, path?: string): Promise<void> {
+    const shows = (file: { path: string | null; loading: boolean }) => !!file.path && !file.loading && (!path || file.path === path);
+    if (shows(view.state.field(currentFileField))) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+        const stop = onFileEvent(view, (event) => {
+            if (event.type !== 'load' && event.type !== 'error') return;
+            if (path && event.path !== path) return;
+            stop();
+            if (event.type === 'error') reject(event.error);
+            else resolve();
+        });
+    });
+}
+
+/** Write the file open in `view` now if it has unsaved edits (autosave on or
+ *  off), and resolve once every write of it already started has landed. */
+export function persistFile(view: EditorView): Promise<void> {
+    return persisters.get(view)?.() ?? Promise.resolve();
+}
+
+/** Whether a transaction is the user's (or a command's) edit, as opposed to
+ *  a file's contents arriving or another view's save being mirrored. */
+const isLoad = (tr: Transaction) => tr.effects.some((e) => e.is(fileLoadedEffect) || e.is(closeFileEffect));
+
+// A safe dispatcher to avoid nested-update errors from UI events during CM updates.
+// A spec that depends on the document (a range to replace) is given as a
+// function, so it is computed against the state it is applied to: other
+// dispatches may land before the microtask runs.
+export function safeDispatch(view: EditorView, spec: TransactionSpec | (() => TransactionSpec)) {
     // Always queue to a microtask so we never dispatch within an ongoing update cycle
     queueMicrotask(() => {
-        try { view.dispatch(spec); } catch (e) { console.error(e); }
+        try { view.dispatch(typeof spec === 'function' ? spec() : spec); } catch (e) { console.error(e); }
     });
 }
 
@@ -208,7 +382,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true, toolbarLayout, index, dark, settings, typescript, copyButton }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -221,18 +395,29 @@ export const codeblock = ({ content, fs, cwd, filepath, language, toolbar = true
     const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, index, dark, settings, typescript })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, range, anonymous, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
+        regionField,
+        // A region the reader set (the menu's "Show only these lines", a
+        // `#L3-L9` in the toolbar) is undone by opening the file again at
+        // what it showed before. The region following its lines in the
+        // file, and a load, are not the reader's doing and stay out of the
+        // history (they are dispatched as such).
+        invertedEffects.of((tr) => {
+            const path = tr.startState.field(currentFileField).path;
+            if (!path || !tr.effects.some((e) => e.is(setRegionEffect))) return [];
+            return [openFileEffect.of({ path }), setRegionEffect.of(tr.startState.field(regionField))];
+        }),
         languageSupportCompartment.of([]),
         languageServerCompartment.of([]),
         indentationCompartment.of(indentUnit.of("    ")),
-        readOnlyCompartment.of(EditorState.readOnly.of(false)),
+        fileReadOnly,
         // Honour the initial `lineWrap` setting (consistent with
         // showLineNumbers/showFoldGutter above); the settings panel later
         // reconfigures this same compartment to toggle it.
         lineWrappingCompartment.of(wrapLines ? EditorView.lineWrapping : []),
-        lineNumbersCompartment.of(showLineNums ? [lineNumbers(), highlightActiveLineGutter()] : []),
+        lineNumbersCompartment.of(showLineNums ? numberedLines() : []),
         foldGutterCompartment.of(showFold ? [foldGutter()] : []),
         tooltips({ position: "fixed" }),
         showPanel.of(toolbar ? toolbarPanel : null),
@@ -270,7 +455,10 @@ const codeblockView = ViewPlugin.define((view) => {
     StyleModule.mount(document, vscodeStyleMod);
     injectNerdFontFace();
 
-    let { fs } = view.state.facet(CodeblockFacet);
+    let { fs, versions } = view.state.facet(CodeblockFacet);
+    // The version the open file's text was loaded or last saved as, when
+    // saves go through a version log.
+    let version: string | null = null;
 
     // Flag to suppress save when receiving external file updates
     let receivingExternalUpdate = false;
@@ -291,7 +479,7 @@ const codeblockView = ViewPlugin.define((view) => {
                 effects.push(lineWrappingCompartment.reconfigure(partial.lineWrap ? EditorView.lineWrapping : []));
             }
             if ('showLineNumbers' in partial) {
-                effects.push(lineNumbersCompartment.reconfigure(partial.showLineNumbers ? [lineNumbers(), highlightActiveLineGutter()] : []));
+                effects.push(lineNumbersCompartment.reconfigure(partial.showLineNumbers ? numberedLines() : []));
             }
             if ('showFoldGutter' in partial) {
                 effects.push(foldGutterCompartment.reconfigure(partial.showFoldGutter ? [foldGutter()] : []));
@@ -304,29 +492,131 @@ const codeblockView = ViewPlugin.define((view) => {
         }
     });
 
-    // Debounced save
-    const save = debounce(async () => {
-        const fileState = view.state.field(currentFileField);
-        if (fileState.path && !fileState.loading) {
-            const content = view.state.doc.toString();
-            // confirm parent exists
-            const parent = dirname(fileState.path);
+    // Edits not yet written to the open file. Set by the user's edits, never
+    // by a file's contents arriving, so opening and leaving a file (an image,
+    // a file with CRLFs) writes nothing.
+    let dirty = false;
 
-            if (parent && parent !== '.') {
-                await fs.mkdir(parent, { recursive: true }).catch(console.error);
-            }
-            await fs.writeFile(fileState.path, content).catch(console.error)
-            // The OPEN document is now persisted → send textDocument/didSave. This is what
-            // triggers on-save analysis (rust-analyzer's cargo-check/flycheck: unresolved-name,
-            // borrow, and other errors that don't run off the live edit buffer, and which
-            // otherwise never update until reload). We write the disk BEFORE didSave so flycheck
-            // reads current content. (didChangeWatchedFiles is for OTHER files — see below.)
-            LSP.notifyFileSaved(fileState.path, content);
+    // Writes of the open file, one after another (a later save never lands
+    // before an earlier one), awaitable as a whole by `persistFile`.
+    let writing: Promise<void> = Promise.resolve();
 
-            // Notify other views of the same file
-            fileChangeBus.notify(fileState.path, content, view);
+    // For a region: the whole file as it was last loaded or saved, and where
+    // the region's lines are in it. The region field mirrors `region`.
+    let shown: string | null = null;
+    let region: LineRange | null = null;
+
+    /** The file's text now and its version (with a log), or null for a
+     *  file that is gone or is not text. */
+    async function current(path: string): Promise<{ text: string | null; version: string | null }> {
+        if (versions) {
+            const head = await versions.head(path);
+            return { text: head ? textOf(await versions.read(head)) : null, version: head?.id ?? null };
         }
-    }, 500);
+        return { text: await fs.readFile(path).catch(() => null), version: null };
+    }
+
+    /** Write `text`, the view's document, as `path`: the whole file, or for
+     *  a region, the file with the region's lines put where they are now. */
+    async function store(path: string, text: string, leaving = false): Promise<void> {
+        const parent = dirname(path);
+        if (parent && parent !== '.') {
+            await fs.mkdir(parent, { recursive: true }).catch(console.error);
+        }
+        let content = text;
+        let base = version;
+        // The whole file a region's latest lines would make (a conflict
+        // copy's contents), and where the region is once written.
+        let whole = (lines: string) => lines;
+        let placed: LineRange | null = null;
+        let lost = false;
+        try {
+            if (region && shown !== null) {
+                // When the file has changed since it was shown, the edit goes
+                // where the region's lines are now; when those lines are what
+                // changed, it is a conflict.
+                let into = shown;
+                let at = region;
+                const now = await current(path);
+                if (now.text === shown) base = versions ? now.version : base;
+                else if (now.text !== null || versions) {
+                    const moved = now.text === null ? null : followRange(shown, now.text, region);
+                    if (moved) {
+                        into = now.text!;
+                        at = moved;
+                        base = now.version;
+                    } else lost = true;
+                }
+                whole = (lines) => spliceLines(into, at, lines);
+                content = whole(text);
+                placed = rangeOf(at.from, text);
+            }
+            if (versions) {
+                const result = await versions.put(path, base, content);
+                if (result.ok === false) return conflicted(path, text, result.conflict.path, whole);
+                version = result.version.id;
+            } else if (lost) {
+                const copy = await conflictCopyPath(fs, path);
+                await fs.writeFile(copy, content);
+                return conflicted(path, text, copy, whole);
+            } else {
+                await fs.writeFile(path, content);
+            }
+        } catch (error) {
+            console.error(`Failed to save ${path}`, error);
+            // Still unsaved: the next edit, switch or persist tries again.
+            if (view.state.field(currentFileField).path === path) dirty = true;
+            emitFileEvent(view, { type: 'error', path, error });
+            return;
+        }
+        if (placed) {
+            shown = content;
+            region = placed;
+            const file = view.state.field(currentFileField);
+            if (file.path === path && !file.loading) safeDispatch(view, { effects: setRegionEffect.of(placed), annotations: Transaction.addToHistory.of(false) });
+        }
+        if (leaving) LSP.notifyFileChanged(path, FileChangeType.Changed);
+        // The OPEN document is now persisted → send textDocument/didSave. This is what
+        // triggers on-save analysis (rust-analyzer's cargo-check/flycheck: unresolved-name,
+        // borrow, and other errors that don't run off the live edit buffer, and which
+        // otherwise never update until reload). We write the disk BEFORE didSave so flycheck
+        // reads current content. (didChangeWatchedFiles is for OTHER files — see below.)
+        else LSP.notifyFileSaved(path, content);
+
+        // Notify other views of the same file
+        fileChangeBus.notify(fs, path, content, view, version ?? undefined);
+        emitFileEvent(view, { type: 'save', path });
+    }
+
+    /** Write the open file's unsaved edits now, if it has any. */
+    const writeNow = (): Promise<void> => {
+        save.cancel();
+        const fileState = view.state.field(currentFileField);
+        if (!fileState.path || fileState.loading || fileState.preview || !dirty) return writing;
+        dirty = false;
+        const path = fileState.path;
+        const content = view.state.doc.toString();
+        writing = writing.then(() => store(path, content));
+        return writing;
+    };
+
+    /** A save of `path` was refused: the file changed since it was loaded.
+     *  The edits are at `copy` (the latest of them, if typing went on; for a
+     *  region, the file with them in it), and the view takes the file as it
+     *  is now. */
+    async function conflicted(path: string, saved: string, copy: string, whole: (lines: string) => string = (lines) => lines) {
+        const open = view.state.field(currentFileField).path === path;
+        const latest = view.state.doc.toString();
+        if (open && latest !== saved) await fs.writeFile(copy, whole(latest)).catch(console.error);
+        emitFileEvent(view, { type: 'conflict', path, copy });
+        if (!open) return;
+        dirty = false;
+        void handleOpen(path, true);
+    }
+
+    // Debounced save
+    const save = debounce(() => void writeNow(), 500);
+    persisters.set(view, writeNow);
 
     // Subscribe to external file changes for the given path
     function subscribeToFileChanges(path: string) {
@@ -335,13 +625,28 @@ const codeblockView = ViewPlugin.define((view) => {
             unsubscribeFileChanges();
             unsubscribeFileChanges = null;
         }
-        unsubscribeFileChanges = fileChangeBus.subscribe(path, view, (newContent) => {
+        unsubscribeFileChanges = fileChangeBus.subscribe(fs, path, view, (newContent, newVersion) => {
+            // Saved elsewhere: this view's next save is made on that version.
+            if (newVersion !== undefined) version = newVersion;
+            let text = newContent;
+            let moved: LineRange | null = null;
+            if (region && shown !== null) {
+                // A region follows its lines; when they are what changed, it
+                // shows the lines at its place.
+                moved = followRange(shown, newContent, region) ?? clampRange(region, lineCount(newContent));
+                shown = newContent;
+                region = moved;
+                text = sliceLines(newContent, moved);
+            }
             const currentContent = view.state.doc.toString();
-            if (newContent === currentContent) return; // No change
+            const was = view.state.field(regionField);
+            if (text === currentContent && (!moved || (was?.from === moved.from && was.to === moved.to))) return; // No change
             receivingExternalUpdate = true;
             try {
                 view.dispatch({
-                    changes: { from: 0, to: view.state.doc.length, insert: newContent }
+                    changes: text === currentContent ? [] : { from: 0, to: view.state.doc.length, insert: text },
+                    effects: moved ? setRegionEffect.of(moved) : [],
+                    annotations: Transaction.addToHistory.of(false),
                 });
             } finally {
                 receivingExternalUpdate = false;
@@ -384,24 +689,33 @@ const codeblockView = ViewPlugin.define((view) => {
         }
     }
 
+    let previewUrl: string | null = null;
+
     function removePreview() {
         if (previewEl) {
             previewEl.remove();
             previewEl = null;
         }
+        if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+            previewUrl = null;
+        }
         svgViewMode = 'preview';
         showScroller();
     }
 
-    function showImagePreview(content: string) {
+    /** Show an image from its URL (an object URL over the file's bytes, or a
+     *  data URL an older import stored as text); null when unreadable. */
+    function showImagePreview(content: string | null) {
         removePreview();
         previewEl = document.createElement('div');
         previewEl.className = 'cm-image-preview';
         previewEl.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:16px;min-height:200px;overflow:auto;background:var(--cm-background, #1e1e1e);';
 
         const img = document.createElement('img');
-        if (content.startsWith('data:') || content.startsWith('http') || content.startsWith('blob:')) {
+        if (content && (content.startsWith('data:') || content.startsWith('http') || content.startsWith('blob:'))) {
             img.src = content;
+            if (content.startsWith('blob:')) previewUrl = content;
         } else {
             const msg = document.createElement('div');
             msg.style.cssText = 'color:var(--cm-toolbar-color, #ccc);text-align:center;';
@@ -415,6 +729,19 @@ const codeblockView = ViewPlugin.define((view) => {
         img.style.objectFit = 'contain';
         previewEl.appendChild(img);
 
+        hideScroller();
+        view.dom.appendChild(previewEl);
+    }
+
+    /** Say what a file that is not text is, in place of its contents. */
+    function showBinaryPreview(path: string, size: number) {
+        removePreview();
+        previewEl = document.createElement('div');
+        previewEl.className = 'cm-binary-preview';
+        previewEl.style.cssText = 'display:flex;align-items:center;justify-content:center;padding:16px;min-height:120px;color:var(--cm-toolbar-color, #ccc);';
+        const name = path.split('/').pop() || path;
+        const kb = size < 1024 ? `${size} bytes` : `${Math.round(size / 1024)} KB`;
+        previewEl.textContent = `${name} is not text (${kb}).`;
         hideScroller();
         view.dom.appendChild(previewEl);
     }
@@ -479,23 +806,50 @@ const codeblockView = ViewPlugin.define((view) => {
         });
     }
 
-    async function handleOpen(path: string) {
+    /** Start (or reuse) the language server for `path` and attach it, if
+     *  the file is still the one open when it is ready. */
+    async function attachLanguageServer(path: string, lang: string, ext: string | undefined, ticket: number) {
+        // Lazily pre-fill TypeScript lib definitions when a TS/JS file is first opened
+        const tsExtensions = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts'];
+        const { typescript } = view.state.facet(CodeblockFacet);
+        let lsp: Extension | null = null;
+        try {
+            const libFiles = typescript?.resolveLib && ext && tsExtensions.includes(ext)
+                ? await prefillTypescriptDefaults(fs, typescript.resolveLib, typescript)
+                : getCachedLibFiles();
+            lsp = await LSP.client({ language: lang as any, path, fs, libFiles });
+        } catch (lspErr) {
+            // Gracefully degrade when LSP is unavailable (e.g. missing worker, test environment)
+            console.warn("LSP unavailable for this view:", lspErr);
+        }
+        if (!lsp || ticket !== latestOpen) return;
+        safeDispatch(view, { effects: languageServerCompartment.reconfigure([lsp]) });
+    }
+
+    // Each open is numbered; only the latest may put its file in the view,
+    // so when opens overlap the last one asked for wins, whichever read ends first.
+    let latestOpen = 0;
+
+    /** Open `path`; `again` reloads the open file (after a conflict). */
+    async function handleOpen(path: string, again = false) {
         if (!path) return;
-        if (opening === path) return;
+        if (opening === path && !again) return;
         opening = path;
+        const ticket = ++latestOpen;
         // Cancel the debounced save and manually flush the current file.
         // We can't use save.flush() because openFileEffect has already updated
         // currentFileField.path to the NEW path, but the document still holds
         // the OLD file's content. Using activePath ensures we write to the
         // correct location.
         save.cancel();
-        if (activePath && view.state.field(settingsField).autosave) {
+        // Only edits are written back: an image, or a file opened and left
+        // untouched, is not.
+        if (activePath && dirty && view.state.field(settingsField).autosave) {
+            dirty = false;
             const oldPath = activePath;
             const oldContent = view.state.doc.toString();
-            const parent = dirname(oldPath);
-            if (parent && parent !== '.') await fs.mkdir(parent, { recursive: true }).catch(console.error);
-            await fs.writeFile(oldPath, oldContent).catch(console.error);
-            LSP.notifyFileChanged(oldPath, FileChangeType.Changed);
+            writing = writing.then(() => store(oldPath, oldContent, true));
+            await writing;
         }
         try {
             const ext = path.split('.').pop()?.toLowerCase();
@@ -511,8 +865,33 @@ const codeblockView = ViewPlugin.define((view) => {
                 ]
             });
 
-            const exists = await fs.exists(path);
-            const content = exists ? await fs.readFile(path) : "";
+            const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
+            // Read as bytes: an image is previewed from them, and a file that
+            // is not text is shown as such, never decoded into the editor.
+            // Through the log, the bytes and the version they are come together.
+            let bytes: Uint8Array | null;
+            let opened: string | null = null;
+            if (versions) {
+                const head = await versions.head(path);
+                bytes = head ? await versions.read(head) : null;
+                opened = head?.id ?? null;
+            } else {
+                bytes = (await fs.exists(path)) ? await fs.readBytes(path) : null;
+            }
+            const exists = bytes !== null;
+            let imageUrl: string | null = null;
+            if (isRasterImage && bytes) {
+                const head = new TextDecoder().decode(bytes.subarray(0, 5));
+                imageUrl = head === 'data:' ? new TextDecoder().decode(bytes)
+                    : URL.createObjectURL(new Blob([bytes as BlobPart], { type: `image/${ext === 'jpg' ? 'jpeg' : ext === 'ico' ? 'x-icon' : ext}` }));
+            }
+            const text = bytes && !isRasterImage ? textOf(bytes) : '';
+            const isBinary = text === null;
+            const content = text ?? '';
+
+            // An open that is no longer wanted (another began, or the file
+            // was put down) writes nothing: it must not create the file.
+            if (ticket !== latestOpen) return;
 
             // Ensure the file exists on VFS before LSP initialization.
             // The LSP uses readDirectory to find source files and match them
@@ -520,7 +899,12 @@ const codeblockView = ViewPlugin.define((view) => {
             // back to an inferred project that lacks lib file configuration.
             if (!exists) {
                 await fs.mkdir(dirname(path), { recursive: true }).catch(() => {});
-                await fs.writeFile(path, content);
+                if (versions) {
+                    const created = await versions.put(path, null, content);
+                    opened = created.ok === true ? created.version.id : created.head?.id ?? null;
+                } else {
+                    await fs.writeFile(path, content);
+                }
                 LSP.notifyFileChanged(path, FileChangeType.Created);
                 // Give the LSP server a moment to process the file-created
                 // notification before we send didOpen — otherwise the server
@@ -528,87 +912,98 @@ const codeblockView = ViewPlugin.define((view) => {
                 await new Promise(r => setTimeout(r, 50));
             }
 
-            // Add new files to the search index so they appear in future searches
-            const { index } = view.state.facet(CodeblockFacet);
-            if (index) {
-                index.add(path);
-                if (index.savePath) index.save(fs, index.savePath);
-            }
             const unit = detectIndentationUnit(content) || "    ";
 
-            // Lazily pre-fill TypeScript lib definitions when a TS/JS file is first opened
-            const tsExtensions = ['ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'mts', 'cts'];
-            const { typescript } = view.state.facet(CodeblockFacet);
-            let libFiles: Record<string, string> | undefined;
-            if (typescript?.resolveLib && ext && tsExtensions.includes(ext)) {
-                libFiles = await prefillTypescriptDefaults(fs, typescript.resolveLib, typescript);
-            } else {
-                libFiles = getCachedLibFiles();
-            }
+            if (ticket !== latestOpen) return;
 
-            let lsp: Extension | null = null;
-            if (lang) {
-                try {
-                    lsp = await LSP.client({ language: lang as any, path, fs, libFiles });
-                } catch (lspErr) {
-                    // Gracefully degrade when LSP is unavailable (e.g. missing worker, test environment)
-                    console.warn("LSP unavailable for this view:", lspErr);
-                }
+            // A region: its lines, where they are in the file now. Reopened
+            // (after a conflict), they are followed from the file as it was
+            // shown; opened first, found by the text the host last saw them
+            // with (a note's fence body) if they have moved; otherwise they
+            // are the lines the range names.
+            const wanted = isRasterImage || isBinary ? null : view.state.field(regionField);
+            let placed: LineRange | null = null;
+            if (wanted) {
+                const clamped = clampRange(wanted, lineCount(content));
+                const cfg = view.state.facet(CodeblockFacet);
+                const seen = activePath === null && path === cfg.filepath ? cfg.content : undefined;
+                placed = (activePath === path && shown !== null ? followRange(shown, content, wanted) : null)
+                    ?? (seen && sliceLines(content, clamped) !== seen ? findRegion(content, seen, wanted.from) : null)
+                    ?? clamped;
             }
+            const lines = placed ? sliceLines(content, placed) : content;
 
             activePath = path;
+            version = opened;
+            shown = placed ? content : null;
+            region = placed;
 
             // Check for image/SVG files
-            const isRasterImage = ext ? IMAGE_EXTENSIONS.has(ext) : false;
             const isSvg = ext === SVG_EXTENSION;
 
-            if (isRasterImage) {
-                // Raster image: show preview, hide editor content
+            if (isRasterImage || isBinary) {
+                // An image, or a file that is not text: shown, not edited
                 // Clear diagnostics + change content in one dispatch to avoid
                 // stale decoration positions from the previous file.
-                const clearDiag = setDiagnostics(view.state, []);
-                safeDispatch(view, {
-                    ...clearDiag,
-                    changes: { from: 0, to: view.state.doc.length, insert: content },
-                    effects: [
-                        ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
-                        fileLoadedEffect.of({ path, content, language: null }),
-                        readOnlyCompartment.reconfigure(EditorState.readOnly.of(true)),
-                    ]
+                safeDispatch(view, () => {
+                    const clearDiag = setDiagnostics(view.state, []);
+                    return {
+                        ...clearDiag,
+                        changes: { from: 0, to: view.state.doc.length, insert: content },
+                        effects: [
+                            ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
+                            fileLoadedEffect.of({ path, content, language: null, preview: true }),
+                            setRegionEffect.of(null),
+                        ],
+                        annotations: Transaction.addToHistory.of(false),
+                    };
                 });
-                showImagePreview(content);
+                if (isBinary) showBinaryPreview(path, bytes?.length ?? 0);
+                else showImagePreview(imageUrl);
             } else {
                 // Remove any existing preview
                 removePreview();
 
-                // Clear diagnostics + change content + reconfigure LSP in one
-                // atomic dispatch. Separate dispatches cause RangeError when
-                // stale LSP decorations reference positions beyond the new
-                // document's length.
-                const clearDiag = setDiagnostics(view.state, []);
-                safeDispatch(view, {
-                    ...clearDiag,
-                    changes: { from: 0, to: view.state.doc.length, insert: content },
-                    effects: [
-                        ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
-                        indentationCompartment.reconfigure(indentUnit.of(unit)),
-                        fileLoadedEffect.of({ path, content, language: lang }),
-                        languageServerCompartment.reconfigure(lsp ? [lsp] : []),
-                    ]
+                // The file's text, with the last file's diagnostics and
+                // language server gone, in one transaction computed when it
+                // is applied (another open may have changed the document
+                // since this one began). Kept out of the undo history, so undo
+                // cannot bring the last file's text into this one.
+                safeDispatch(view, () => {
+                    const clearDiag = setDiagnostics(view.state, []);
+                    return {
+                        ...clearDiag,
+                        changes: { from: 0, to: view.state.doc.length, insert: lines },
+                        effects: [
+                            ...(clearDiag.effects ? [clearDiag.effects].flat() : []),
+                            indentationCompartment.reconfigure(indentUnit.of(unit)),
+                            fileLoadedEffect.of({ path, content: lines, language: lang }),
+                            setRegionEffect.of(placed),
+                            languageServerCompartment.reconfigure([]),
+                        ],
+                        annotations: Transaction.addToHistory.of(false),
+                    };
                 });
 
                 // SVG: show live preview below the editor
                 if (isSvg) {
                     showSvgView(content, 'preview');
                 }
+
+                // The file is editable now; its language server joins when
+                // it is ready (a TypeScript worker takes seconds to start).
+                // Not for a region: the server would take its lines for the
+                // whole file.
+                if (lang && !placed) void attachLanguageServer(path, lang, ext, ticket);
             }
 
             // Subscribe to changes from other views of the same file
             subscribeToFileChanges(path);
         } catch (e) {
             console.error("Failed to open file", e);
+            if (ticket === latestOpen) emitFileEvent(view, { type: 'error', path, error: e });
         } finally {
-            opening = null;
+            if (opening === path) opening = null;
         }
     }
 
@@ -648,15 +1043,42 @@ const codeblockView = ViewPlugin.define((view) => {
                 }
             }
 
-            // Keep read-only in sync with loading state without dispatching new transactions
-            const prev = u.startState.field(currentFileField);
-            const next = u.state.field(currentFileField);
-            if (prev.loading !== next.loading) {
-                // Reconfigure readOnly via compartment inside the same update when possible
-                safeDispatch(view, { effects: readOnlyCompartment.reconfigure(EditorState.readOnly.of(next.loading)) });
+            // A file arriving replaces whatever was unsaved (written, or
+            // given up with autosave off, when it was opened).
+            if (u.transactions.some(isLoad)) dirty = false;
+            const edited = !receivingExternalUpdate && u.transactions.some((tr) => tr.docChanged && !isLoad(tr));
+            const file = u.state.field(currentFileField);
+            if (u.transactions.some((tr) => tr.effects.some((e) => e.is(closeFileEffect)))) {
+                // Nothing of the file's is written from here: not its pending
+                // save, nor an open still reading.
+                save.cancel();
+                dirty = false;
+                activePath = null;
+                shown = null;
+                region = null;
+                latestOpen++;
+                removePreview();
+                unsubscribeFileChanges?.();
+                unsubscribeFileChanges = null;
+                const closed = u.startState.field(currentFileField).path;
+                if (closed) queueMicrotask(() => emitFileEvent(view, { type: 'close', path: closed }));
             }
-
-            if (u.docChanged && !receivingExternalUpdate && !u.state.field(currentFileField).loading && u.state.field(settingsField).autosave) save();
+            // A region that moved in its file is numbered from its new first
+            // line (the gutter redraws its numbers only when its own
+            // configuration changes, or the document does).
+            const startedAt = u.startState.field(regionField)?.from ?? 1;
+            if ((u.state.field(regionField)?.from ?? 1) !== startedAt && u.state.field(settingsField).showLineNumbers) {
+                safeDispatch(view, { effects: lineNumbersCompartment.reconfigure(numberedLines()) });
+            }
+            // Told after the update, so a listener may dispatch.
+            if (file.path && !file.loading && u.transactions.some(isLoad)) {
+                const path = file.path;
+                queueMicrotask(() => emitFileEvent(view, { type: 'load', path }));
+            }
+            if (edited && file.path && !file.loading && !file.preview) {
+                dirty = true;
+                if (u.state.field(settingsField).autosave) save();
+            }
 
             // Live SVG preview update
             if (u.docChanged && previewEl?.classList.contains('cm-svg-preview')) {
@@ -687,6 +1109,7 @@ const codeblockView = ViewPlugin.define((view) => {
             // If fs changed via facet reconfig, refresh handle references
             const newFs = u.state.facet(CodeblockFacet).fs;
             if (fs !== newFs) fs = newFs;
+            versions = u.state.facet(CodeblockFacet).versions;
         },
         destroy() {
             if (unsubscribeFileChanges) {
@@ -696,6 +1119,7 @@ const codeblockView = ViewPlugin.define((view) => {
             unsubscribeSettings();
             removePreview();
             save.cancel();
+            persisters.delete(view);
         }
     };
 });
@@ -725,10 +1149,10 @@ export const basicSetup: Extension = (() => [
     ])
 ])();
 
-export function createCodeblock({ parent, fs, filepath, language, content = '', cwd = '/', toolbar = true, toolbarLayout, index, dark, settings, typescript }: CreateCodeblockArgs) {
+export function createCodeblock({ parent, fs, filepath, range, anonymous, language, content = '', cwd = '/', toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript }: CreateCodeblockArgs) {
     const state = EditorState.create({
         doc: content,
-        extensions: [basicSetup, codeblock({ content, fs, filepath, cwd, language, toolbar, toolbarLayout, index, dark, settings, typescript })]
+        extensions: [basicSetup, codeblock({ content, fs, filepath, range, anonymous, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })]
     });
     const view = new EditorView({ state, parent });
     return view;

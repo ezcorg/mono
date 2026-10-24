@@ -1,0 +1,17 @@
+package example:pipe@0.1.0;
+
+/// A stream-shaped novel capability, resource-shaped: the token is presented
+/// once, at `open`, and `run` carries a byte stream each way. It upper-cases
+/// what it is given. Exists to prove the generic serving path carries
+/// component-model streams and async exports end to end.
+interface pipe {
+  resource session {
+    run: async func(input: stream<u8>) -> result<stream<u8>, string>;
+  }
+  open: func(grant: string) -> result<session, string>;
+}
+
+/// The wRPC client side, for the daemon's tests.
+world pipe-client {
+  import pipe;
+}

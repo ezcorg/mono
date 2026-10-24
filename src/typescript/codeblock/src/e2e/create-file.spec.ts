@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
 import { Browser, Page } from 'puppeteer-core';
-import { getDevServerUrl, launchBrowser } from './helpers';
+import { getDevServerUrl, launchBrowser, waitForFileLoaded } from './helpers';
 
 describe('Create file flow (e2e)', () => {
     let browser: Browser;
@@ -135,15 +135,8 @@ describe('Create file flow (e2e)', () => {
         expect(saveAsCmd).not.toBeNull();
         await saveAsCmd!.click();
 
-        // Wait for file to fully load (toolbar shows name AND loading is done)
-        await page.waitForFunction(
-            () => {
-                const input = document.querySelector('.cm-toolbar-input') as HTMLInputElement;
-                const loading = document.querySelector('.cm-loading');
-                return input?.value === 'persist.txt' && !loading;
-            },
-            { timeout: 3000 }
-        );
+        // Wait for the file to load (the view says so).
+        await waitForFileLoaded(page, 'persist.txt');
 
         // Now edit the content (select all with the platform's modifier: on a Mac,
         // CodeMirror binds Ctrl-a to "line start", not "select all")

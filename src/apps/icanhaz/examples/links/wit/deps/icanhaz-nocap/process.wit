@@ -1,0 +1,40 @@
+package icanhaz:nocap@0.1.0;
+
+/// The **process** capability: spawn a host program the grant *names* (its
+/// `image` pinned at consent), with **piped** stdio and no tty. Where
+/// `terminal` runs the host's own login shell in a PTY, `process` runs one
+/// specific program: `stdin` carries bytes to the child (client→host); the
+/// returned stream carries the child's **stdout** (host→client). Built for
+/// language servers and build tools: `spawn(["--stdio"], stdin) -> stdout`
+/// carrying LSP JSON-RPC. The child's stderr is logged host-side, never
+/// merged into stdout.
+///
+/// Resource-shaped: the grant token is presented once, at `open`; the
+/// `process` object it returns *is* the capability, and its methods carry no
+/// token. Provided by a shipped component over `process-raw`, so a wrapper
+/// chain sits in front of it like any other component.
+interface process {
+  resource process {
+    /// `args` is the child's argv (after argv[0]); honoured only when the
+    /// grant negotiated `guest-chooses-argv`, otherwise a non-empty `args`
+    /// that is not the pinned set is refused. Closing `stdin` sends EOF (the
+    /// LSP `exit` convention). The result streams stdout until the child
+    /// exits, the stream is dropped, or the grant ends.
+    spawn: async func(args: list<string>, stdin: stream<u8>) -> result<stream<u8>, string>;
+  }
+  /// The capability for a consented `process` grant; refuses an unknown,
+  /// expired or wrong-kind token.
+  open: func(grant: string) -> result<process, string>;
+}
+
+/// What a wRPC client generates against.
+world process-client {
+  import process;
+}
+
+/// The shipped component: the capability over the raw layer.
+world process-capability {
+  import gate-process;
+  import process-raw;
+  export process;
+}

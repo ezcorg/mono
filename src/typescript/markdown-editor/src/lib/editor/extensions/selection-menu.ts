@@ -1,8 +1,9 @@
 import { Editor, Extension } from '@tiptap/core'
 import { Plugin, PluginKey, TextSelection, AllSelection } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
-import tippy, { Instance as TippyInstance } from 'tippy.js'
 import { ContextMenu } from '../ui/context-menu'
+import { button, pressable } from '../ui/dom'
+import { menuPopover, type Popover } from '../ui/popover'
 
 /**
  * Selection menu.
@@ -94,10 +95,16 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
             label: 'Link',
             icon: '🔗',
             isActive: (e) => e.isActive('link'),
-            // Open the inline link editor (LinkMenu) rather than a blocking
-            // window.prompt. Falls back to focusing the editor if the
-            // LinkMenu extension isn't installed.
+            // A selection that is all link: the link taken off it (and off
+            // it alone: the rest of a link that reaches past the selection
+            // stays a link). Otherwise the inline link editor (LinkMenu)
+            // rather than a blocking window.prompt; the editor is focused
+            // all the same when the LinkMenu extension isn't installed.
             run: (e) => {
+                if (e.isActive('link')) {
+                    e.chain().focus().unsetMark('link').run()
+                    return
+                }
                 e.chain().focus().run()
                 const linkView = (e.storage as Record<string, any>).linkMenu?.view
                 if (linkView?.startEdit) linkView.startEdit()
@@ -158,6 +165,20 @@ function actionsForSelection(editor: Editor): SelectionAction[] {
         run: (e) => e.chain().focus().unsetAllMarks().run(),
     })
 
+    // A comment on the selection, when the host says who is writing.
+    const comments = (editor.storage as any).comments as { author?: () => string | null } | undefined
+    if (comments?.author?.()) {
+        actions.push({ label: 'Comment', icon: '💬', run: (e) => void e.commands.startComment() })
+    }
+
+    // Prose actions, when the host gave the editor a model.
+    const ai = (editor.storage as any).proseAI as { inference?: unknown; actions: { id: string; label: string }[] } | undefined
+    if (ai?.inference) {
+        for (const action of ai.actions) {
+            actions.push({ label: action.label, icon: '✦', run: (e) => void e.commands.runProseAction(action.id) })
+        }
+    }
+
     return actions.filter((a) => !a.isAvailable || a.isAvailable(editor))
 }
 
@@ -166,7 +187,7 @@ class SelectionMenuView {
     private view: EditorView
     private wrapper: HTMLElement
     private btn: HTMLButtonElement
-    private popup: TippyInstance | null = null
+    private popup: Popover | null = null
     private activeMenu: ContextMenu | null = null
     private isOpen = false
     // Whether the button itself currently holds focus. Tracked explicitly
@@ -176,7 +197,6 @@ class SelectionMenuView {
     // intermittently saw `body` and hid the button right as it gained focus.
     private buttonFocused = false
     private onFocusChange: () => void
-    private onDocumentMouseDown: ((e: MouseEvent) => void) | null = null
 
     constructor(view: EditorView, editor: Editor) {
         this.view = view
@@ -185,9 +205,7 @@ class SelectionMenuView {
         this.wrapper = (view.dom.parentElement as HTMLElement) ?? view.dom
         this.ensureWrapperPositioned()
 
-        this.btn = document.createElement('button')
-        this.btn.type = 'button'
-        this.btn.className = 'ezco-mde-selection-menu-btn'
+        this.btn = button('ezco-mde-selection-menu-btn')
         this.btn.style.position = 'absolute'
         this.btn.style.opacity = '0'
         this.btn.style.pointerEvents = 'none'
@@ -197,12 +215,8 @@ class SelectionMenuView {
         this.btn.setAttribute('aria-haspopup', 'menu')
         this.btn.innerHTML = SELECTION_MENU_ICON
 
-        // Don't let the button's own mousedown collapse the selection
-        // before the click handler runs.
-        this.btn.addEventListener('mousedown', (e) => e.preventDefault())
-        this.btn.addEventListener('click', (e) => {
+        pressable(this.btn, (_, e) => {
             e.preventDefault()
-            e.stopPropagation()
             this.toggleMenu()
         })
         this.btn.addEventListener('focus', () => {
@@ -221,16 +235,6 @@ class SelectionMenuView {
         this.onFocusChange = () => this.reposition()
         view.dom.addEventListener('focusout', this.onFocusChange)
         view.dom.addEventListener('focusin', this.onFocusChange)
-
-        this.onDocumentMouseDown = (e: MouseEvent) => {
-            if (!this.isOpen) return
-            const target = e.target as Node | null
-            if (!target) return
-            if (this.activeMenu?.dom.contains(target)) return
-            if (this.btn.contains(target)) return
-            this.closeMenu()
-        }
-        document.addEventListener('mousedown', this.onDocumentMouseDown)
     }
 
     update() {
@@ -243,16 +247,12 @@ class SelectionMenuView {
     }
 
     destroy() {
+        const popup = this.popup
         this.closeMenu()
-        this.activeMenu?.destroy()
-        this.popup?.destroy()
+        popup?.destroy()
         this.btn.remove()
         this.view.dom.removeEventListener('focusout', this.onFocusChange)
         this.view.dom.removeEventListener('focusin', this.onFocusChange)
-        if (this.onDocumentMouseDown) {
-            document.removeEventListener('mousedown', this.onDocumentMouseDown)
-            this.onDocumentMouseDown = null
-        }
         // Intentionally do NOT reset the wrapper's position here. The
         // wrapper is shared with other overlays (block actions), and a
         // leftover `position: relative` is harmless — whereas resetting it
@@ -278,6 +278,9 @@ class SelectionMenuView {
     private shouldShow(): boolean {
         const { selection } = this.view.state
         if (selection.empty) return false
+        // A comment being written on the selection: its composer stands
+        // where the button would, and takes the button's place.
+        if ((this.editor.storage as Record<string, any>).comments?.draft?.()) return false
         // Select-all (Cmd/Ctrl-A) yields an `AllSelection`, NOT a
         // `TextSelection` — which is why select-all never used to surface this
         // menu. It spans the whole document, so the per-textblock checks below
@@ -398,38 +401,21 @@ class SelectionMenuView {
         this.activeMenu = menu
 
         this.popup?.destroy()
-        this.popup = tippy(this.btn, {
-            content: menu.dom,
-            interactive: true,
-            trigger: 'manual',
-            // Open to the *right* of the icon so the menu follows the
-            // natural left-to-right reading flow from where the selection
-            // ended. Tippy's flip modifier keeps it on-screen, falling back
-            // to the left only when there's no room on the right.
+        // To the *right* of the icon, following the reading flow from where
+        // the selection ended; to the left, under or above it only when
+        // there is no room on the right.
+        this.popup = menuPopover(this.btn, menu, {
             placement: 'right-start',
-            popperOptions: {
-                modifiers: [
-                    { name: 'flip', options: { fallbackPlacements: ['left-start', 'bottom-start', 'top-start'] } },
-                    { name: 'preventOverflow', options: { padding: 8 } },
-                ],
-            },
-            theme: 'ezco-mde-block-actions',
-            appendTo: () => document.body,
-            hideOnClick: false,
-            onShown: () => menu.focus(),
+            flip: ['left-start', 'bottom-start', 'top-start'],
             onHide: () => {
                 this.isOpen = false
-                this.activeMenu?.disable()
-                setTimeout(() => {
-                    this.activeMenu?.destroy()
-                    this.activeMenu = null
-                    this.popup?.destroy()
-                    this.popup = null
-                }, 0)
+                this.activeMenu = null
+                this.popup = null
+                // The menu held focus: the button stays only if the editor
+                // has it back (an action's chain, a dismissal) or gets it.
+                this.reposition()
             },
-        }) as TippyInstance
-        menu.enable()
-        this.popup.show()
+        })
     }
 
     private closeMenu(opts: { restoreEditorFocus?: boolean } = {}) {

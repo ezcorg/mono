@@ -261,7 +261,7 @@ html, body { height: 100%; margin: 0; }
 
 /* Left outline column. */
 .mac-sidebar { flex: none; }
-.mac-sidebar:has(.ezco-mde-sidebar--empty) { display: none; }
+.mac-sidebar:has(.ezco-mde-sidebar--empty):not(:has(.ezco-mde-links:not(.ezco-mde-links--empty))) { display: none; }
 
 /* Editor column. The library's `.ezco-mde` wrapper renders inside it. */
 .mac-editor {
@@ -283,3 +283,7 @@ html, body { height: 100%; margin: 0; }
 .mac-window .mac-sidebar .ezco-mde-sidebar {
   font-family: "Source Serif 4", system-ui, Georgia, serif;
 }
+
+/* The editor's links panel, mounted under the outline (its links come from a
+   novel capability in the store). Themed like the outline column. */
+.mac-links .ezco-mde-links { margin-top: 0; border-top: none; padding: 12px 6px; max-width: 220px; }

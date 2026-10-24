@@ -1,0 +1,493 @@
+/**
+ * A vault: a folder of files behind any `VfsInterface`, with the indexes
+ * derived from it kept current.
+ *
+ * The files are the truth; everything here is rebuilt from them. `open`
+ * walks the vault once; after that the index follows every write made
+ * through `vault.fs` (the same filesystem, observed), and, when the store
+ * can report them, changes made by anything else (`watch`). A note is
+ * parsed once per change (`parseNote`), and the link graph, the search
+ * index and the comment index all read that one parse.
+ *
+ *     const vault = await Vault.open(hostFs, { identity: 'theo' })
+ *     createEditor({
+ *         fs: { fs: vault.fs, … },
+ *         links: { resolver: vault.links, index: vault.links },
+ *         toolbar: { search: vault.search, files: vault.files },
+ *     })
+ *     vault.comments // references (comments) by what they are about
+ *     vault.reactions // an identity's emoji on documents and references
+ *
+ * The vault's own state (versions, reactions) lives in `.vault/`, out of
+ * every index.
+ */
+import {
+    FileType,
+    Locks,
+    VersionLog,
+    dirname,
+    isHidden,
+    normalizePath,
+    pathTaken,
+    type FileOperations,
+    type FileSearch,
+    type VersionLogOptions,
+    type VfsInterface,
+} from '@joinezco/storage'
+import { SearchIndex } from './search.js'
+import { LinkGraph, linkName, syntaxOf } from './links/graph.js'
+import { markdownDestinationFor, resolveLink, wikilinkTextFor } from './links/resolve.js'
+import type { ScannedLink } from './links/syntax.js'
+import { parseNote, rewriteLinks } from './parse.js'
+import { isNote } from './note.js'
+import { formatReference, referencesIn, referencesOf, spliceReference, type CommentIndex, type CommentRef, type Reference } from './comments.js'
+import { ReactionStore, type Reactions } from './reactions.js'
+import type { LinkIndex, LinkResolution, LinkResolver, LinkSyntax } from './links/types.js'
+
+export interface VaultOptions {
+    /** Follow changes made outside `vault.fs` through the store's `watch`.
+     *  Default true; a store that cannot watch simply never reports. */
+    watch?: boolean
+    /** Leave a path out of every index (the default leaves out dot-files and
+     *  dot-directories: `.git`, `.obsidian`, the vault's own state). */
+    ignore?: (path: string) => boolean
+    /** Where the vault keeps its own state: the version log, and each
+     *  identity's reactions under `state/` (default `.vault`). */
+    dir?: string
+    /** The identity reactions are made as (`[A-Za-z0-9_.-]+`); without one
+     *  `reactions` is read-only. */
+    identity?: string
+    /** The version log's options (a signer, say; its `dir` defaults to the
+     *  vault's). */
+    versions?: VersionLogOptions
+}
+
+/** The links of a vault, as the editor asks for them. */
+export type VaultLinks = LinkIndex & LinkResolver
+
+export class Vault {
+    /** The vault's filesystem, observed: writes through it update the index. */
+    readonly fs: VfsInterface
+    /** Backlinks, unresolved links, resolution, suggestions and renames. */
+    readonly links: VaultLinks
+    /** Files by path and name, notes by their text. */
+    readonly search: FileSearch
+    /** Creating, moving (links kept) and deleting files. */
+    readonly files: FileOperations
+    /** Every file's version log, with writes refused on a stale version. */
+    readonly versions: VersionLog
+    /** References (comments) by the documents they are about, and changing
+     *  them where they live. */
+    readonly comments: CommentIndex
+    /** Each identity's reactions on documents and their references. */
+    readonly reactions: Reactions
+
+    private graph = new LinkGraph()
+    private text = new SearchIndex()
+    /** The references each note holds (notes with none are left out). */
+    private refs = new Map<string, Reference[]>()
+    /** Comment updates to a note, one at a time: each reads what the one
+     *  before it wrote. */
+    private commentWrites = new Locks()
+    private reactionStore: ReactionStore
+    private listeners = new Set<() => void>()
+    private notifyScheduled = false
+    private watchAbort = new AbortController()
+    private ignore: (path: string) => boolean
+
+    /** Resolves once the first walk of the store is indexed. Every
+     *  asynchronous query waits for it; `fs` is usable at once. */
+    readonly ready: Promise<void>
+
+    /**
+     * A vault over `store`, indexing it in the background (`ready`). Use
+     * `Vault.open` to wait for the index; construct directly when the
+     * filesystem is needed before the index is (an editor opening a note).
+     */
+    constructor(
+        /** The store as given, unobserved. */
+        readonly store: VfsInterface,
+        options: VaultOptions = {},
+    ) {
+        this.ignore = options.ignore ?? isHidden
+        this.fs = this.observe(store)
+        const dir = options.dir ?? '.vault'
+        // Over the observed filesystem, so what it writes is indexed.
+        this.versions = new VersionLog(this.fs, { dir, ...options.versions })
+        this.reactionStore = new ReactionStore(this.fs, { dir, identity: options.identity ?? null })
+        this.reactions = this.reactionStore
+        const ready = () => this.ready
+        this.links = {
+            backlinks: async (note) => (await ready(), this.graph.backlinks(note)),
+            unresolved: async () => (await ready(), this.graph.unresolved()),
+            rename: async (oldPath, newPath) => (await ready(), this.rename(oldPath, newPath)),
+            resolve: async (target, from, syntax) => (await ready(), this.resolveTarget(target, from, syntax)),
+            suggest: async (query, from, limit) => (await ready(), this.graph.suggest(query, from ? normalizePath(from) : null, limit)),
+            subscribe: (listener) => this.subscribe(listener),
+        }
+        this.search = {
+            search: async (query, options) => {
+                await ready()
+                return this.text.search(query, { ...options, read: (path) => this.store.readFile(path) })
+            },
+        }
+        this.comments = {
+            about: async (note) => (await ready(), this.about(note)),
+            in: async (doc) => (await ready(), this.heldBy(doc)),
+            update: (ref, next) => this.commentWrites.run(normalizePath(ref.source), () => this.updateReference(ref, next)),
+            subscribe: (listener) => this.subscribe(listener),
+        }
+        const fs = this.fs
+        const versions = this.versions
+        this.files = {
+            async create(path, content = '', options = {}) {
+                const clean = normalizePath(path)
+                if (!options.overwrite && (await fs.exists(clean))) throw new Error(`${clean} already exists`)
+                const parent = dirname(clean)
+                if (parent && !(await fs.exists(parent))) await fs.mkdir(parent, { recursive: true })
+                if (typeof content === 'string') await fs.writeFile(clean, content)
+                else await fs.writeBytes(clean, content)
+            },
+            mkdir: (path) => fs.mkdir(normalizePath(path), { recursive: true }),
+            rename: async (oldPath, newPath) => (await ready(), this.rename(oldPath, newPath)),
+            async remove(path) {
+                const clean = normalizePath(path)
+                if ((await fs.stat(clean))?.type === FileType.Directory) throw new Error(`${clean} is a folder`)
+                await fs.unlink(clean)
+                // Its history goes with it.
+                await versions.remove(clean)
+            },
+        }
+        // Following starts before the first walk, so a change made while the
+        // walk runs is heard (and applied once the walk is done).
+        if (options.watch !== false) this.follow()
+        this.ready = this.rebuild()
+    }
+
+    /** Index `store`, and resolve when the index is built. */
+    static async open(store: VfsInterface, options: VaultOptions = {}): Promise<Vault> {
+        const vault = new Vault(store, options)
+        await vault.ready
+        return vault
+    }
+
+    /** Re-read every file. */
+    async rebuild(): Promise<void> {
+        this.graph = new LinkGraph()
+        this.text.clear()
+        this.refs.clear()
+        for await (const path of this.walk('')) {
+            // A note that cannot be read is still there to link to.
+            await this.indexFile(path).catch(() => this.addFile(path))
+        }
+        this.changed()
+    }
+
+    /** The files under `dir` the vault indexes. A folder `ignore` leaves out
+     *  is not entered (`.git` can be large), and one that cannot be read is
+     *  passed over rather than failing the walk. */
+    private async *walk(dir: string): AsyncGenerator<string> {
+        let entries: [string, FileType][]
+        try {
+            entries = await this.store.readDir(dir || '/')
+        } catch {
+            return
+        }
+        for (const [name, type] of entries) {
+            const path = dir ? `${dir}/${name}` : name
+            if (this.ignore(path)) continue
+            if (type === FileType.Directory) yield* this.walk(path)
+            else yield path
+        }
+    }
+
+    /** Stop following the store. */
+    close(): void {
+        this.watchAbort.abort()
+        this.listeners.clear()
+    }
+
+    /** Be told (once per burst of changes) when anything indexed changed. */
+    subscribe(listener: () => void): () => void {
+        this.listeners.add(listener)
+        return () => this.listeners.delete(listener)
+    }
+
+    /** Every file in the vault, sorted. */
+    paths(): string[] {
+        return [...this.graph.files.all()].sort()
+    }
+
+    private resolveTarget(target: string, from: string | null, syntax: LinkSyntax = 'wikilink'): LinkResolution | null {
+        return resolveLink(target, from ? normalizePath(from) : null, syntax, this.graph.files)
+    }
+
+    /** References in other documents whose link resolves to `note`, by
+     *  source then line: among the notes the graph knows link to it, the
+     *  references that do. */
+    private about(note: string): CommentRef[] {
+        const clean = normalizePath(note)
+        const out: CommentRef[] = []
+        for (const source of this.graph.sources(clean)) {
+            if (source === clean) continue
+            for (const ref of this.refs.get(source) ?? []) {
+                if (ref.link.target.trim() && this.resolveTarget(ref.link.target, source)?.path === clean) out.push({ ...ref, source })
+            }
+        }
+        return out.sort((a, b) => a.source.localeCompare(b.source) || a.line - b.line)
+    }
+
+    /** The references `doc` holds, in order. */
+    private heldBy(doc: string): CommentRef[] {
+        const source = normalizePath(doc)
+        return (this.refs.get(source) ?? []).map((ref) => ({ ...ref, source }))
+    }
+
+    /** Write `next` in place of the reference `ref` read, if it is still as
+     *  read; remove the document when removing it leaves only blank lines. */
+    private async updateReference(ref: CommentRef, next: Parameters<CommentIndex['update']>[1]): Promise<CommentRef | null> {
+        const source = normalizePath(ref.source)
+        const text = await this.fs.readFile(source)
+        const refs = referencesIn(text)
+        const found = refs.find((r) => r.start === ref.start && r.text === ref.text) ?? refs.find((r) => r.text === ref.text)
+        if (!found) throw new Error(`The reference in ${source} changed since it was read`)
+        const updated = spliceReference(text, found, next === null ? null : formatReference(next.link, next.body))
+        if (next === null && !updated.trim()) {
+            await this.fs.unlink(source)
+            await this.versions.remove(source)
+            return null
+        }
+        await this.fs.writeFile(source, updated)
+        if (next === null) return null
+        const now = referencesIn(updated).find((r) => r.start === found.start)
+        return now ? { ...now, source } : null
+    }
+
+    /**
+     * Move a file or directory and keep every link meaning what it meant:
+     * links to anything moved are rewritten to the new place, links inside
+     * moved notes are rewritten where the move changed what they resolve to,
+     * and a wikilink elsewhere that the new name would capture is lengthened
+     * to keep its old target. Refuses to replace an existing file. Returns
+     * how many links were rewritten.
+     */
+    async rename(oldPath: string, newPath: string): Promise<number> {
+        const from = normalizePath(oldPath)
+        const to = normalizePath(newPath)
+        if (!from || !to) throw new Error('rename: an empty path is the vault root')
+        if (from === to) return 0
+        if (to.startsWith(`${from}/`)) throw new Error(`rename: cannot move ${from} into itself`)
+        const stat = await this.store.stat(from)
+        if (!stat) throw new Error(`rename: ${from} does not exist`)
+        if (await pathTaken(this.store, to, from)) throw new Error(`rename: ${to} already exists`)
+
+        // Everything that moves, old path → new.
+        const moved = new Map<string, string>()
+        if (stat.type === FileType.Directory) {
+            for (const path of this.graph.files.all()) {
+                if (path.startsWith(`${from}/`)) moved.set(path, to + path.slice(from.length))
+            }
+        } else {
+            moved.set(from, to)
+        }
+        const after = (path: string) => moved.get(path) ?? path
+
+        // Before moving: what each link that the move could affect resolves to.
+        // That is every link to a moved file, every link inside a moved note,
+        // and every wikilink whose name a moved file's new name could capture.
+        // Candidates come from the index; their text is read fresh, so the
+        // offsets rewritten below are the file's, not a stale copy's.
+        const newNames = new Set([...moved.values()].map(linkName))
+        const affects = (note: string, link: ScannedLink, resolved: string) =>
+            moved.has(resolved) || moved.has(note) || (syntaxOf(link) === 'wikilink' && newNames.has(linkName(link.target)))
+        const pending: { note: string; text: string; pins: Map<number, string> }[] = []
+        for (const note of this.graph.noteList()) {
+            const candidate = this.graph.linksOf(note).some((link) => {
+                const r = link.target.trim() ? this.graph.resolve(link, note) : null
+                return !!r?.exists && affects(note, link, r.path)
+            })
+            if (!candidate) continue
+            const text = await this.store.readFile(note)
+            this.setNote(note, text)
+            const pins = new Map<number, string>()
+            for (const link of this.graph.linksOf(note)) {
+                const r = link.target.trim() ? this.graph.resolve(link, note) : null
+                if (r?.exists && affects(note, link, r.path)) pins.set(link.targetStart, after(r.path))
+            }
+            if (pins.size) pending.push({ note, text, pins })
+        }
+
+        const parent = dirname(to)
+        if (parent && !(await this.store.exists(parent))) await this.store.mkdir(parent, { recursive: true })
+        // The log moves first: a log that cannot move leaves the file where
+        // it is, and a file the store cannot move gets its log back.
+        await this.versions.move(from, to)
+        try {
+            await this.store.rename(from, to)
+        } catch (error) {
+            await this.versions.move(to, from).catch(() => {})
+            throw error
+        }
+        for (const [a, b] of moved) {
+            const refs = this.refs.get(a)
+            this.refs.delete(a)
+            if (refs && isNote(b)) this.refs.set(b, refs)
+            this.graph.moveFile(a, b)
+            this.text.remove(a)
+            this.text.set(b, isNote(b) ? parseNote(await this.store.readFile(b)) : null)
+        }
+
+        // After: rewrite whatever no longer resolves where it did.
+        let count = 0
+        for (const { note, text, pins } of pending) {
+            const now = after(note)
+            const rewritten = rewriteLinks(text, (link) => {
+                const want = pins.get(link.targetStart)
+                if (!want || this.graph.resolve(link, now)?.path === want) return null
+                return syntaxOf(link) === 'wikilink'
+                    ? wikilinkTextFor(want, now, this.graph.files, normalizePath(link.target).split('/').length)
+                    : markdownDestinationFor(want, now, link)
+            })
+            if (rewritten.count === 0) continue
+            await this.store.writeFile(now, rewritten.text)
+            this.setNote(now, rewritten.text)
+            count += rewritten.count
+        }
+        this.changed()
+        return count
+    }
+
+    // ── Keeping the index current ────────────────────────────────────────────
+
+    private observe(store: VfsInterface): VfsInterface {
+        const vault = this
+        const indexed = (path: string) => !vault.ignore(normalizePath(path))
+        // Every method delegated by name: the store may be a class instance or
+        // a worker proxy, whose methods a spread would not copy.
+        return {
+            readFile: (path) => store.readFile(path),
+            readBytes: (path) => store.readBytes(path),
+            readDir: (path) => store.readDir(path),
+            exists: (path) => store.exists(path),
+            stat: (path) => store.stat(path),
+            mkdir: (path, options) => store.mkdir(path, options),
+            watch: (path, options) => store.watch(path, options),
+            // A worker given a port this way reaches the store directly; what
+            // it writes reaches the index as anything else's does, by `watch`.
+            ...(store.connect ? { connect: () => store.connect!() } : {}),
+            async writeFile(path, data) {
+                await store.writeFile(path, data)
+                if (!indexed(path)) return
+                if (isNote(path)) vault.setNote(path, data)
+                else vault.addFile(path)
+                vault.changed()
+            },
+            async writeBytes(path, data) {
+                await store.writeBytes(path, data)
+                if (!indexed(path)) return
+                if (isNote(path)) vault.setNote(path, new TextDecoder().decode(data))
+                else vault.addFile(path)
+                vault.changed()
+            },
+            async unlink(path) {
+                await store.unlink(path)
+                vault.removeFile(path)
+                vault.changed()
+            },
+            async rename(oldPath, newPath) {
+                await store.rename(oldPath, newPath)
+                await vault.reindexUnder(oldPath)
+                await vault.reindexUnder(newPath)
+            },
+        }
+    }
+
+    /** Bring the index in line with the store at `path` (a file, a directory,
+     *  or something no longer there). Everything is read first and the index
+     *  changed in one step, so nothing asking meanwhile (a rename resolving
+     *  links while the store reports the move) sees the path missing. */
+    private async reindexUnder(path: string): Promise<void> {
+        const clean = normalizePath(path)
+        const found: [string, string | null][] = []
+        const read = async (file: string) => {
+            if (!isNote(file)) return found.push([file, null])
+            const text = await this.store.readFile(file).catch(() => null)
+            if (text !== null) found.push([file, text])
+        }
+        const stat = this.ignore(clean) ? null : await this.store.stat(clean).catch(() => null)
+        if (stat?.type === FileType.Directory) {
+            for await (const file of this.walk(clean)) await read(file)
+        } else if (stat) {
+            await read(clean)
+        }
+        for (const known of [...this.graph.files.all()]) {
+            if (known === clean || known.startsWith(`${clean}/`)) this.removeFile(known)
+        }
+        for (const [file, text] of found) {
+            if (text === null) this.addFile(file)
+            else this.setNote(file, text)
+        }
+        this.changed()
+    }
+
+    private async indexFile(path: string): Promise<void> {
+        if (isNote(path)) this.setNote(path, await this.store.readFile(path))
+        else this.addFile(path)
+    }
+
+    // Every change to what is indexed goes through these, so the link graph,
+    // the search index and the comment index never disagree: one parse, read
+    // by all three.
+    private setNote(path: string, text: string): void {
+        const clean = normalizePath(path)
+        const note = parseNote(text)
+        this.graph.setNote(clean, note.links)
+        this.text.set(clean, note)
+        const refs = referencesOf(note)
+        if (refs.length) this.refs.set(clean, refs)
+        else this.refs.delete(clean)
+    }
+
+    private addFile(path: string): void {
+        this.graph.addFile(path)
+        this.text.set(path, null)
+        this.refs.delete(normalizePath(path))
+    }
+
+    private removeFile(path: string): void {
+        this.graph.removeFile(path)
+        this.text.remove(path)
+        this.refs.delete(normalizePath(path))
+    }
+
+    private follow(): void {
+        const signal = this.watchAbort.signal
+        void (async () => {
+            try {
+                for await (const event of this.store.watch('/', { signal })) {
+                    await this.ready
+                    const path = normalizePath(event.filename)
+                    // The state directory is not indexed, but what was read
+                    // of it (an identity's reactions) is forgotten.
+                    if (path && this.reactionStore.invalidate(path)) continue
+                    if (!path || this.ignore(path)) continue
+                    await this.reindexUnder(path).catch(() => {})
+                }
+            } catch {
+                // A store that cannot watch: the index follows `vault.fs` only.
+            }
+        })()
+    }
+
+    /** Notify on the next macrotask: a burst of writes (several awaited
+     *  saves, a rename rewriting many notes) reaches listeners once. */
+    private changed(): void {
+        if (this.notifyScheduled) return
+        this.notifyScheduled = true
+        setTimeout(() => {
+            this.notifyScheduled = false
+            for (const listener of this.listeners) listener()
+        }, 0)
+    }
+}
+

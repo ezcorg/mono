@@ -17,7 +17,7 @@
 //!
 //! Env: `ICANHAZ_WS_BIND` (default `127.0.0.1:7777`), `ICANHAZ_WT_BIND` (default
 //! `127.0.0.1:7778`), `ICANHAZ_ROOT` (the fs root the jail lives under),
-//! `ICANHAZ_FS_COMPONENT` (the wasi:filesystem passthrough `.wasm`), `ICANHAZ_CERT` +
+//! `ICANHAZ_CAPABILITIES_DIR` (the shipped capability components), `ICANHAZ_CERT` +
 //! `ICANHAZ_KEY` (PEM paths; a self-signed cert is generated if either is
 //! absent), `ICANHAZ_CONSENT` (`prompt` default · `surface` · `auto` · `deny`),
 //! and `ICANHAZ_APPROVE_BIND` (the approval page, default `127.0.0.1:7779`).
@@ -28,7 +28,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use icanhaz_host::approve::{open_approval_page, serve_approval, PendingConsent};
 use icanhaz_host::broker::{Consent, GrantStore, Hosts, Pairings};
-use icanhaz_host::daemon::{run, DaemonConfig};
+use icanhaz_host::daemon::{run, DaemonConfig, Services};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -53,8 +53,9 @@ async fn main() -> anyhow::Result<()> {
 
     // The grant store the broker mints into and every gated capability checks.
     let grants = GrantStore::shared();
-    // Durable, origin-bound trust: pairings persist across restarts (override the
-    // location with ICANHAZ_PAIRINGS; default a dotfile in $HOME).
+    // Durable, origin-bound trust. Pairings live in the daemon's store; the JSON
+    // dotfile (ICANHAZ_PAIRINGS, default in $HOME) is the legacy location,
+    // imported once and removed when the store opens.
     let pairings_path = std::env::var("ICANHAZ_PAIRINGS")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -63,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
         });
     let pairings = Pairings::load(pairings_path);
     // Approved-hosts allowlist (who may initiate requests). Empty ⇒ allow all.
+    // Same store-with-legacy-file arrangement as pairings.
     let hosts_path = std::env::var("ICANHAZ_HOSTS")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
@@ -106,24 +108,24 @@ async fn main() -> anyhow::Result<()> {
         ),
     };
 
-    // Real wasi:filesystem@0.2 (the gated passthrough). Path overridable via
-    // ICANHAZ_FS_COMPONENT; default relative to this crate.
-    let fs_component = std::env::var("ICANHAZ_FS_COMPONENT").unwrap_or_else(|_| {
-        concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../policies/fs-passthrough/target/wasm32-wasip2/debug/fs_passthrough.wasm"
-        )
-        .to_string()
-    });
-
     let config = DaemonConfig {
         ws_bind,
         wt_bind,
         root,
-        fs_component: PathBuf::from(fs_component),
+        capabilities_dir: std::env::var("ICANHAZ_CAPABILITIES_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../capabilities")),
+        registry_bind: match std::env::var("ICANHAZ_REGISTRY_BIND") {
+            Ok(bind) => Some(bind.parse().context("invalid ICANHAZ_REGISTRY_BIND")?),
+            Err(_) => None,
+        },
         cert: std::env::var("ICANHAZ_CERT").ok(),
         key: std::env::var("ICANHAZ_KEY").ok(),
         consent_label,
+        iroh: std::env::var("ICANHAZ_IROH")
+            .map(|v| v != "0")
+            .unwrap_or(true),
     };
-    run(config, grants, pairings, hosts, consent).await
+    let services = Services::open().await;
+    run(config, grants, pairings, hosts, consent, services).await
 }

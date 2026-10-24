@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sqlx::SqlitePool;
 
-use crate::acl::{Effect, Permission};
+use crate::acl::Permission;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct Tenant {
@@ -182,13 +182,23 @@ impl Tenant {
         .fetch_all(pool)
         .await?;
 
-        db_perms
+        // A stored permission that cannot be read grants nothing, rather than
+        // failing every check for the tenant or, worse, being skipped quietly.
+        Ok(db_perms
             .into_iter()
-            .map(|p| {
-                let effect: Effect = p.effect.parse()?;
-                Ok(Permission::new(effect, &p.resource))
+            .filter_map(|p| match Permission::parse(&p.effect, &p.resource) {
+                Ok(perm) => Some(perm),
+                Err(e) => {
+                    tracing::warn!(
+                        "permission {} on group {} is unreadable and does not apply: {}",
+                        p.id,
+                        p.group_id,
+                        e
+                    );
+                    None
+                }
             })
-            .collect()
+            .collect())
     }
 
     pub async fn plugin_overrides(&self, pool: &SqlitePool) -> Result<Vec<TenantPluginOverride>> {
@@ -333,13 +343,23 @@ impl Group {
                 .fetch_all(pool)
                 .await?;
 
-        db_perms
+        // A stored permission that cannot be read grants nothing, rather than
+        // failing every check for the tenant or, worse, being skipped quietly.
+        Ok(db_perms
             .into_iter()
-            .map(|p| {
-                let effect: Effect = p.effect.parse()?;
-                Ok(Permission::new(effect, &p.resource))
+            .filter_map(|p| match Permission::parse(&p.effect, &p.resource) {
+                Ok(perm) => Some(perm),
+                Err(e) => {
+                    tracing::warn!(
+                        "permission {} on group {} is unreadable and does not apply: {}",
+                        p.id,
+                        p.group_id,
+                        e
+                    );
+                    None
+                }
             })
-            .collect()
+            .collect())
     }
 
     /// List raw permission records (with IDs) for a group.
@@ -422,4 +442,51 @@ pub async fn remove_ip_mapping(pool: &SqlitePool, tenant_id: &str, ip_address: &
 
 pub async fn tenant_by_ip(pool: &SqlitePool, ip: &str) -> Result<Option<Tenant>> {
     Tenant::by_ip(pool, ip).await
+}
+
+// ---------------------------------------------------------------------------
+// Tenant egress policies
+// ---------------------------------------------------------------------------
+
+/// A tenant's egress policy as written at the API: the JSON document, or
+/// `None` when the tenant has none.
+pub async fn get_policy(pool: &SqlitePool, tenant_id: &str) -> Result<Option<String>> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT policy FROM tenant_policies WHERE tenant_id = ?")
+            .bind(tenant_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|(p,)| p))
+}
+
+/// Set (or replace) a tenant's egress policy document.
+pub async fn set_policy(pool: &SqlitePool, tenant_id: &str, policy_json: &str) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO tenant_policies (tenant_id, policy, updated_at)
+         VALUES (?, ?, CURRENT_TIMESTAMP)
+         ON CONFLICT(tenant_id) DO UPDATE SET policy = excluded.policy, updated_at = CURRENT_TIMESTAMP",
+    )
+    .bind(tenant_id)
+    .bind(policy_json)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Remove a tenant's egress policy; `false` when it had none.
+pub async fn remove_policy(pool: &SqlitePool, tenant_id: &str) -> Result<bool> {
+    let result = sqlx::query("DELETE FROM tenant_policies WHERE tenant_id = ?")
+        .bind(tenant_id)
+        .execute(pool)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Every tenant's policy document, for loading at startup.
+pub async fn all_policies(pool: &SqlitePool) -> Result<Vec<(String, String)>> {
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT tenant_id, policy FROM tenant_policies ORDER BY tenant_id")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows)
 }

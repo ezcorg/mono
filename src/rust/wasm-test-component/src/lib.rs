@@ -4,8 +4,7 @@ use crate::{
         Plugin as PluginResource, PluginError, PluginManifest, UserInput,
     },
     witmproxy::plugin::capabilities::{
-        CapabilityKind, CapabilityScope, Content, ContextualResponse, Event, EventKind, Request,
-        Response,
+        CapabilityKind, Content, ContextualResponse, Event, EventKind, Request, Response,
     },
 };
 
@@ -14,6 +13,8 @@ wit_bindgen::generate!({
     path: "../../apps/witmproxy/wit",
     generate_all
 });
+
+use crate::ezco::ezcap::types::Scope;
 
 const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
 
@@ -33,26 +34,30 @@ impl Guest for Component {
             capabilities: vec![
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: "true".to_string(),
+                    scope: Scope {
+                        when: "true".to_string(),
+                        allow: "true".into(),
                     }
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Request),
-                    scope: CapabilityScope {
-                        expression: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string(),
+                    scope: Scope {
+                        when: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string(),
+                        allow: "true".into(),
                     }
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
-                    scope: CapabilityScope {
-                        expression: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string(),
+                    scope: Scope {
+                        when: "request.host() != 'donotprocess.com' && !('skipthis' in request.headers() && 'true' in request.headers()['skipthis'])".to_string(),
+                        allow: "true".into(),
                     }
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::InboundContent),
-                    scope: CapabilityScope {
-                        expression: "content.content_type() == 'text/html'".to_string(),
+                    scope: Scope {
+                        when: "content.content_type() == 'text/html'".to_string(),
+                        allow: "true".into(),
                     }
                 }
             ],

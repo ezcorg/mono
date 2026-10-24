@@ -1,19 +1,27 @@
 import { Editor, Extension } from '@tiptap/core'
 import {
-    VfsInterface,
     extOrLanguageToLanguageId,
     ExtensionOrLanguage,
     codeblock,
     basicSetup,
+    persistFile,
+    onFileEvent,
+    whenFileLoaded,
+    type FileEvent,
+    type FileVersions,
 } from '@joinezco/codeblock'
-import { EditorState } from '@codemirror/state'
+import { dirname, normalizePath, type VfsInterface } from '@joinezco/storage'
+import { Compartment, EditorState, type Extension as CMExtension } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
+import { isDarkMode } from './codeblock'
+import { scrollContainerOf } from '../ui/layout'
 
 // File extensions that open as prose (the normal Markdown editor). Everything
 // else opens in a standalone code editor (a @joinezco/codeblock instance that
-// swaps in for the rich-text editor) and round-trips its raw bytes back to
-// disk, instead of being parsed as Markdown (which would mangle code — `#` →
-// headings, ``` fences, etc.).
+// swaps in for the rich-text editor), which reads the file itself, shows an
+// image or a file that is not text rather than decoding it, and writes the
+// file back only when it is edited, instead of it being parsed as Markdown
+// (which would mangle code — `#` → headings, ``` fences, etc.).
 const PROSE_EXTENSIONS = new Set(['md', 'markdown', 'mdx', 'txt', 'text'])
 
 /** True for Markdown / plain-text files (and extensionless paths). */
@@ -32,17 +40,7 @@ function isProseFile(path: string): boolean {
  * the scroll container.
  */
 function scrollEditorToTop(el: HTMLElement | null): void {
-    let node = el?.parentElement ?? null
-    while (node && node !== document.body) {
-        const oy = getComputedStyle(node).overflowY
-        if (oy === 'auto' || oy === 'scroll' || oy === 'overlay') {
-            node.scrollTo({ top: 0 })
-            return
-        }
-        node = node.parentElement
-    }
-    const doc = (document.scrollingElement as HTMLElement | null) ?? document.documentElement
-    doc?.scrollTo({ top: 0 })
+    scrollContainerOf(el).scrollTo({ top: 0 })
 }
 
 /** CodeMirror language id for a (non-prose) file path. */
@@ -51,22 +49,24 @@ function languageForPath(path: string): string {
     return extOrLanguageToLanguageId[ext as ExtensionOrLanguage] ?? ext ?? 'plaintext'
 }
 
-/** Resolve the light/dark mode at `reference` (an explicit `data-theme` wins,
- *  otherwise the OS preference) so the swapped-in code editor matches the UI. */
-function isDarkContext(reference: Element | null): boolean {
-    const themed = reference?.closest?.('[data-theme]') as HTMLElement | null
-    const explicit = themed?.getAttribute('data-theme')
-    if (explicit === 'dark') return true
-    if (explicit === 'light') return false
-    return typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-        ? window.matchMedia('(prefers-color-scheme: dark)').matches
-        : false
-}
-
 /** Current Markdown serialization of the rich-text document. */
 function getMarkdown(editor: Editor): string {
     // @ts-expect-error markdown storage is provided by the Markdown extension
     return editor.storage.markdown.getMarkdown()
+}
+
+/** What happened to the open file (the codeblock's lifecycle, which a code
+ *  file in the code view goes through): loaded into the editor, written, or
+ *  failed to open or save. */
+export type { FileEvent }
+
+export interface LoadOptions {
+    /** Create the file (empty) when it does not exist. */
+    create?: boolean
+    /** Move focus into the loaded file (default: the `focusOnLoad` option).
+     *  A caller managing focus itself (a file tree naming a new note) passes
+     *  `false`. */
+    focus?: boolean
 }
 
 export interface FileSystemOptions {
@@ -77,6 +77,19 @@ export interface FileSystemOptions {
      *  move focus to the start of the file. Default `true`; set `false` to leave
      *  focus where it is (e.g. on the toolbar). */
     focusOnLoad?: boolean
+    /** Handed the persistence once the editor is created, for code built
+     *  before there is an editor (the extension list) to reach it. */
+    bind?: (storage: FileSystemStorage) => void
+    /** Loads and saves go through this log when given (a vault's
+     *  `versions`): a save names the version it was made on, and one made on
+     *  a stale version is kept as a conflict copy (a `conflict` event). */
+    versions?: FileVersions
+    /** Be told when files may have changed (a vault's `subscribe`): the open
+     *  note is re-read when its file changed and nothing here is unsaved. */
+    follow?: (listener: () => void) => () => void
+    /** More for the code view a non-prose file opens in (a settings file's
+     *  schema support, say), by the file's path; may come later. */
+    extensionsFor?: (path: string, editor: Editor) => Promise<CMExtension[]> | CMExtension[] | null | undefined
 }
 
 export interface FileSystemStorage {
@@ -95,22 +108,95 @@ export interface FileSystemStorage {
     /** Host element the code editor mounts into (a sibling of the hidden
      *  ProseMirror editable). */
     codeHost: HTMLElement | null
-    /** Pending debounced-save handle for the code editor. */
-    codeSaveTimeout: ReturnType<typeof setTimeout> | null
     /**
      * Persist the current document to the current filepath *now* if (and only
      * if) a debounced save is pending, cancelling that pending save. No-ops
      * when there are no unsaved edits / autosave is off / no file is set.
+     * Resolves once every write of the open file already started has landed,
+     * so a caller about to move or read the file sees it current.
      */
-    flushPendingSave: () => void
+    flushPendingSave: () => Promise<void>
+    /**
+     * Write the open file's unsaved edits now, whether or not autosave is on
+     * (a move is about to carry the file, say): the prose document's, or the
+     * code view's through its codeblock. Nothing when there are none, or for
+     * an image. Resolves once the writes have landed.
+     */
+    save: () => Promise<void>
+    /**
+     * Re-read the open note if its file changed under it (a rename rewrote
+     * its links), keeping the caret. Not while it has unsaved edits: those
+     * are written first by whoever changes the file (`save`).
+     */
+    refresh: () => Promise<void>
+    /** Edits to the prose document not yet written. */
+    dirty: boolean
+    /** The version the open note was loaded or last saved as, when loads
+     *  and saves go through a version log. */
+    version: string | null
+    /** The open document's version as an editor of it sees it: moves on with
+     *  every change, saved or not (LSP's document version). */
+    documentVersion: number
     /**
      * Switch the active file. Persists the outgoing file's unsaved edits to
      * *its* path first, then loads `path` — without the load looking like a
      * user edit, so it can never schedule a save against the wrong file. This
      * is the safe way to change files while autosave is on; the toolbar routes
-     * its "open file" through here.
+     * its "open file" through here. With `create`, a missing file is created
+     * empty first (following a link to a note not written yet).
      */
-    loadFile: (path: string) => Promise<void>
+    loadFile: (path: string, options?: LoadOptions) => Promise<void>
+    /** Close the open file: the editor is left empty, attached to no file.
+     *  Its unsaved edits are written first, or with `discard` (it is being
+     *  deleted) dropped. */
+    close: (options?: { discard?: boolean }) => Promise<void>
+    /** Be told when a file is loaded or saved. Returns an unsubscribe. */
+    subscribe: (listener: (event: FileEvent) => void) => () => void
+    /** @internal Write the open file's content and announce the save. */
+    write: (fs: VfsInterface, path: string, content: string) => void
+    /** @internal Who is subscribed (kept from the start, since plugin views
+     *  subscribe before `onCreate` runs). */
+    listeners: Set<(event: FileEvent) => void>
+    /** @internal Hand over the real methods once the editor is created;
+     *  calls made before then are waiting for them. */
+    install: (methods: Pick<FileSystemStorage, 'flushPendingSave' | 'save' | 'refresh' | 'loadFile' | 'close'>) => void
+}
+
+const unfollow = new WeakMap<Editor, () => void>()
+
+/** Replace the document with a file's contents, outside the undo history:
+ *  undo never brings back the file shown before, nor empties a new one. */
+/** On the transaction that puts a file's text in place of the document:
+ *  what reads the document afresh (comments finding their text) keys on it. */
+export const loadedDocumentMeta = 'ezcoLoadedDocument'
+
+/** On a transaction that only brings a file's text into a block that shows
+ *  it (a fence reading its file): not an edit of the note, so not saved. */
+export const fileReadMeta = 'ezcoFileRead'
+
+function setDocument(editor: Editor, content: string): void {
+    editor
+        .chain()
+        .command(({ tr }) => {
+            tr.setMeta('addToHistory', false)
+            tr.setMeta(loadedDocumentMeta, true)
+            return true
+        })
+        .setContent(content)
+        .run()
+}
+
+/** The editor's filesystem (`FileSystem`'s storage, `editor.storage.persistence`),
+ *  or undefined in an editor made without one. */
+export function persistenceOf(editor: Editor): FileSystemStorage | undefined {
+    return (editor.storage as unknown as Record<string, unknown>).persistence as FileSystemStorage | undefined
+}
+
+/** The open note's vault path (normalized), or null when no file is open
+ *  or the editor has no filesystem. */
+export function openNotePath(editor: Editor): string | null {
+    const path = persistenceOf(editor)?.options.filepath
+    return path ? normalizePath(path) : null
 }
 
 export const FileSystem = Extension.create<FileSystemOptions>({
@@ -128,17 +214,42 @@ export const FileSystem = Extension.create<FileSystemOptions>({
     // guarantees is shared across every lifecycle hook *and* reachable as
     // `editor.storage.persistence`, which the toolbar uses to drive file loads.
     addStorage(): FileSystemStorage {
+        const listeners = new Set<(event: FileEvent) => void>()
+        // The object returned here is not necessarily the one hooks see as
+        // `this.storage`, so the early calls reach the real methods through
+        // this closure rather than through the object.
+        let methods!: Pick<FileSystemStorage, 'flushPendingSave' | 'save' | 'refresh' | 'loadFile' | 'close'>
+        let installed!: () => void
+        const ready = new Promise<void>((resolve) => (installed = resolve))
         return {
             options: this.options,
             saveTimeout: null,
             loadingFile: false,
             codeView: null,
             codeHost: null,
-            codeSaveTimeout: null,
             // Real implementations are installed in onCreate (they need the
-            // live editor).
-            flushPendingSave: () => {},
-            loadFile: async () => {},
+            // live editor), which Tiptap runs a tick after construction; a
+            // call before then waits for it rather than doing nothing.
+            flushPendingSave: () => ready.then(() => methods.flushPendingSave()),
+            save: () => ready.then(() => methods.save()),
+            refresh: () => ready.then(() => methods.refresh()),
+            dirty: false,
+            version: null,
+            documentVersion: 0,
+            loadFile: (path, options) => ready.then(() => methods.loadFile(path, options)),
+            close: (options) => ready.then(() => methods.close(options)),
+            // Live from the start: plugin views (the toolbar) are built before
+            // `onCreate` runs, and subscribe as they are built.
+            subscribe: (listener) => {
+                listeners.add(listener)
+                return () => listeners.delete(listener)
+            },
+            write: () => {},
+            listeners,
+            install: (real) => {
+                methods = real
+                installed()
+            },
         }
     },
 
@@ -151,12 +262,88 @@ export const FileSystem = Extension.create<FileSystemOptions>({
 
         const editableEl = () => editor.view.dom as HTMLElement
 
+        const emit = (event: FileEvent) => {
+            for (const listener of storage.listeners) listener(event)
+        }
+        // Every write of the open file goes through here: in order (a later
+        // save never lands before an earlier one), announced when it lands,
+        // and awaitable as a whole by `flushPendingSave`.
+        let writing: Promise<void> = Promise.resolve()
+        const save = (fs: VfsInterface, path: string, content: string) =>
+            (writing = writing.then(async () => {
+                const versions = storage.options.versions
+                try {
+                    if (versions) {
+                        const result = await versions.put(path, storage.version, content)
+                        if (result.ok === false) return conflicted(fs, path, content, result.conflict.path)
+                        storage.version = result.version.id
+                    } else {
+                        await fs.writeFile(path, content)
+                    }
+                    emit({ type: 'save', path })
+                } catch (error) {
+                    console.error(`[Filesystem] Failed to save content to ${path}:`, error)
+                }
+            }))
+
+        /** A save of `path` was refused: its file changed since it was loaded.
+         *  The edits are in the conflict copy (the latest of them, if typing
+         *  went on) and the note takes the file as it now is. */
+        const conflicted = async (fs: VfsInterface, path: string, saved: string, copy: string) => {
+            const open = storage.options.filepath === path && !storage.codeView
+            let latest = open ? getMarkdown(editor) : saved
+            if (latest !== saved) await fs.writeFile(copy, latest).catch((e) => console.error(e))
+            emit({ type: 'conflict', path, copy })
+            if (!open) return
+            const head = await readNote(fs, path).catch(() => null)
+            if (!head || storage.options.filepath !== path || storage.codeView) return
+            // Typing went on while the file was read: the copy gets those
+            // keystrokes too, so nothing typed is in neither place.
+            const now = getMarkdown(editor)
+            if (now !== latest) {
+                latest = now
+                await fs.writeFile(copy, latest).catch((e) => console.error(e))
+                if (storage.options.filepath !== path || storage.codeView) return
+            }
+            if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
+            storage.saveTimeout = null
+            storage.dirty = false
+            takeExternal(path, head)
+        }
+
+        /** The note's text and the version it is, read together when there is
+         *  a version log. */
+        const readNote = async (fs: VfsInterface, path: string): Promise<{ content: string; version: string | null }> => {
+            const versions = storage.options.versions
+            if (!versions) return { content: await fs.readFile(path), version: null }
+            const head = await versions.head(path)
+            if (!head) throw Object.assign(new Error(`ENOENT: no such file or directory, '${path}'`), { code: 'ENOENT' })
+            return { content: new TextDecoder().decode(await versions.read(head)), version: head.id }
+        }
+
+        /** Show `note` (read from the open file) in place of what is shown,
+         *  keeping the caret. A file that differs from the document only at
+         *  its end (the newline a file ends with, a paragraph not yet
+         *  written in) is the same note: taking it would only move the
+         *  caret and drop that paragraph. */
+        const takeExternal = (path: string, note: { content: string; version: string | null }) => {
+            storage.version = note.version
+            if (note.content.trimEnd() === getMarkdown(editor).trimEnd()) return
+            const { from, to } = editor.state.selection
+            storage.loadingFile = true
+            try {
+                setDocument(editor, note.content)
+                const end = editor.state.doc.content.size
+                editor.commands.setTextSelection({ from: Math.min(from, end), to: Math.min(to, end) })
+            } finally {
+                storage.loadingFile = false
+            }
+            emit({ type: 'load', path })
+        }
+        storage.write = (fs, path, content) => void save(fs, path, content)
+
         // Tear down the swapped-in code editor and restore the rich-text editor.
         const hideCodeEditor = () => {
-            if (storage.codeSaveTimeout !== null) {
-                clearTimeout(storage.codeSaveTimeout)
-                storage.codeSaveTimeout = null
-            }
             storage.codeView?.destroy()
             storage.codeView = null
             storage.codeHost?.remove()
@@ -164,21 +351,6 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             const editable = editableEl()
             editable.style.display = ''
             editable.closest('.ezco-mde')?.classList.remove('ezco-mde--code-file')
-        }
-
-        const scheduleCodeSave = () => {
-            if (storage.loadingFile) return
-            const { fs, autoSave } = storage.options
-            if (!fs || !autoSave) return
-            if (storage.codeSaveTimeout !== null) clearTimeout(storage.codeSaveTimeout)
-            storage.codeSaveTimeout = setTimeout(() => {
-                storage.codeSaveTimeout = null
-                const { fs: currentFs, filepath: currentPath } = storage.options
-                if (!currentFs || !currentPath || !storage.codeView) return
-                currentFs.writeFile(currentPath, storage.codeView.state.doc.toString()).catch(error => {
-                    console.error(`[Filesystem] Failed to save content to ${currentPath}:`, error)
-                })
-            }, 500)
         }
 
         // Swap the rich-text editor out for a standalone code editor. The
@@ -192,7 +364,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // e.g. the outline sidebar — reflects the code file (no Markdown
             // headings) instead of the previously open file. (Gated by
             // `loadingFile`, so it schedules no save.)
-            editor.commands.setContent('')
+            setDocument(editor, '')
             // Rebuilt fresh on each load: a CodeMirror instance is configured
             // for one language/file and can't cleanly hot-swap them.
             storage.codeView?.destroy()
@@ -209,7 +381,7 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             if (themeAttr === 'dark' || themeAttr === 'light') {
                 host.setAttribute('data-theme', themeAttr)
             }
-            const dark = isDarkContext(editable)
+            const dark = isDarkMode(editable)
             // Match the embedded codeblocks' defaults: soft-wrap on, and the code
             // font nudged 2px below the prose size (monospace reads larger at an
             // equal px). Measured before the editable is hidden, below.
@@ -224,38 +396,51 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             else editable.before(host)
             editable.style.display = 'none'
 
+            // What the host adds for this file (by its path), when it arrives.
+            const more = new Compartment()
             storage.codeView = new EditorView({
                 state: EditorState.create({
                     doc: content,
                     extensions: [
                         basicSetup,
-                        // The codeblock owns no persistence of its own here; we
-                        // debounce-save its raw text back to the file ourselves.
+                        more.of([]),
                         EditorView.updateListener.of((update) => {
-                            if (update.docChanged) scheduleCodeSave()
+                            if (update.docChanged) storage.documentVersion++
                         }),
                         codeblock({
                             content,
                             fs,
-                            // Give the codeblock the real path so it drives a per-file
-                            // language server (the codeblock's `handleOpen` wires LSP only
-                            // when it has a filepath): a remote `RemoteLspProvider` (e.g.
-                            // rust-analyzer over wRPC) is requested for this file, and the
-                            // codeblock's save emits `didSave` → on-save diagnostics. We
-                            // still own persistence (`scheduleCodeSave`, flushed on
-                            // navigate) — the codeblock's own write is a harmless same-bytes
-                            // duplicate, but its LSP wiring is what a bare content view lacks.
+                            // The codeblock owns the file: it reads it (an image or
+                            // bytes that are not text are shown, not decoded), wires
+                            // its language server (a `RemoteLspProvider` such as
+                            // rust-analyzer over wRPC is requested per file), and
+                            // writes it back only when edited, with `didSave` for
+                            // on-save diagnostics. Autosave follows this editor's.
                             filepath,
                             language: language as ExtensionOrLanguage,
                             toolbar: false,
                             dark,
-                            settings,
+                            settings: { ...settings, autosave: !!storage.options.autoSave },
+                            versions: storage.options.versions,
                         }),
                     ],
                 }),
                 parent: host,
             })
             storage.codeHost = host
+            // The code view's lifecycle is the open file's.
+            const codeView = storage.codeView
+            const extra = storage.options.extensionsFor?.(filepath, editor)
+            if (extra) {
+                Promise.resolve(extra)
+                    .then((extensions) => {
+                        if (storage.codeView === codeView) codeView.dispatch({ effects: more.reconfigure(extensions) })
+                    })
+                    .catch((error) => console.warn(`[Filesystem] Nothing more for ${filepath}:`, error))
+            }
+            onFileEvent(codeView, (event) => {
+                if (storage.codeView === codeView) emit(event)
+            })
         }
 
         // Replace the document *without it counting as a user edit*, so a
@@ -273,7 +458,12 @@ export const FileSystem = Extension.create<FileSystemOptions>({
         // load after it is a file *switch*, so reset the scroll to the top of the
         // new file rather than inheriting the previous file's scroll offset.
         let didInitialLoad = false
-        const loadContent = (content: string) => {
+        // Every load takes a ticket; only the latest may put its file in the
+        // editor, so the last file asked for is the one shown, whichever
+        // read ends last (the first file's, say, overtaken by an open).
+        let latestLoad = 0
+        const loadContent = (content: string, focus = storage.options.focusOnLoad !== false) => {
+            storage.dirty = false
             storage.loadingFile = true
             try {
                 const path = storage.options.filepath
@@ -282,16 +472,19 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                     showCodeEditor(content, languageForPath(path), fs, path)
                 } else {
                     hideCodeEditor()
-                    editor.commands.setContent(content)
+                    setDocument(editor, content)
                 }
             } finally {
                 storage.loadingFile = false
             }
+            // A code file is loaded when its codeblock says so.
+            const loaded = storage.options.filepath
+            if (loaded && !storage.codeView) emit({ type: 'load', path: loaded })
             if (didInitialLoad) {
                 scrollEditorToTop(editor.view.dom as HTMLElement)
                 // Move the caret to the start of the freshly-opened file (focus
                 // follows from the toolbar into the document), unless opted out.
-                if (storage.options.focusOnLoad !== false) {
+                if (focus) {
                     if (storage.codeView) storage.codeView.focus()
                     else editor.commands.focus('start', { scrollIntoView: false })
                 }
@@ -310,58 +503,132 @@ export const FileSystem = Extension.create<FileSystemOptions>({
                 clearTimeout(storage.saveTimeout)
                 storage.saveTimeout = null
                 if (fs && filepath && autoSave && !storage.codeView) {
-                    fs.writeFile(filepath, getMarkdown(editor)).catch(error => {
-                        console.error(`[Filesystem] Failed to save content to ${filepath}:`, error)
-                    })
+                    storage.dirty = false
+                    void save(fs, filepath, getMarkdown(editor))
                 }
             }
-            // Code editor's pending save.
-            if (storage.codeSaveTimeout !== null) {
-                clearTimeout(storage.codeSaveTimeout)
-                storage.codeSaveTimeout = null
-                if (fs && filepath && autoSave && storage.codeView) {
-                    fs.writeFile(filepath, storage.codeView.state.doc.toString()).catch(error => {
-                        console.error(`[Filesystem] Failed to save content to ${filepath}:`, error)
-                    })
-                }
-            }
+            // The code editor's, which it owns.
+            const code = storage.codeView && autoSave ? persistFile(storage.codeView) : undefined
+            return code ? Promise.all([writing, code]).then(() => {}) : writing
         }
         storage.flushPendingSave = flushPendingSave
 
-        storage.loadFile = async (path: string) => {
+        storage.save = () => {
+            if (storage.codeView) return persistFile(storage.codeView)
+            if (storage.saveTimeout !== null) {
+                clearTimeout(storage.saveTimeout)
+                storage.saveTimeout = null
+            }
+            const { fs, filepath } = storage.options
+            if (fs && filepath && storage.dirty) {
+                storage.dirty = false
+                void save(fs, filepath, getMarkdown(editor))
+            }
+            return writing
+        }
+
+        storage.refresh = () =>
+            // After any save in flight, so a note's own save is not taken for
+            // someone else's change.
+            (writing = writing.then(async () => {
+                const { fs, filepath } = storage.options
+                if (!fs || !filepath || storage.codeView || storage.dirty || storage.saveTimeout !== null) return
+                const ticket = latestLoad
+                const note = await readNote(fs, filepath).catch(() => null)
+                // Moved on, or edited, meanwhile: the newer state stands.
+                if (!note || ticket !== latestLoad || storage.dirty || storage.options.filepath !== filepath) return
+                if (note.version !== null && note.version === storage.version) return
+                takeExternal(filepath, note)
+            }))
+
+        storage.close = async (options = {}) => {
+            latestLoad++
+            const closed = storage.options.filepath
+            if (options.discard) {
+                if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
+                storage.saveTimeout = null
+            } else {
+                await flushPendingSave()
+            }
+            storage.loadingFile = true
+            try {
+                // Destroying the code view drops its pending save with it.
+                hideCodeEditor()
+                storage.options.filepath = undefined
+                setDocument(editor, '')
+                storage.dirty = false
+            } finally {
+                storage.loadingFile = false
+            }
+            if (closed) emit({ type: 'close', path: closed })
+        }
+
+        storage.loadFile = async (path: string, options: LoadOptions = {}) => {
             const { fs } = storage.options
             if (!fs) return
+            const ticket = ++latestLoad
             // 1. Persist the outgoing file's unsaved edits to *its* path first,
-            //    so they're neither lost nor written to the incoming file.
-            flushPendingSave()
-            // 2. Read the new file (may reject — let the caller handle it).
-            const content = await fs.readFile(path)
+            //    so they're neither lost nor written to the incoming file, and
+            //    wait for them: reopening the same file must read them back.
+            await flushPendingSave()
+            if (options.create && !(await fs.exists(path))) {
+                const parent = dirname(path)
+                if (parent && !(await fs.exists(parent))) await fs.mkdir(parent, { recursive: true })
+                if (storage.options.versions) await storage.options.versions.put(path, null, '')
+                else await fs.writeFile(path, '')
+            }
+            // 2. Read the new file (may reject — let the caller handle it). A
+            //    file that is not prose is read by the code view itself.
+            const { content, version } = isProseFile(path) ? await readNote(fs, path) : { content: '', version: null }
+            if (ticket !== latestLoad) return
+            storage.version = version
             // 3. Retarget autosave at the new file *before* swapping content,
             //    and load without scheduling a save.
             storage.options.filepath = path
-            loadContent(content)
+            loadContent(content, options.focus ?? storage.options.focusOnLoad !== false)
+            // Resolves once the file is in the editor, a code file included
+            // (its codeblock reads it); rejects if it cannot be opened.
+            if (storage.codeView) await whenFileLoaded(storage.codeView, path)
         }
 
         // Initial load (also a non-editing load → no spurious save).
         const { fs, filepath } = storage.options
         if (fs && filepath) {
-            fs.readFile(filepath)
-                .then(content => loadContent(content))
+            const ticket = ++latestLoad
+            ;(isProseFile(filepath) ? readNote(fs, filepath) : Promise.resolve({ content: '', version: null }))
+                .then(({ content, version }) => {
+                    if (ticket !== latestLoad) return
+                    storage.version = version
+                    loadContent(content)
+                })
                 .catch(error => {
                     console.warn(`[Filesystem] Failed to load content from ${filepath}:`, error)
                 })
         }
+        this.options.bind?.(storage)
+        unfollow.set(editor, this.options.follow?.(() => void storage.refresh()) ?? (() => {}))
+        storage.install({
+            flushPendingSave: storage.flushPendingSave,
+            save: storage.save,
+            refresh: storage.refresh,
+            loadFile: storage.loadFile,
+            close: storage.close,
+        })
     },
 
-    onUpdate() {
+    onUpdate({ transaction }) {
+        if (transaction.getMeta(fileReadMeta)) return
         const storage = this.storage as FileSystemStorage
+        if (!storage.codeView) storage.documentVersion++
         if (storage.loadingFile) return // programmatic load, not a user edit
         // A code file is shown in the swapped-in code editor, which owns its own
         // (raw) saving; the rich-text editor's autosave must not fire for it.
         if (storage.codeView) return
 
         const { fs, autoSave, filepath } = storage.options
-        if (!fs || !autoSave || !filepath) return
+        if (!fs || !filepath) return
+        storage.dirty = true
+        if (!autoSave) return
 
         // Debounced auto-save.
         if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
@@ -374,16 +641,27 @@ export const FileSystem = Extension.create<FileSystemOptions>({
             // one.
             const { fs: currentFs, filepath: currentPath } = storage.options
             if (!currentFs || !currentPath || storage.codeView) return
-            currentFs.writeFile(currentPath, getMarkdown(this.editor)).catch(error => {
-                console.error(`[Filesystem] Failed to save content to ${currentPath}:`, error)
-            })
+            storage.dirty = false
+            storage.write(currentFs, currentPath, getMarkdown(this.editor))
         }, 500) // debounce by 500ms
     },
 
     onDestroy() {
         const storage = this.storage as FileSystemStorage
-        if (storage.saveTimeout !== null) clearTimeout(storage.saveTimeout)
-        if (storage.codeSaveTimeout !== null) clearTimeout(storage.codeSaveTimeout)
+        unfollow.get(this.editor)?.()
+        unfollow.delete(this.editor)
+        // Edits made in the last moments before the editor goes (a window
+        // closed, a view unmounted) are written, not dropped with the timer.
+        if (storage.saveTimeout !== null) {
+            clearTimeout(storage.saveTimeout)
+            storage.saveTimeout = null
+            const { fs, filepath } = storage.options
+            if (fs && filepath && !storage.codeView) {
+                storage.dirty = false
+                storage.write(fs, filepath, getMarkdown(this.editor))
+            }
+        }
+        if (storage.codeView) void persistFile(storage.codeView)
         storage.codeView?.destroy()
         storage.codeHost?.remove()
     },

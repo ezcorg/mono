@@ -1,7 +1,8 @@
 import { Extension } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 import { Plugin } from '@tiptap/pm/state'
-import tippy, { Instance as TippyInstance } from 'tippy.js'
+import type { EditorView } from '@tiptap/pm/view'
+import { SuggestionMenu, type SuggestionItem } from '../ui/suggestion-menu'
 
 export interface SlashCommand {
     title: string
@@ -35,9 +36,10 @@ export const SlashCommands = Extension.create<SlashCommandsOptions>({
         return [
             new Plugin({
                 key: new PluginKey('slashCommands'),
-                view: () => {
+                view: (view) => {
                     slashView = new SlashCommandsView({
                         editor: this.editor,
+                        view,
                         commands: this.options.commands,
                         char: this.options.char,
                         allowSpaces: this.options.allowSpaces,
@@ -61,9 +63,7 @@ export const SlashCommands = Extension.create<SlashCommandsOptions>({
                                 slashView.lastInputWasSlash = true
                             }
 
-                            if (slashView.dropdown) {
-                                return slashView.handleKeyDown(event)
-                            }
+                            return slashView.handleKeyDown(event)
                         }
                         return false
                     }
@@ -73,28 +73,33 @@ export const SlashCommands = Extension.create<SlashCommandsOptions>({
     },
 })
 
+/**
+ * The `/` menu: the commands whose title or description holds what was
+ * typed after a freshly typed slash on a word boundary. The list itself
+ * (rows, keys, the popover) is a `SuggestionMenu`; this finds the slash,
+ * filters the commands and runs the one chosen over the typed range.
+ */
 class SlashCommandsView {
     public editor: any
     public commands: SlashCommand[]
     public char: string
     public allowSpaces: boolean
     public startOfLine: boolean
-    public dropdown: HTMLElement | null = null
-    public popup: TippyInstance | null = null
-    public range: any = null
+    public menu: SuggestionMenu
+    public range: { from: number; to: number } | null = null
     public query: string = ''
-    public selectedIndex: number = 0
     public lastInputWasSlash: boolean = false
-    private outsideClickHandler: ((event: MouseEvent) => void) | null = null
 
     constructor({
         editor,
+        view,
         commands,
         char,
         allowSpaces,
         startOfLine,
     }: {
         editor: any
+        view: EditorView
         commands: SlashCommand[]
         char: string
         allowSpaces: boolean
@@ -105,9 +110,20 @@ class SlashCommandsView {
         this.char = char
         this.allowSpaces = allowSpaces
         this.startOfLine = startOfLine
+        // Under the typed `/query`. ArrowUp on the first row leaves the menu
+        // (the caret stays); Tab is the editor's.
+        this.menu = new SuggestionMenu({
+            view,
+            range: () => this.range,
+            className: 'ezco-mde-slash-menu',
+            atTop: 'close',
+            onClose: () => this.hideSuggestions(),
+        })
 
-        this.editor.on('selectionUpdate', this.selectionUpdate.bind(this))
-        this.editor.on('update', this.selectionUpdate.bind(this))
+        // Bound once: what `destroy` takes off must be what went on.
+        this.selectionUpdate = this.selectionUpdate.bind(this)
+        this.editor.on('selectionUpdate', this.selectionUpdate)
+        this.editor.on('update', this.selectionUpdate)
     }
 
     selectionUpdate() {
@@ -145,7 +161,6 @@ class SlashCommandsView {
 
             this.range = { from, to }
             this.query = query
-            this.selectedIndex = 0
             this.showSuggestions()
         } else {
             this.hideSuggestions()
@@ -156,252 +171,26 @@ class SlashCommandsView {
         }
     }
 
-    createDropdown(): HTMLElement {
-        const dropdown = document.createElement('div')
-        dropdown.className = 'ezco-mde-slash-menu'
-        dropdown.setAttribute('role', 'listbox')
-
-        const filteredCommands = this.getFilteredCommands()
-
-        if (filteredCommands.length === 0) {
-            const noResults = document.createElement('div')
-            noResults.className = 'ezco-mde-slash-empty'
-            noResults.textContent = this.query
-                ? `No commands matching “${this.query}”`
-                : 'No commands available'
-            dropdown.appendChild(noResults)
-        } else {
-            filteredCommands.forEach((command, index) => {
-                const item = document.createElement('button')
-                item.type = 'button'
-                item.className = 'ezco-mde-slash-item'
-                item.setAttribute('role', 'option')
-                if (index === this.selectedIndex) {
-                    item.classList.add('is-selected')
-                    item.setAttribute('aria-selected', 'true')
-                }
-
-                if (command.icon) {
-                    const icon = document.createElement('span')
-                    icon.className = 'ezco-mde-slash-item-icon'
-                    icon.textContent = command.icon
-                    item.appendChild(icon)
-                }
-
-                const body = document.createElement('span')
-                body.className = 'ezco-mde-slash-item-body'
-
-                const title = document.createElement('span')
-                title.className = 'ezco-mde-slash-item-title'
-                title.textContent = command.title
-                body.appendChild(title)
-
-                if (command.description) {
-                    const desc = document.createElement('span')
-                    desc.className = 'ezco-mde-slash-item-desc'
-                    desc.textContent = command.description
-                    body.appendChild(desc)
-                }
-
-                item.appendChild(body)
-
-                // Keep editor focus/selection (the slash query) intact while
-                // the user clicks an item — mousedown must not steal focus.
-                item.addEventListener('mousedown', (e) => e.preventDefault())
-                item.addEventListener('mouseenter', () => {
-                    if (this.selectedIndex !== index) {
-                        this.selectedIndex = index
-                        this.updateSelection()
-                    }
-                })
-                item.addEventListener('click', () => this.selectCommand(command))
-                dropdown.appendChild(item)
-            })
-        }
-
-        // Add keyboard event handling
-        dropdown.addEventListener('keydown', this.handleKeyDown.bind(this))
-
-        return dropdown
-    }
-
     handleKeyDown(event: KeyboardEvent): boolean {
-        const filteredCommands = this.getFilteredCommands()
-
-        switch (event.key) {
-            case 'ArrowUp':
-                event.preventDefault()
-                if (this.selectedIndex === 0) {
-                    // Exit dropdown when at the start and pressing up
-                    this.hideSuggestions()
-                    return false // Let editor handle the event
-                } else {
-                    this.selectedIndex = this.selectedIndex - 1
-                    this.updateSelection()
-                }
-                return true
-            case 'ArrowDown':
-                event.preventDefault()
-                if (this.selectedIndex === filteredCommands.length - 1) {
-                    // Cycle to start when at the end and pressing down
-                    this.selectedIndex = 0
-                } else {
-                    this.selectedIndex = this.selectedIndex + 1
-                }
-                this.updateSelection()
-                return true
-            case 'Enter':
-                event.preventDefault()
-                const selectedCommand = filteredCommands[this.selectedIndex]
-                if (selectedCommand) {
-                    this.selectCommand(selectedCommand)
-                }
-                return true
-            case 'Escape':
-                event.preventDefault()
-                this.hideSuggestions()
-                return true
-            default:
-                return false
-        }
-    }
-
-    updateSelection() {
-        if (!this.dropdown) return
-
-        const items = this.dropdown.querySelectorAll('.ezco-mde-slash-item')
-        items.forEach((item, index) => {
-            if (index === this.selectedIndex) {
-                item.classList.add('is-selected')
-                item.setAttribute('aria-selected', 'true')
-                // Keep the active item in view when arrowing through a
-                // long, scrollable list.
-                ;(item as HTMLElement).scrollIntoView({ block: 'nearest' })
-            } else {
-                item.classList.remove('is-selected')
-                item.removeAttribute('aria-selected')
-            }
-        })
+        return this.menu.handleKeyDown(event)
     }
 
     showSuggestions() {
-        // Always recreate the dropdown to ensure fresh content and event listeners
-        this.dropdown = this.createDropdown()
-
-        if (this.popup) {
-            // Update existing popup content
-            this.popup.setContent(this.dropdown)
-        } else {
-            // Create new popup. `tippy()` on a single element returns a
-            // single Instance (not an array) — capturing `instances[0]`
-            // left `this.popup` undefined, so every keystroke spawned a
-            // fresh, never-destroyed tippy. Normalize both shapes.
-            const created = tippy(document.body, {
-                getReferenceClientRect: () => {
-                    if (!this.range) {
-                        // Return a default rect if range is null
-                        return new DOMRect(0, 0, 0, 0)
-                    }
-                    const { view } = this.editor
-                    const { from } = this.range
-                    const start = view.coordsAtPos(from)
-                    const end = view.coordsAtPos(this.range.to)
-
-                    return {
-                        top: start.top,
-                        bottom: end.bottom,
-                        left: start.left,
-                        right: end.right,
-                        width: end.right - start.left,
-                        height: end.bottom - start.top,
-                        x: start.left,
-                        y: start.top,
-                        toJSON: () => ({
-                            top: start.top,
-                            bottom: end.bottom,
-                            left: start.left,
-                            right: end.right,
-                            width: end.right - start.left,
-                            height: end.bottom - start.top,
-                            x: start.left,
-                            y: start.top,
-                        })
-                    } as DOMRect
-                },
-                appendTo: () => document.body,
-                content: this.dropdown,
-                showOnCreate: true,
-                interactive: true,
-                trigger: 'manual',
-                placement: 'bottom-start',
-                theme: 'ezco-mde-slash',
-                maxWidth: 'none',
-                onShow: () => {
-                    // Add outside click handler when dropdown is shown
-                    this.addOutsideClickHandler()
-                },
-                onHide: () => {
-                    // Remove outside click handler when dropdown is hidden
-                    this.removeOutsideClickHandler()
-                }
-            }) as TippyInstance | TippyInstance[]
-            this.popup = Array.isArray(created) ? created[0] : created
-        }
+        // Drawn afresh on every change of the query, the first row selected.
+        const items: SuggestionItem[] = this.getFilteredCommands().map((command) => ({
+            icon: command.icon,
+            title: command.title,
+            description: command.description,
+            onSelect: () => this.selectCommand(command),
+        }))
+        this.menu.show(items, this.query ? `No commands matching “${this.query}”` : 'No commands available')
     }
 
     hideSuggestions() {
-        this.removeOutsideClickHandler()
-
-        if (this.popup) {
-            this.popup.destroy()
-            this.popup = null
-        }
-
-        // Defensive cleanup of any *slash* popovers that escaped destroy()
-        // (e.g. across HMR / re-init). This MUST stay scoped to our own
-        // dropdown: a previous version removed every `[data-tippy-root]` in
-        // the document, which — because this runs on every selection change —
-        // wiped unrelated popovers (the inline link popover, the block-action
-        // and selection menus) the instant the caret moved.
-        document.querySelectorAll('[data-tippy-root]').forEach(root => {
-            if (root.querySelector('.ezco-mde-slash-menu')) root.remove()
-        })
-        document.querySelectorAll('.ezco-mde-slash-menu').forEach(dropdown => {
-            dropdown.remove()
-        })
-
-        this.dropdown = null
+        this.menu.hide()
         this.range = null
         this.query = ''
-        this.selectedIndex = 0
         this.lastInputWasSlash = false
-    }
-
-    addOutsideClickHandler() {
-        if (this.outsideClickHandler) {
-            this.removeOutsideClickHandler()
-        }
-
-        this.outsideClickHandler = (event: MouseEvent) => {
-            const target = event.target as Element
-            // Check if click is outside the dropdown and editor
-            if (this.dropdown && !this.dropdown.contains(target) &&
-                !this.editor.view.dom.contains(target)) {
-                this.hideSuggestions()
-            }
-        }
-
-        // Add listener with a slight delay to avoid immediate closure
-        setTimeout(() => {
-            document.addEventListener('click', this.outsideClickHandler!, true)
-        }, 100)
-    }
-
-    removeOutsideClickHandler() {
-        if (this.outsideClickHandler) {
-            document.removeEventListener('click', this.outsideClickHandler, true)
-            this.outsideClickHandler = null
-        }
     }
 
     getFilteredCommands(): SlashCommand[] {
@@ -417,7 +206,7 @@ class SlashCommandsView {
 
     selectCommand(command: SlashCommand) {
         if (this.range) {
-            // Store the range before hiding suggestions, as hideSuggestions() might clear it
+            // Store the range before hiding suggestions, as hideSuggestions() clears it
             const range = this.range
             // Hide suggestions first to ensure dropdown closes
             this.hideSuggestions()
@@ -427,7 +216,6 @@ class SlashCommandsView {
     }
 
     destroy() {
-        this.removeOutsideClickHandler()
         this.hideSuggestions()
         this.editor.off('selectionUpdate', this.selectionUpdate)
         this.editor.off('update', this.selectionUpdate)

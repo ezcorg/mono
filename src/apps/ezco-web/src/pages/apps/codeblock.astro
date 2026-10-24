@@ -27,16 +27,15 @@ const { github, icon } = projects.find((p) => p.id === 'codeblock')!;
 			window.__ezos = { github, icon };
 		</script>
 		<script>
-			import { getDemoFs } from '../../scripts/demo-fs';
+			import { getDemoVault } from '../../scripts/demo-fs';
 			import { frame } from '../../scripts/ezos-frame';
 			const { tool, dark } = frame((window as unknown as { __ezos: { github: string; icon: string } }).__ezos);
 			const el = document.getElementById('mount')!;
 			(async () => {
-				const fs = await getDemoFs();
-				const { createCodeblock, SearchIndex, setThemeEffect, updateSettingsEffect } = await import('@joinezco/codeblock');
-				const index = await SearchIndex.get(fs, '.codeblock/index.json');
+				const { fs, search, files } = await getDemoVault();
+				const { createCodeblock, setThemeEffect, updateSettingsEffect } = await import('@joinezco/codeblock');
 				el.innerHTML = '';
-				const view = createCodeblock({ parent: el, fs, filepath: 'example.ts', index, cwd: '/', dark: dark(), toolbarLayout: 'compact' });
+				const view = createCodeblock({ parent: el, fs, filepath: 'example.ts', search, files, cwd: '/', dark: dark(), toolbarLayout: 'compact' });
 				/* the lights in the room switch the editor's theme too */
 				addEventListener('ezos-theme', (e) => { const d = (e as CustomEvent<{ dark: boolean }>).detail.dark; view.dispatch({ effects: [updateSettingsEffect.of({ theme: d ? 'dark' : 'light' }), setThemeEffect.of({ dark: d })] }); });
 				/* the file-search toolbar is a CodeMirror panel; it is moved up into the title bar (and put back there if CodeMirror ever re-syncs its panels) */

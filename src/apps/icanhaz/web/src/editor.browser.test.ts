@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
-import { createEditor, type FileSystemOptions } from "@joinezco/markdown-editor";
+import { createEditor } from "@joinezco/markdown-editor";
 
 // Milestone A proof: the REAL @joinezco/markdown-editor, in a real browser,
 // rendering a real HOST file read through the wRPC filesystem adapter, gated by
@@ -27,12 +27,10 @@ describe("markdown-editor renders a host file over wRPC", () => {
         document.body.append(el);
 
         // The FileSystem extension reads `filepath` via `fs` on create and sets
-        // the document to that file's rendered markdown. `wrpcFilesystem`'s
-        // `VfsLike` structurally mirrors codeblock's `VfsInterface` (only `stat`'s
-        // return is deliberately wider), so assert it to the editor's option type.
+        // the document to that file's rendered markdown.
         const editor = createEditor({
             element: el,
-            fs: { fs, filepath: FILE, autoSave: false } as FileSystemOptions,
+            fs: { fs, filepath: FILE, autoSave: false },
         });
 
         // The read is async (a wRPC round-trip to the host), so poll the editor's

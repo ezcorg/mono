@@ -1,0 +1,8 @@
+package ezco:links@0.1.0;
+
+/// backlinks for a vault of markdown notes, over a delegated filesystem grant
+world capability {
+  import icanhaz:nocap/filesystem@0.1.0;
+  import wasi:filesystem/types@0.2.12;
+  export example:links/links@0.1.0;
+}

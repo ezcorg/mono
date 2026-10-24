@@ -12,7 +12,7 @@
 //! capability). The two differ only in their default file.
 //!
 //! Run (rust-analyzer + cargo on the daemon's PATH for the Rust page):
-//!   cd /Users/theo/dev/mono && PATH="$HOME/.cargo/bin:$PATH" ICANHAZ_CONSENT=auto ./target/debug/icanhazd
+//!   cd <repo root> && PATH="$HOME/.cargo/bin:$PATH" ICANHAZ_CONSENT=auto ./target/debug/icanhazd
 //!   cd src/apps/icanhaz/web && npm run dev   # open /editor-demo.html or /rust-demo.html
 //! Override the file/socket via `?file=…` and `?ws=…`.
 
@@ -20,15 +20,13 @@ import "./mac-window.css";
 
 import { connect, requestFilesystemGrant, type Transport } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
-import { rootPath } from "./generated/workspace";
+import { workspaceRoot } from "./workspace";
+import { add as addComponent } from "./generated/components";
+import { editorInference, requestInferenceGrant } from "./inference";
+import { editorLinks, openLinks, requestLinksGrant, type LinksIndex } from "./links";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider } from "@joinezco/codeblock";
-import {
-    createEditor,
-    type MarkdownEditor,
-    type FileSystemOptions,
-    type ToolbarOptions,
-} from "@joinezco/markdown-editor";
+import { createEditor, type MarkdownEditor } from "@joinezco/markdown-editor";
 
 export interface MacDemoOptions {
     /** Where to mount the whole page (usually `#root`). */
@@ -93,6 +91,8 @@ function buildChrome(root: HTMLElement, title: string) {
     const titlebar = el("div", "mac-titlebar", lights, toolbarMount, themeToggle);
 
     const sidebarMount = el("div", "mac-sidebar");
+    const linksMount = el("div", "mac-links");
+    sidebarMount.append(linksMount);
     const editorMount = el("div", "mac-editor");
     const body = el("div", "mac-body", el("div", "mac-body-row", sidebarMount, editorMount));
 
@@ -100,7 +100,7 @@ function buildChrome(root: HTMLElement, title: string) {
     const page = el("div", "dev-page", header, win);
     root.replaceChildren(page);
 
-    return { status, toolbarMount, themeToggle, sidebarMount, editorMount };
+    return { status, toolbarMount, themeToggle, sidebarMount, linksMount, editorMount };
 }
 
 /** Wire the light/system/dark segmented control; drives `data-theme` on the
@@ -148,7 +148,7 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
     const ws = params.get("ws") ?? opts.defaultWs ?? "ws://127.0.0.1:7777";
     const filepath = params.get("file") ?? opts.defaultFile;
 
-    const { status, toolbarMount, themeToggle, sidebarMount, editorMount } = buildChrome(
+    const { status, toolbarMount, themeToggle, sidebarMount, linksMount, editorMount } = buildChrome(
         opts.root,
         opts.title ?? "icanhaz",
     );
@@ -171,12 +171,12 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
         // Light up rust-analyzer (on the host) for code files when the grant's
         // jail is a Cargo project — a `process` grant is requested on first use.
         // No workspace path / non-Rust files → the codeblock's built-in behavior.
-        const rp = await rootPath(transport, grant);
-        if (rp.tag === "ok") {
+        const root = await workspaceRoot(transport, grant).catch(() => undefined);
+        if (root !== undefined) {
             setRemoteLspProvider(
                 createWrpcLspProvider({
                     transport,
-                    workspaceRoot: rp.val,
+                    workspaceRoot: root,
                     servers: { rust: { image: "rust-analyzer" } },
                 }),
             );
@@ -187,16 +187,37 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
             await fs.writeFile(filepath, opts.seed(filepath));
         }
 
+        // Backlinks: a novel capability from the store, lent this page's
+        // filesystem grant. Named by hash and source (`?links-provider=sha256:…
+        // &links-source=oci://…`), the daemon fetches it, checks the hash and
+        // shows the consent card with its origin; without them the demo adds
+        // the example's bytes itself. The editor does not wait on consent: its
+        // links fill in when the grant arrives.
+        const links = editorLinks(
+            acquireLinks(transport, grant, {
+                provider: params.get("links-provider") ?? undefined,
+                source: params.get("links-source") ?? undefined,
+            }),
+            fs,
+        );
+
         editor = createEditor({
             element: editorMount,
-            // `VfsLike` structurally mirrors codeblock's `VfsInterface` (only
-            // `stat`'s return is deliberately wider) — assert it to the options.
-            fs: { fs, filepath, autoSave: true } as FileSystemOptions,
+            fs: { fs, filepath, autoSave: true },
+            // The editor's own links panel, in the column under the outline
+            // and shown from the start (the demo is about the backlinks
+            // capability; the editor hides the panel until ⌘⇧L otherwise);
+            // renames from the toolbar go through the capability too.
+            links: { ...links, panel: { mount: () => linksMount, open: true } },
+            // Prose actions (rewrite, summarize, continue, ask) over the
+            // daemon's inference capability, its grant asked for the first
+            // time one runs.
+            inference: editorInference(transport, () => requestInferenceGrant(transport, "let a model help write this note")),
             // The file-search toolbar mounts into the window titlebar (in place
             // of a title) and stays visible there (not the default floating pill);
             // `.mac-titlebar-search` rethemes it into a slim titlebar field.
             toolbar: {
-                fs: fs as unknown as ToolbarOptions["fs"],
+                fs,
                 filepath,
                 mount: () => toolbarMount,
                 autoHide: false,
@@ -217,4 +238,28 @@ export async function mountMacDemo(opts: MacDemoOptions): Promise<void> {
         console.error(e);
         setStatus(`failed: ${e}`, true);
     }
+}
+
+/** The links capability for this page's vault: add the example component
+ *  unless the page names a provider, then ask for a grant that lends it the
+ *  filesystem grant, and open the index. */
+async function acquireLinks(
+    transport: Transport,
+    fsGrant: string,
+    named: { provider?: string; source?: string },
+): Promise<LinksIndex> {
+    let provider = named.provider;
+    if (!provider) {
+        const wasm = new Uint8Array(await (await fetch("/fixtures/links.wasm")).arrayBuffer());
+        const added = await addComponent(transport, wasm, undefined);
+        if (added.tag !== "ok") throw new Error(added.val);
+        provider = added.val.hash;
+    }
+    const token = await requestLinksGrant(transport, {
+        provider,
+        source: named.source,
+        filesystemGrant: fsGrant,
+        reason: "show which notes link to the one you are editing",
+    });
+    return openLinks(transport, token);
 }

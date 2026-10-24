@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use cel_cxx::Env;
@@ -11,7 +11,9 @@ use wasmtime::component::{Component, InstancePre, Resource};
 use wasmtime_wasi_http::WasiHttpView;
 use wasmtime_wasi_http::p3::Request as WasiRequest;
 
+use crate::db::tenants::{Tenant, TenantPluginConfig, TenantPluginOverride};
 use crate::plugins::limits::{BreachRecorder, LimitOverrides, RecoveryPolicy, ResolvedLimits};
+use crate::proxy::tenant::TenantContext;
 use crate::wasm::Logger;
 use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::PluginError as GuestPluginError;
 use crate::{
@@ -28,6 +30,15 @@ use crate::{
 };
 use std::future;
 
+/// What [`PluginRegistry::set_plugin_configuration`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Configured {
+    Updated,
+    NoSuchPlugin,
+    /// A value the plugin's declared inputs do not admit; nothing was written.
+    Refused(String),
+}
+
 pub struct PluginRegistry {
     /// Copy-on-write plugin map: readers take an `Arc` snapshot and never hold
     /// a lock across guest execution; mutators clone the map, apply the change,
@@ -38,6 +49,16 @@ pub struct PluginRegistry {
     pub db: Db,
     pub runtime: Runtime,
     env: &'static Env<'static>,
+    /// The grant store every plugin's provider capabilities are issued in (see
+    /// [`crate::plugins::grants`]).
+    grants: crate::plugins::grants::Grants,
+    /// The icanhaz daemon (see [`crate::plugins::icanhaz`]): install-time
+    /// consent and plugin settings are decided and edited at its tray app.
+    /// `None` grants every wanted capability as proposed and reads settings
+    /// from witmproxy's own database.
+    icanhaz: Option<Arc<crate::plugins::icanhaz::Icanhaz>>,
+    /// The settings revision last applied per plugin id, for the poll.
+    settings_seen: Mutex<HashMap<String, u64>>,
     /// One persistent local-storage client per plugin id, so `set` survives
     /// across events (a fresh `Store` is created per event for isolation).
     /// Guarded by a `Mutex` for lazy get-or-create behind a shared `&self`.
@@ -52,6 +73,30 @@ pub struct PluginRegistry {
     /// One breach recorder per plugin id, so limit-breach counts accumulate
     /// across events rather than resetting per request.
     breaches: Mutex<HashMap<String, Arc<BreachRecorder>>>,
+    /// Each tenant's plugin policy as last read from the database, kept for
+    /// [`TENANT_POLICY_TTL`] so an event costs no queries. An absent policy
+    /// (a tenant the database does not know, or has disabled) is cached too.
+    tenant_policies: Mutex<HashMap<String, CachedTenantPolicy>>,
+}
+
+/// How long a tenant's plugin policy is reused before the database is read
+/// again. Short enough that an edit at the management API is live within a
+/// couple of seconds; the handlers that make such edits also drop the entry
+/// outright (see [`PluginRegistry::invalidate_tenant_policy`]).
+pub const TENANT_POLICY_TTL: Duration = Duration::from_secs(2);
+
+/// What one tenant gets of the plugin set: the overrides that decide which
+/// plugins run for it, and the configuration values that replace the global
+/// ones when each is created.
+struct TenantPolicy {
+    overrides: Vec<TenantPluginOverride>,
+    config: Vec<TenantPluginConfig>,
+}
+
+struct CachedTenantPolicy {
+    /// `None` is the anonymous policy: the tenant is unknown or disabled.
+    policy: Option<Arc<TenantPolicy>>,
+    expires_at: Instant,
 }
 
 impl WasmEvent {
@@ -120,10 +165,14 @@ impl PluginRegistry {
             db,
             runtime,
             env,
+            grants: crate::plugins::grants::shared()?,
+            icanhaz: None,
+            settings_seen: Mutex::new(HashMap::new()),
             local_storage: Mutex::new(HashMap::new()),
             instance_pre_cache: Mutex::new(HashMap::new()),
             instance_pre_resolutions: AtomicUsize::new(0),
             breaches: Mutex::new(HashMap::new()),
+            tenant_policies: Mutex::new(HashMap::new()),
         })
     }
 
@@ -229,15 +278,60 @@ impl PluginRegistry {
         *guard = Arc::new(map);
     }
 
+    /// The one place a plugin enters or leaves the map. `Some(plugin)` swaps
+    /// it in under `id` (a register, a reload, an enable toggle); `None`
+    /// takes `id` out (a remove). Either way the outgoing plugin's grants are
+    /// revoked, every one of them: its authority goes with it, and a call an
+    /// in-flight snapshot still makes on an old token is refused. Returns the
+    /// outgoing plugin, if there was one.
+    fn replace_plugin(&self, id: &str, incoming: Option<WitmPlugin>) -> Option<Arc<WitmPlugin>> {
+        let mut outgoing = None;
+        self.mutate_plugins(|map| {
+            outgoing = match incoming {
+                Some(plugin) => map.insert(id.to_string(), Arc::new(plugin)),
+                None => map.remove(id),
+            };
+        });
+        if let Some(old) = &outgoing {
+            self.revoke_grants_of(old);
+        }
+        outgoing
+    }
+
+    /// Revoke every grant `plugin` holds in the registry's store.
+    fn revoke_grants_of(&self, plugin: &WitmPlugin) {
+        let mut store = crate::plugins::grants::lock(&self.grants);
+        for cap in &plugin.capabilities {
+            if let Some(token) = &cap.token {
+                store.revoke(token);
+            }
+        }
+    }
+
+    /// Let go of a plugin that will not be registered: one whose consent was
+    /// refused or failed after [`PluginRegistry::plugin_from_component`]
+    /// compiled its scopes into the grant store. Its grants are revoked, so
+    /// an install that never completed leaves nothing behind.
+    pub fn discard_plugin(&self, plugin: WitmPlugin) {
+        self.revoke_grants_of(&plugin);
+    }
+
     pub async fn load_plugins(&self) -> Result<()> {
         // `WitmPlugin::all` takes `&mut Db` but only needs the (Clone) pool.
         let mut db = self.db.clone();
-        let plugins = WitmPlugin::all(&mut db, &self.runtime.engine, self.env).await?;
-        self.mutate_plugins(|map| {
-            for plugin in plugins.into_iter() {
-                map.insert(plugin.id(), Arc::new(plugin));
+        let mut plugins =
+            WitmPlugin::all(&mut db, &self.runtime.engine, self.env, &self.grants).await?;
+        for plugin in plugins.iter_mut() {
+            if let Err(err) = self.sync_settings(plugin).await {
+                warn!(
+                    "could not sync settings for {} from icanhaz: {err:#}",
+                    plugin.id()
+                );
             }
-        });
+        }
+        for plugin in plugins.into_iter() {
+            self.replace_plugin(&plugin.id(), Some(plugin));
+        }
         Ok(())
     }
 
@@ -331,7 +425,7 @@ impl PluginRegistry {
 
         let plugin = WitmPlugin::from(guest_result)
             .with_component(component, component_bytes)
-            .compile_capability_scope_expressions(self.env)?;
+            .compile_capability_scope_expressions(self.env, &self.grants)?;
         Ok(plugin)
     }
 
@@ -345,30 +439,200 @@ impl PluginRegistry {
     /// thinks it is testing.
     #[cfg(test)]
     pub(crate) async fn register_plugin_for_test(&self, plugin: WitmPlugin) -> Result<()> {
-        let plugin = plugin.compile_capability_scope_expressions(self.env)?;
+        let plugin = plugin.compile_capability_scope_expressions(self.env, &self.grants)?;
         self.register_plugin(plugin).await
     }
 
-    pub async fn register_plugin(&self, plugin: WitmPlugin) -> Result<()> {
+    /// Route install-time consent and plugin settings through an icanhaz daemon.
+    pub fn set_icanhaz(&mut self, icanhaz: Option<crate::plugins::icanhaz::Icanhaz>) {
+        self.icanhaz = icanhaz.map(Arc::new);
+    }
+
+    /// Decide what a freshly parsed plugin gets of what it wants: through the
+    /// configured daemon (the human, at the tray app), else everything as
+    /// proposed. Call before [`PluginRegistry::register_plugin`].
+    pub async fn consent_for(&self, plugin: &mut WitmPlugin) -> Result<()> {
+        let id = plugin.id();
+        match &self.icanhaz {
+            Some(icanhaz) => {
+                icanhaz
+                    .decide(&id, &plugin.description, &mut plugin.capabilities)
+                    .await
+            }
+            None => {
+                plugin
+                    .capabilities
+                    .iter_mut()
+                    .for_each(|cap| cap.granted = true);
+                Ok(())
+            }
+        }
+    }
+
+    /// Declare the plugin's settings schema at the daemon and take whatever
+    /// the user has saved there over witmproxy's own stored values. A
+    /// plugin without declared inputs declares nothing. With no daemon
+    /// configured this is a no-op.
+    pub async fn sync_settings(&self, plugin: &mut WitmPlugin) -> Result<()> {
+        let Some(icanhaz) = &self.icanhaz else {
+            return Ok(());
+        };
+        if plugin.input_schema.is_empty() {
+            return Ok(());
+        }
+        let id = plugin.id();
+        icanhaz
+            .declare(&id, &plugin.description, &plugin.input_schema)
+            .await?;
+        let settings = icanhaz.settings(&id).await?;
+        if let Some(values) = settings.values {
+            plugin.configuration = values;
+        }
+        Self::lock_seen(&self.settings_seen).insert(id, settings.revision);
+        Ok(())
+    }
+
+    fn lock_seen(
+        seen: &Mutex<HashMap<String, u64>>,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, u64>> {
+        seen.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Pick up settings the user edited at the tray app: every `interval`,
+    /// each plugin whose revision moved gets its configuration replaced (a
+    /// copy-on-write swap; in-flight events keep their snapshot). Returns
+    /// immediately with no daemon configured.
+    pub fn spawn_settings_sync(self: Arc<Self>, interval: std::time::Duration) {
+        if self.icanhaz.is_none() {
+            return;
+        }
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(interval).await;
+                let Some(icanhaz) = &self.icanhaz else { return };
+                let plugins = self.plugins();
+                for (id, plugin) in plugins.iter() {
+                    if plugin.input_schema.is_empty() {
+                        continue;
+                    }
+                    let settings = match icanhaz.settings(id).await {
+                        Ok(s) => s,
+                        Err(err) => {
+                            debug!("settings poll for {id} failed: {err:#}");
+                            continue;
+                        }
+                    };
+                    let seen = Self::lock_seen(&self.settings_seen).get(id).copied();
+                    if seen == Some(settings.revision) {
+                        continue;
+                    }
+                    if let Some(values) = settings.values {
+                        info!(
+                            "settings for {id} changed at icanhaz (revision {}); applying",
+                            settings.revision
+                        );
+                        let mut updated = (**plugin).clone();
+                        updated.configuration = values;
+                        self.mutate_plugins(|map| {
+                            map.insert(id.clone(), Arc::new(updated));
+                        });
+                    }
+                    Self::lock_seen(&self.settings_seen).insert(id.clone(), settings.revision);
+                }
+            }
+        });
+    }
+
+    pub async fn register_plugin(&self, mut plugin: WitmPlugin) -> Result<()> {
+        // Its settings live at the daemon when one is configured.
+        if let Err(e) = self.sync_settings(&mut plugin).await {
+            self.revoke_grants_of(&plugin);
+            return Err(e);
+        }
         // Compile the scope expressions as they are now. A caller may have
         // edited a scope after `plugin_from_component` compiled the
         // manifest's version; without this the stale program would keep
-        // deciding which events the plugin sees.
-        let plugin = plugin.compile_capability_scope_expressions(self.env)?;
+        // deciding which events the plugin sees. (On failure it revokes
+        // whatever it issued.)
+        let plugin = plugin.compile_capability_scope_expressions(self.env, &self.grants)?;
         // Upsert the given plugin into the database (`Insert` takes `&mut Db`
-        // but only needs the Clone pool).
+        // but only needs the Clone pool). A plugin that is not in the
+        // database is not installed, so its grants go too.
         let mut db = self.db.clone();
-        plugin.insert(&mut db).await?;
+        if let Err(e) = plugin.insert(&mut db).await {
+            self.revoke_grants_of(&plugin);
+            return Err(e);
+        }
         let plugin_id = plugin.id();
-        // Add it to the registry
-        self.mutate_plugins(|map| {
-            map.insert(plugin_id.clone(), Arc::new(plugin));
-        });
+        // Add it to the registry, revoking the grants of the plugin it replaces.
+        self.replace_plugin(&plugin_id, Some(plugin));
         // An upsert replaces the component, so the cached resolution of the
         // previous one must go with it: otherwise events keep instantiating
         // the old code until the daemon restarts.
         Self::lock_cache(&self.instance_pre_cache).remove(&plugin_id);
         Ok(())
+    }
+
+    /// Set values in a plugin's global configuration (what anonymous traffic
+    /// is handled with, and what a tenant's own values override): each one
+    /// typed as the plugin declares the input, persisted, then a freshly
+    /// loaded copy of the plugin swapped into the map so the next event sees
+    /// it. A value for an input the plugin does not declare refuses the
+    /// whole change, and nothing is written.
+    pub async fn set_plugin_configuration(
+        &self,
+        namespace: &str,
+        name: &str,
+        values: &[(String, String)],
+    ) -> Result<Configured> {
+        let id = format!("{namespace}/{name}");
+        let Some(plugin) = self.plugins().get(&id).cloned() else {
+            return Ok(Configured::NoSuchPlugin);
+        };
+        let mut typed = Vec::with_capacity(values.len());
+        for (input, raw) in values {
+            let Some(schema) = plugin.input_schema.iter().find(|s| &s.name == input) else {
+                let declared: Vec<&str> = plugin
+                    .input_schema
+                    .iter()
+                    .map(|s| s.name.as_str())
+                    .collect();
+                return Ok(Configured::Refused(format!(
+                    "{id} has no setting named `{input}`; it declares: {}",
+                    if declared.is_empty() {
+                        "none".to_string()
+                    } else {
+                        declared.join(", ")
+                    }
+                )));
+            };
+            match crate::plugins::inputs::coerce_input(schema, raw) {
+                Ok(value) => typed.push((input.clone(), serde_json::to_string(&value)?)),
+                Err(e) => return Ok(Configured::Refused(format!("{id}: `{input}`: {e}"))),
+            }
+        }
+        for (input, value_json) in &typed {
+            sqlx::query(
+                "INSERT OR REPLACE INTO plugin_configuration (namespace, name, input_name, input_value) VALUES (?, ?, ?, ?)",
+            )
+            .bind(namespace)
+            .bind(name)
+            .bind(input)
+            .bind(value_json)
+            .execute(&self.db.pool)
+            .await?;
+        }
+        let row =
+            sqlx::query("SELECT component, enabled FROM plugins WHERE namespace = ? AND name = ?")
+                .bind(namespace)
+                .bind(name)
+                .fetch_one(&self.db.pool)
+                .await?;
+        let mut db = self.db.clone();
+        let reloaded =
+            WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env, &self.grants).await?;
+        self.replace_plugin(&reloaded.id(), Some(reloaded));
+        Ok(Configured::Updated)
     }
 
     /// Toggle a plugin's enabled flag: persists to the DB, then swaps a
@@ -396,12 +660,13 @@ impl PluginRegistry {
                 .fetch_one(&self.db.pool)
                 .await?;
         let mut db = self.db.clone();
-        let plugin = WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env).await?;
+        let plugin =
+            WitmPlugin::from_db_row(row, &mut db, &self.runtime, self.env, &self.grants).await?;
         // The cached InstancePre (if any) stays valid: it was resolved from a
-        // component compiled from the same bytes on the same engine.
-        self.mutate_plugins(|map| {
-            map.insert(plugin.id(), Arc::new(plugin));
-        });
+        // component compiled from the same bytes on the same engine. The
+        // grants are not: the reloaded copy holds fresh ones, and the old
+        // copy's are revoked with it.
+        self.replace_plugin(&plugin.id(), Some(plugin));
         Ok(true)
     }
 
@@ -424,22 +689,32 @@ impl PluginRegistry {
                 .await?
         };
 
-        // Build list of plugin IDs that were removed and remove from in-memory registry
+        // Build list of plugin IDs that were removed and remove from the
+        // in-memory registry, revoking each one's grants.
         let mut removed_plugin_ids = Vec::new();
-        self.mutate_plugins(|map| {
-            for (ns, n) in &deleted_plugins {
-                let plugin_id = WitmPlugin::make_id(ns, n);
-                if map.remove(&plugin_id).is_some() {
-                    removed_plugin_ids.push(plugin_id);
-                }
+        for (ns, n) in &deleted_plugins {
+            let plugin_id = WitmPlugin::make_id(ns, n);
+            if self.replace_plugin(&plugin_id, None).is_some() {
+                removed_plugin_ids.push(plugin_id);
             }
-        });
+        }
         // Drop the cached InstancePre so a reloaded component isn't
         // instantiated from a stale resolution.
         {
             let mut cache = Self::lock_cache(&self.instance_pre_cache);
             for plugin_id in &removed_plugin_ids {
                 cache.remove(plugin_id);
+            }
+        }
+        // Withdraw its settings form from the tray app. The saved values stay
+        // in the daemon's store until removed there: they may hold a key the
+        // user wants back on reinstall.
+        if let Some(icanhaz) = &self.icanhaz {
+            for plugin_id in &removed_plugin_ids {
+                Self::lock_seen(&self.settings_seen).remove(plugin_id);
+                if let Err(err) = icanhaz.undeclare(plugin_id).await {
+                    warn!("could not withdraw {plugin_id}'s configuration at icanhaz: {err:#}");
+                }
             }
         }
 
@@ -682,34 +957,158 @@ impl PluginRegistry {
         event: &dyn Event,
         executed_plugins: &HashSet<String>,
     ) -> Option<Arc<WitmPlugin>> {
-        Self::find_first_unexecuted_in(&self.plugins(), event, executed_plugins)
+        Self::find_first_unexecuted_in(&self.plugins(), event, executed_plugins, None)
     }
 
     /// Snapshot-based lookup so a whole event chain sees one consistent view.
+    /// `effective` is the tenant's plugin set when the event has a tenant;
+    /// `None` means anonymous, for whom the globally enabled plugins run.
     fn find_first_unexecuted_in(
         plugins: &HashMap<String, Arc<WitmPlugin>>,
         event: &dyn Event,
         executed_plugins: &HashSet<String>,
+        effective: Option<&HashSet<String>>,
     ) -> Option<Arc<WitmPlugin>> {
         plugins
             .values()
-            .find(|p| !executed_plugins.contains(&p.id()) && p.can_handle(event))
+            .find(|p| !executed_plugins.contains(&p.id()) && Self::runs_for(p, event, effective))
             .cloned()
     }
 
-    /// Check if any plugins can handle an event
+    /// Whether `plugin` handles `event` for the traffic `effective` describes.
+    /// A tenant's set replaces the global enabled flag entirely: a plugin
+    /// that is off for everyone runs for a tenant whose override turns it
+    /// on, and one that is on for everyone does not run for a tenant whose
+    /// override turns it off. The scope is the plugin's own either way.
+    fn runs_for(
+        plugin: &WitmPlugin,
+        event: &dyn Event,
+        effective: Option<&HashSet<String>>,
+    ) -> bool {
+        match effective {
+            Some(set) => set.contains(&plugin.id()) && plugin.matches_scope(event),
+            None => plugin.can_handle(event),
+        }
+    }
+
+    /// Whether any plugin handles `event` for anonymous traffic: the
+    /// globally enabled plugins, as [`PluginRegistry::can_handle_for`] would
+    /// answer for [`TenantContext::anonymous`], without a database round trip.
     pub fn can_handle(&self, event: &dyn Event) -> bool {
         self.plugins().values().any(|p| p.can_handle(event))
+    }
+
+    /// Whether any plugin handles `event` for `tenant`. For a CONNECT this is
+    /// the decision to intercept, so a tenant whose override enables a
+    /// globally disabled plugin gets its connections intercepted, and nobody
+    /// else does.
+    ///
+    /// The scopes are evaluated before the returned future is polled, and
+    /// the future holds only their verdicts: an event is not `Sync`, and a
+    /// future that kept a reference to one across the policy lookup could
+    /// not be spawned.
+    pub fn can_handle_for<'a>(
+        &'a self,
+        event: &dyn Event,
+        tenant: &'a TenantContext,
+    ) -> impl std::future::Future<Output = bool> + Send + 'a {
+        let plugins = self.plugins();
+        let in_scope: HashSet<String> = plugins
+            .values()
+            .filter(|p| p.matches_scope(event))
+            .map(|p| p.id())
+            .collect();
+        async move {
+            if in_scope.is_empty() {
+                return false;
+            }
+            match self.tenant_policy(tenant).await {
+                Some(policy) => Self::effective_plugins_in(&plugins, &policy.overrides)
+                    .iter()
+                    .any(|id| in_scope.contains(id)),
+                None => plugins
+                    .values()
+                    .any(|p| p.enabled && in_scope.contains(&p.id())),
+            }
+        }
+    }
+
+    /// The plugin policy `tenant` gets: `None` for anonymous traffic, and
+    /// for a tenant the database does not know or has disabled, both of
+    /// which get the global plugin set and configuration. Read from the
+    /// database at most once per [`TENANT_POLICY_TTL`] per tenant. A
+    /// database error is logged and treated as anonymous for one TTL, so a
+    /// failing database costs one query per tenant per interval rather than
+    /// one per event.
+    async fn tenant_policy(&self, tenant: &TenantContext) -> Option<Arc<TenantPolicy>> {
+        let id = tenant.tenant_id.as_deref()?;
+        let now = Instant::now();
+        let cached = Self::lock_cache(&self.tenant_policies)
+            .get(id)
+            .filter(|c| c.expires_at > now)
+            .map(|c| c.policy.clone());
+        if let Some(policy) = cached {
+            return policy;
+        }
+        let policy = match self.load_tenant_policy(id).await {
+            Ok(policy) => policy,
+            Err(e) => {
+                warn!(
+                    tenant = %id,
+                    error = %e,
+                    "could not read the tenant's plugin policy; using the global one"
+                );
+                None
+            }
+        };
+        Self::lock_cache(&self.tenant_policies).insert(
+            id.to_string(),
+            CachedTenantPolicy {
+                policy: policy.clone(),
+                expires_at: now + TENANT_POLICY_TTL,
+            },
+        );
+        policy
+    }
+
+    async fn load_tenant_policy(&self, id: &str) -> Result<Option<Arc<TenantPolicy>>> {
+        let pool = &self.db.pool;
+        let Some(tenant) = Tenant::by_id(pool, id).await? else {
+            debug!(tenant = %id, "unknown tenant; using the global plugin policy");
+            return Ok(None);
+        };
+        if !tenant.enabled {
+            debug!(tenant = %id, "disabled tenant; using the global plugin policy");
+            return Ok(None);
+        }
+        let overrides = tenant.plugin_overrides(pool).await?;
+        let config = tenant.plugin_config(pool).await?;
+        Ok(Some(Arc::new(TenantPolicy { overrides, config })))
+    }
+
+    /// Forget the cached plugin policy of one tenant, so the next event it
+    /// sends reads the database. For the handlers that edit a tenant's
+    /// overrides, configuration or enabled flag.
+    pub fn invalidate_tenant_policy(&self, tenant_id: &str) {
+        Self::lock_cache(&self.tenant_policies).remove(tenant_id);
     }
 
     /// Returns the set of plugin IDs that are effective for a given tenant.
     /// Applies per-tenant enable/disable overrides on top of global enabled state.
     pub fn effective_plugins_for_tenant(
         &self,
-        overrides: &[crate::db::tenants::TenantPluginOverride],
+        overrides: &[TenantPluginOverride],
+    ) -> HashSet<String> {
+        Self::effective_plugins_in(&self.plugins(), overrides)
+    }
+
+    /// [`PluginRegistry::effective_plugins_for_tenant`] over one snapshot of
+    /// the plugin map, so an event chain's view is consistent.
+    fn effective_plugins_in(
+        plugins: &HashMap<String, Arc<WitmPlugin>>,
+        overrides: &[TenantPluginOverride],
     ) -> HashSet<String> {
         let mut effective = HashSet::new();
-        let plugins = self.plugins();
         for (id, plugin) in plugins.iter() {
             let mut enabled = plugin.enabled;
             // Check for tenant-specific override
@@ -729,27 +1128,40 @@ impl PluginRegistry {
     }
 
     /// Resolve configuration for a plugin, merging tenant-specific config over global defaults.
-    /// Tenant config values are stored as JSON strings in the database.
+    ///
+    /// A tenant value is stored as the text the management API received. It
+    /// is read as a JSON-encoded [`ActualInput`](crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::ActualInput) when it is one (the form the
+    /// global configuration is stored in), else typed as the plugin's
+    /// manifest declares the input (the way `witm plugin configure` types a
+    /// command-line value), else passed as a string for the plugin to parse.
     pub fn resolve_config(
         &self,
         plugin: &WitmPlugin,
-        tenant_config: &[crate::db::tenants::TenantPluginConfig],
+        tenant_config: &[TenantPluginConfig],
     ) -> Vec<UserInput> {
         use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::ActualInput;
 
         let mut config = plugin.configuration.clone();
         for tc in tenant_config {
             if tc.plugin_namespace == plugin.namespace && tc.plugin_name == plugin.name {
-                // Try to deserialize the JSON value into ActualInput
+                let declared = plugin.input_schema.iter().find(|s| s.name == tc.input_name);
                 let value = match serde_json::from_str::<ActualInput>(&tc.input_value) {
                     Ok(v) => v,
-                    Err(e) => {
-                        warn!(
-                            "Failed to deserialize tenant config value for {}/{} input '{}': {}. Falling back to string.",
-                            tc.plugin_namespace, tc.plugin_name, tc.input_name, e
-                        );
-                        ActualInput::Str(tc.input_value.clone())
-                    }
+                    Err(_) => match declared
+                        .map(|s| crate::plugins::inputs::coerce_input(s, &tc.input_value))
+                    {
+                        Some(Ok(v)) => v,
+                        Some(Err(e)) => {
+                            warn!(
+                                tenant = %tc.tenant_id,
+                                plugin = %plugin.id(),
+                                input = %tc.input_name,
+                                "tenant configuration value is not the type the plugin declares ({e}); passing it as a string"
+                            );
+                            ActualInput::Str(tc.input_value.clone())
+                        }
+                        None => ActualInput::Str(tc.input_value.clone()),
+                    },
                 };
 
                 if let Some(existing) = config.iter_mut().find(|c| c.name == tc.input_name) {
@@ -767,12 +1179,39 @@ impl PluginRegistry {
 
     /// Handle a generic event, passing it through all registered plugins, and returning the final [Event] (whose inner contents implement [Event]) and [Store] (for resolving any resource handles on the host side)
     /// Validates that the final [Event] matches the expected output type for its event kind, returning an error if not
-    #[tracing::instrument(skip(self, event), fields(event_kind = ?event.kind()))]
+    ///
+    /// For anonymous traffic: the globally enabled plugins, each created with
+    /// its global configuration. Events with a tenant go through
+    /// [`PluginRegistry::handle_event_for`].
     pub async fn handle_event(&self, event: Box<dyn Event>) -> Result<(WasmEvent, Store<Host>)> {
+        self.handle_event_for(event, &TenantContext::anonymous())
+            .await
+    }
+
+    /// [`PluginRegistry::handle_event`] for one tenant's traffic: the plugins
+    /// its overrides leave effective run, each created with its configuration
+    /// resolved over the global one ([`PluginRegistry::resolve_config`]). An
+    /// anonymous, unknown or disabled tenant gets the global policy.
+    #[tracing::instrument(
+        skip(self, event, tenant),
+        fields(event_kind = ?event.kind(), tenant = ?tenant.tenant_id)
+    )]
+    pub async fn handle_event_for(
+        &self,
+        event: Box<dyn Event>,
+        tenant: &TenantContext,
+    ) -> Result<(WasmEvent, Store<Host>)> {
         // One snapshot for the whole event: a consistent view of the plugin
-        // set, with no lock held while guests execute.
+        // set, with no lock held while guests execute. The tenant's policy
+        // is read once alongside it, for the same reason.
         let plugins = self.plugins();
-        let any_plugins = plugins.values().any(|p| p.can_handle(&*event));
+        let policy = self.tenant_policy(tenant).await;
+        let effective = policy
+            .as_ref()
+            .map(|p| Self::effective_plugins_in(&plugins, &p.overrides));
+        let any_plugins = plugins
+            .values()
+            .any(|p| Self::runs_for(p, &*event, effective.as_ref()));
         if !any_plugins {
             debug!(
                 "No plugins with matching capability and scope; skipping plugin processing for event of kind: {:?}",
@@ -792,9 +1231,12 @@ impl PluginRegistry {
         let mut store = self.new_store()?;
         let mut executed_plugins = HashSet::new();
 
-        while let Some(plugin) =
-            Self::find_first_unexecuted_in(&plugins, &*current_event, &executed_plugins)
-        {
+        while let Some(plugin) = Self::find_first_unexecuted_in(
+            &plugins,
+            &*current_event,
+            &executed_plugins,
+            effective.as_ref(),
+        ) {
             tracing::info!(
                 plugin.id = %plugin.id(),
                 plugin.namespace = %plugin.namespace,
@@ -875,9 +1317,16 @@ impl PluginRegistry {
                 Some(storage),
                 &plugin_limits,
                 self.breaches_for(&plugin_id),
+                &self.grants,
+                plugin_id.as_str(),
             );
             let cap_resource = store.data_mut().table.push(provider)?;
-            let config = plugin.configuration.clone();
+            // The tenant's values over the global ones; the global ones alone
+            // for anonymous traffic.
+            let config = match &policy {
+                Some(policy) => self.resolve_config(&plugin, &policy.config),
+                None => plugin.configuration.clone(),
+            };
 
             let (step, next_store) = self
                 .run_plugin_in_store(
@@ -921,9 +1370,8 @@ impl PluginRegistry {
 mod tests {
     use super::*;
     use crate::test_utils::{create_plugin_registry, test_component_path};
-    use crate::wasm::bindgen::witmproxy::plugin::capabilities::{
-        CapabilityKind, CapabilityScope, EventKind,
-    };
+    use crate::wasm::bindgen::ezco::ezcap::types::Scope;
+    use crate::wasm::bindgen::witmproxy::plugin::capabilities::{CapabilityKind, EventKind};
     use crate::{
         plugins::{WitmPlugin, capabilities::Capability},
         wasm::bindgen::witmproxy::plugin::capabilities::Capability as WitCapability,
@@ -951,31 +1399,37 @@ mod tests {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: cel_expression.into(),
+                    scope: Scope {
+                        when: cel_expression.into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                token: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Request),
-                    scope: CapabilityScope {
-                        expression: cel_expression.into(),
+                    scope: Scope {
+                        when: cel_expression.into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                token: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
-                    scope: CapabilityScope {
-                        expression: cel_expression.into(),
+                    scope: Scope {
+                        when: cel_expression.into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                token: None,
             },
         ];
 
@@ -997,7 +1451,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capability_scope_expressions(registry.env)?;
+        .compile_capability_scope_expressions(registry.env, &registry.grants)?;
         registry.register_plugin(plugin).await
     }
 
@@ -1147,21 +1601,25 @@ mod tests {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                token: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
-                    scope: CapabilityScope {
-                        expression: "true".to_string(),
+                    scope: Scope {
+                        when: "true".to_string(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                token: None,
             },
         ];
 
@@ -1225,31 +1683,37 @@ mod tests {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                token: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Request),
-                    scope: CapabilityScope {
-                        expression: "true".to_string(),
+                    scope: Scope {
+                        when: "true".to_string(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                token: None,
             },
             Capability {
                 granted: true,
                 inner: WitCapability {
                     kind: CapabilityKind::HandleEvent(EventKind::Response),
-                    scope: CapabilityScope {
-                        expression: "true".to_string(),
+                    scope: Scope {
+                        when: "true".to_string(),
+                        allow: "true".into(),
                     },
                 },
-                cel: None,
+                when: None,
+                token: None,
             },
         ];
 
@@ -1271,7 +1735,7 @@ mod tests {
             metadata: std::collections::HashMap::new(),
             component,
         }
-        .compile_capability_scope_expressions(registry.env)?;
+        .compile_capability_scope_expressions(registry.env, &registry.grants)?;
         registry.register_plugin(plugin2).await?;
 
         // Test with a request that should match both plugins initially
@@ -1366,21 +1830,25 @@ mod tests {
                     granted: true,
                     inner: WitCapability {
                         kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                        scope: CapabilityScope {
-                            expression: "true".into(),
+                        scope: Scope {
+                            when: "true".into(),
+                            allow: "true".into(),
                         },
                     },
-                    cel: None,
+                    when: None,
+                    token: None,
                 },
                 Capability {
                     granted: true,
                     inner: WitCapability {
                         kind: CapabilityKind::HandleEvent(EventKind::Request),
-                        scope: CapabilityScope {
-                            expression: "true".into(),
+                        scope: Scope {
+                            when: "true".into(),
+                            allow: "true".into(),
                         },
                     },
-                    cel: None,
+                    when: None,
+                    token: None,
                 },
             ];
 
@@ -1421,6 +1889,146 @@ mod tests {
         Ok(())
     }
 
+    /// A plugin with two provider capabilities (logger, local storage) and
+    /// the request event, as parsed: its scopes not yet compiled, so no
+    /// grants issued.
+    fn plugin_with_provider_caps(
+        registry: &PluginRegistry,
+        namespace: &str,
+        name: &str,
+    ) -> Result<WitmPlugin, anyhow::Error> {
+        let component_bytes = std::fs::read(test_component_path()?)?;
+        let component = Some(wasmtime::component::Component::from_binary(
+            &registry.runtime.engine,
+            &component_bytes,
+        )?);
+        let cap = |kind| Capability {
+            granted: true,
+            inner: WitCapability {
+                kind,
+                scope: Scope {
+                    when: "true".into(),
+                    allow: "true".into(),
+                },
+            },
+            when: None,
+            token: None,
+        };
+        let plugin = WitmPlugin {
+            limits: Default::default(),
+            name: name.into(),
+            component_bytes,
+            namespace: namespace.into(),
+            version: "0.0.0".into(),
+            author: "author".into(),
+            description: "description".into(),
+            license: "mit".into(),
+            enabled: true,
+            url: "https://example.com".into(),
+            publickey: vec![],
+            capabilities: vec![
+                cap(CapabilityKind::Logger),
+                cap(CapabilityKind::LocalStorage),
+                cap(CapabilityKind::HandleEvent(EventKind::Request)),
+            ],
+            configuration: vec![],
+            input_schema: vec![],
+            metadata: std::collections::HashMap::new(),
+            component,
+        };
+        Ok(plugin)
+    }
+
+    /// Register it the way a test does: scopes compiled, so grants are
+    /// issued for the provider capabilities.
+    async fn register_plugin_with_provider_caps(
+        registry: &PluginRegistry,
+        namespace: &str,
+        name: &str,
+    ) -> Result<(), anyhow::Error> {
+        let plugin = plugin_with_provider_caps(registry, namespace, name)?;
+        registry.register_plugin_for_test(plugin).await
+    }
+
+    /// The tokens the registered plugin `id` holds.
+    fn tokens_of(registry: &PluginRegistry, id: &str) -> Vec<String> {
+        registry.plugins()[id]
+            .capabilities
+            .iter()
+            .filter_map(|c| c.token.clone())
+            .collect()
+    }
+
+    /// Whether the store still lists `token` and admits a call on it.
+    fn live(registry: &PluginRegistry, token: &str) -> bool {
+        let mut store = crate::plugins::grants::lock(&registry.grants);
+        let listed = store.active_grants().iter().any(|g| g.id == token);
+        let admitted = store
+            .admit(token, ezcap::Call::new("info").arg("message", "x"))
+            .is_ok();
+        assert_eq!(
+            listed, admitted,
+            "listing and admission disagree on {token}"
+        );
+        listed
+    }
+
+    #[tokio::test]
+    async fn removing_or_replacing_a_plugin_revokes_its_grants() -> Result<(), anyhow::Error> {
+        let (registry, _temp_dir) = create_plugin_registry().await?;
+        let id = "test/with_grants";
+
+        register_plugin_with_provider_caps(&registry, "test", "with_grants").await?;
+        let first = tokens_of(&registry, id);
+        assert_eq!(first.len(), 2, "one grant per provider capability");
+        assert!(first.iter().all(|t| live(&registry, t)));
+
+        // Re-registering (an upgrade, a reload) replaces the plugin: the old
+        // plugin's grants are revoked and the new plugin's are live.
+        register_plugin_with_provider_caps(&registry, "test", "with_grants").await?;
+        let second = tokens_of(&registry, id);
+        assert_eq!(second.len(), 2);
+        assert!(first.iter().all(|t| !second.contains(t)), "fresh tokens");
+        assert!(
+            first.iter().all(|t| !live(&registry, t)),
+            "old tokens revoked"
+        );
+        assert!(second.iter().all(|t| live(&registry, t)), "new tokens live");
+
+        // Removing it revokes what it held; nothing of the plugin's is left.
+        let removed = registry.remove_plugin("with_grants", Some("test")).await?;
+        assert_eq!(removed, vec![id.to_string()]);
+        assert!(second.iter().all(|t| !live(&registry, t)));
+        let store = crate::plugins::grants::lock(&registry.grants);
+        assert!(
+            store.active_grants().iter().all(|g| g.holder != id),
+            "{:?}",
+            store.active_grants()
+        );
+        Ok(())
+    }
+
+    /// A plugin that fails to install (consent refused after its scopes were
+    /// compiled) is discarded, and its grants with it.
+    #[tokio::test]
+    async fn a_discarded_plugin_holds_no_grants() -> Result<(), anyhow::Error> {
+        let (registry, _temp_dir) = create_plugin_registry().await?;
+        // The state `plugin_from_component` hands back: parsed, scopes
+        // compiled, grants issued, not yet registered.
+        let plugin = plugin_with_provider_caps(&registry, "test", "refused")?
+            .compile_capability_scope_expressions(registry.env, &registry.grants)?;
+        let tokens: Vec<String> = plugin
+            .capabilities
+            .iter()
+            .filter_map(|c| c.token.clone())
+            .collect();
+        assert_eq!(tokens.len(), 2);
+        assert!(tokens.iter().all(|t| live(&registry, t)));
+        registry.discard_plugin(plugin);
+        assert!(tokens.iter().all(|t| !live(&registry, t)));
+        Ok(())
+    }
+
     #[tokio::test]
     async fn test_remove_nonexistent_plugin() -> Result<(), anyhow::Error> {
         let (registry, _temp_dir) = create_plugin_registry().await?;
@@ -1433,6 +2041,138 @@ mod tests {
         // Verify nothing was removed
         assert_eq!(removed.len(), 0);
         assert_eq!(registry.plugins().len(), 0);
+        Ok(())
+    }
+
+    /// `set_plugin_configuration` types each value as the plugin declares
+    /// the input, persists it, and swaps a plugin carrying it into the map;
+    /// an input the plugin does not declare, or a value its type does not
+    /// admit, refuses the change and writes nothing.
+    #[tokio::test]
+    async fn set_plugin_configuration_types_persists_and_swaps() -> Result<(), anyhow::Error> {
+        use crate::wasm::bindgen::exports::witmproxy::plugin::witm_plugin::{
+            ActualInput, InputSchema, InputType,
+        };
+
+        let (registry, _temp_dir) = create_plugin_registry().await?;
+        let component_bytes = std::fs::read(test_component_path()?)?;
+        let component = Some(wasmtime::component::Component::from_binary(
+            &registry.runtime.engine,
+            &component_bytes,
+        )?);
+        let input = |name: &str, input_type: InputType| InputSchema {
+            name: name.into(),
+            input_type,
+            optional: false,
+            default: None,
+            description: None,
+        };
+        // The identity is the component's own: a configuration change reloads
+        // the plugin from its component, as an enable toggle does.
+        let plugin = WitmPlugin {
+            limits: Default::default(),
+            name: "wasm-test-component".into(),
+            component_bytes,
+            namespace: "ezco".into(),
+            version: "0.0.0".into(),
+            author: "author".into(),
+            description: "description".into(),
+            license: "mit".into(),
+            enabled: true,
+            url: "https://example.com".into(),
+            publickey: vec![],
+            // One capability: the bulk insert of none is refused by sqlx.
+            capabilities: vec![Capability {
+                granted: true,
+                inner: WitCapability {
+                    kind: CapabilityKind::HandleEvent(EventKind::Connect),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
+                    },
+                },
+                when: None,
+                token: None,
+            }],
+            configuration: vec![],
+            input_schema: vec![
+                input("rules", InputType::Secret),
+                input("limit", InputType::Number),
+            ],
+            metadata: std::collections::HashMap::new(),
+            component,
+        };
+        registry.register_plugin_for_test(plugin).await?;
+
+        let set = |values: Vec<(&str, &str)>| {
+            let values: Vec<(String, String)> = values
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect();
+            let registry = &registry;
+            async move {
+                registry
+                    .set_plugin_configuration("ezco", "wasm-test-component", &values)
+                    .await
+            }
+        };
+        assert_eq!(
+            set(vec![("rules", "[]"), ("limit", "3")]).await?,
+            Configured::Updated
+        );
+        let plugin = registry
+            .plugins()
+            .get("ezco/wasm-test-component")
+            .cloned()
+            .expect("still registered");
+        let value = |name: &str| {
+            plugin
+                .configuration
+                .iter()
+                .find(|c| c.name == name)
+                .map(|c| c.value.clone())
+        };
+        assert!(
+            matches!(value("rules"), Some(ActualInput::Secret(ref s)) if s == "[]"),
+            "configuration after the set: {:?}",
+            plugin.configuration
+        );
+        assert!(
+            matches!(value("limit"), Some(ActualInput::Number(n)) if (n - 3.0).abs() < f64::EPSILON)
+        );
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT input_name FROM plugin_configuration WHERE namespace = 'ezco' AND name = 'wasm-test-component' ORDER BY input_name",
+        )
+        .fetch_all(&registry.db.pool)
+        .await?;
+        assert_eq!(rows, [("limit".to_string(),), ("rules".to_string(),)]);
+
+        // Refused, and the stored values untouched. (The reloaded plugin's
+        // declared inputs are its component's, which declares none, so the
+        // second is refused as undeclared rather than mistyped.)
+        assert!(matches!(
+            set(vec![("nope", "1")]).await?,
+            Configured::Refused(_)
+        ));
+        assert!(matches!(
+            set(vec![("limit", "many")]).await?,
+            Configured::Refused(_)
+        ));
+        let plugin = registry
+            .plugins()
+            .get("ezco/wasm-test-component")
+            .cloned()
+            .unwrap();
+        assert!(matches!(
+            plugin.configuration.iter().find(|c| c.name == "limit").map(|c| &c.value),
+            Some(ActualInput::Number(n)) if (*n - 3.0).abs() < f64::EPSILON
+        ));
+        assert_eq!(
+            registry
+                .set_plugin_configuration("ezco", "missing", &[])
+                .await?,
+            Configured::NoSuchPlugin
+        );
         Ok(())
     }
 }

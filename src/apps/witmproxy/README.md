@@ -49,6 +49,76 @@ witm service install    # Manually install the daemon
 witm service uninstall  # Remove the daemon from the system
 ```
 
+### Running more than one witmproxy
+
+A host can run several daemons side by side, each a named *instance* with
+state of its own. `--instance <name>` (or `WITM_INSTANCE`) on any command
+selects one; without it every command means the default instance, which is
+what a single-daemon install already is. witmproxy only keeps instances
+apart: which exist and what they bind is yours to decide (or a tool's, such
+as rig).
+
+```sh
+# A second daemon on its own ports (Linux: prefix with sudo)
+witm service install --instance agent-1 \
+  --proxy-bind-addr 10.207.0.1:3129 --web-bind-addr 127.0.0.1:3130 -y
+witm service start --instance agent-1
+witm service status --instance agent-1   # the unit is ez-witmproxy@agent-1.service
+witm service logs -f --instance agent-1
+
+# Each instance is its own server, with its own accounts and login
+witm auth login --instance agent-1 --email admin@localhost
+witm plugin add @ezco/noop --instance agent-1
+witm tenant list --instance agent-1
+
+# Every instance on this host: name, root, unit state, bound addresses
+witm service list
+```
+
+Per instance: the state directory (`/var/lib/witmproxy/instances/<name>` on
+Linux, `~/.witmproxy/instances/<name>` elsewhere) holding its `config.toml`,
+`policy.toml`, database, CA (`certs/`), `services.json` and logs; the
+database key's keychain entry (`witmproxy@<name>`); the service unit
+(`ez-witmproxy@<name>.service` on Linux, launchd label
+`co.ez.witmproxy.<name>` on macOS); and the login token
+(`~/.witmproxy/instances/<name>/auth.json`). Shared: the `witm` binary, and
+the OS system-proxy setting — `witm proxy enable --instance <name>` points it
+at that instance's proxy address, and only one instance can be the system
+proxy at a time.
+
+A name is 1 to 63 characters of `a-z`, `0-9`, `.`, `_` and `-`, starting
+with a letter or digit.
+
+#### Yours, not the host's: `--user`
+
+On Linux a witmproxy is the host's by default: root installs it, its state
+is under `/var/lib/witmproxy`, it runs as a system unit from boot. `--user`
+(or `WITM_USER=1`) on any command means one of *your* witmproxys instead:
+no root, state under `~/.local/state/witmproxy` (`instances/<name>` under
+that), a `systemctl --user` unit in `~/.config/systemd/user`, the login
+token in the instance's root. The two scopes are two namespaces, so your
+`agent-1` and the host's `agent-1` never touch, and `witm service list
+--user` lists yours.
+
+```sh
+witm service install --user --instance agent-1 \
+  --proxy-bind-addr 127.0.0.1:3129 --web-bind-addr 127.0.0.1:3130 -y
+witm service start --user --instance agent-1
+systemctl --user status ez-witmproxy@agent-1
+```
+
+A user service runs while you are logged in. To have it survive logout and
+start at boot, let your session manager linger: `loginctl enable-linger`.
+On systemd 256 and later that is yours to grant; an older logind asks an
+admin (`sudo loginctl enable-linger $USER`). `service install --user` and
+`service status --user` say when it does not.
+
+Off Linux every witmproxy is a user's already (`~/.witmproxy`, a
+LaunchAgent in `~/Library/LaunchAgents`), so `--user` changes nothing
+there. A LaunchAgent lives as long as the login session; macOS has no
+linger. A system-level install there (a LaunchDaemon with `UserName`, for a
+daemon that must outlive logout) is not written yet.
+
 ### Certificate Installation
 
 The `witm ca install` command installs the witmproxy root certificate into your system's trust store. This command may prompt for `sudo` on both Linux and macOS.
@@ -62,6 +132,91 @@ witm plugin add @ezco/noop # add a plugin from the witmproxy.rs registry
 witm plugin add ./path/to/component.wasm # add a local plugin
 ```
 
+### Deploying plugins as files
+
+`witm run --plugin-dir <dir>` loads every component in a directory and
+reloads one when its file changes. A `<component>.toml` beside
+`<component>.wasm` configures it the same way, so a tool that drives
+witmproxy (rig does) writes two files and never touches the CLI or the tray
+app:
+
+```toml
+[configuration]                  # inputs, typed as the manifest declares them
+rules = '[...]'
+
+[capabilities.handle_event_connect]   # scopes, conjoined with the manifest's:
+when = "connect.host() in ['api.example.com']"   # a sidecar can only narrow
+```
+
+An input the plugin does not declare, or a capability it does not want,
+refuses the whole file; a reload happens when either file is written,
+renamed into place or removed.
+
+### Policy: who may dial what
+
+A forward proxy reaches whatever its host reaches, and a witmproxy with no
+policy permits every dial, which is right for your own traffic. Fronting
+clients that may reach less than you (a VM whose only way out is this
+proxy, a device on a tailnet) wants rules. They are data, not plugins: the
+instance's in `policy.toml` in its root (or `--policy-file`), a tenant's at
+`PUT /api/manage/tenants/{id}/policy` as JSON of the same shape, evaluated
+by the proxy for every connection it makes on a client's behalf: CONNECT
+tunnels (refused with a `403` before the tunnel exists), intercepted
+requests (in the upstream client's resolver), and the transparent proxy's
+passthrough. All of it is TCP today; QUIC, and flows of any protocol, are
+planned in `docs/transports.md`.
+
+```toml
+# policy.toml: the instance's floor
+default = "permit"                      # what no rule decides; a tenant may set its own
+
+[sets]
+private = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
+           "100.64.0.0/10", "127.0.0.0/8", "[::1]", "[fc00::]/7", "[fe80::]/10"]
+
+[[rules]]
+effect = "forbid"                       # permit | forbid
+src = ["*"]                             # * | tenant:<id> | ip:<address or CIDR>
+dst = ["@private:*"]                    # host:port; host is a name, *.suffix, an
+comment = "this host's own networks"    # address, a CIDR, @set or *; port is a
+                                        # number, lo-hi, a list or *
+[[rules]]
+effect = "permit"
+src = ["ip:10.207.0.5"]
+dst = ["api.example.com:443", "*.cache.example.org:443"]
+
+[[checks]]                              # evaluated when the policy loads; one
+src = "ip:10.207.0.5"                   # that fails refuses the policy
+permit = ["api.example.com:443"]
+forbid = ["api.example.com:80", "10.0.0.5:22"]
+```
+
+The algebra is Cedar's: any matching `forbid` denies, else any matching
+`permit` allows, else the tenant's `default`, else the instance's, else
+permit. No priorities, no first-match, so the instance's `forbid` is a
+floor no tenant can lift, and a tenant's rules (whose `src` is always
+`self`) can only widen what nothing forbids. A name pattern matches the
+name the client asked for; a CIDR matches each address it resolved to, so
+`permit api.example.com:443` beside `forbid @private:*` lets the name
+through to its public addresses only. `--upstream-deny a,b,c` is shorthand
+for one `forbid * -> a:*,b:*,c:*`. A request inside an intercepted
+connection for a host other than the connection's own is refused with
+`421` regardless.
+
+```sh
+# A tenant that may reach one API and nothing else
+curl -X PUT https://127.0.0.1:3130/api/manage/tenants/vm-1/policy \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{
+    "default": "forbid",
+    "rules": [{"effect": "permit", "dst": ["api.example.com:443"]}],
+    "checks": [{"permit": ["api.example.com:443"], "forbid": ["example.com:443"]}]}'
+```
+
+A plugin's instance-wide settings are set the same way, at
+`PUT /api/plugins/{ns}/{name}/config` with `{"config": {"<input>": "<value>"}}`,
+each value typed as the plugin declares it; a tenant's own values
+(`/api/manage/tenants/{id}/plugins/{ns}/{name}/config`) override them.
+
 ### 4. Creating a new plugin
 
 ```sh
@@ -72,7 +227,7 @@ The witmproxy plugin WIT interface is automatically published to [GitHub Contain
 
 ```sh
 # Fetch the WIT interface for plugin development
-wkg get --format wit witmproxy:plugin@0.0.7 --output plugin.wit
+wkg get --format wit witmproxy:plugin@0.0.8 --output plugin.wit
 ```
 
 ###
@@ -106,7 +261,7 @@ A not-entirely-accurate but pretty LLM-generated diagram:
 
 1. **Certificate Trust**: Installing the root certificate allows the proxy to decrypt all HTTPS traffic.
 2. **Plugin capabilities**: Plugins only have the permissions you give them, but you are responsible for verifying those permissions are restricted appropriately.
-    * Plugin execution can be limited using [CEL expressions](#todo), restricting when they're allowed to run. While plugins come with their own recommended defaults, users always have the ability to restrict them as they see fit.
+    * Plugin execution can be limited using [CEL expressions](#todo): a `when` clause restricts which events a plugin runs for, and an `allow` clause restricts every call it makes on a granted capability (which storage keys, how many log lines). While plugins come with their own recommended defaults, users always have the ability to restrict them as they see fit.
     * Plugins may request [host capabilities](#todo), which you are responsible to decide whether or not to provide. `future work:` While `witmproxy` provides default implementations of capabilities we expect to be useful to plugin authors, as a user you may replace the implementation of capabilities granted to plugins.
 
 ## Supporting the project

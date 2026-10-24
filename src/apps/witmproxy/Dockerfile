@@ -19,6 +19,7 @@ RUN apt-get update \
         clang \
         cmake \
         git \
+        libdbus-1-dev \
         make \
         perl \
         pkg-config \
@@ -41,6 +42,7 @@ FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         ca-certificates \
+        libdbus-1-3 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/witm /usr/local/bin/witm

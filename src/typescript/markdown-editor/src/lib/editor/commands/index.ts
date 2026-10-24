@@ -71,6 +71,27 @@ export const defaultSlashCommands: SlashCommand[] = [
             editor.chain().focus().deleteRange(range).toggleBlockquote().run(),
     },
     {
+        title: 'Callout',
+        description: 'A highlighted note, tip or warning',
+        icon: '!',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).setCallout('note').run(),
+    },
+    {
+        title: 'Math block',
+        description: 'A typeset formula (TeX)',
+        icon: '∑',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).setNode('mathBlock').run(),
+    },
+    {
+        title: 'Footnote',
+        description: 'A numbered note at the end',
+        icon: '¹',
+        command: ({ editor, range }) =>
+            editor.chain().focus().deleteRange(range).insertFootnote().run(),
+    },
+    {
         title: 'Table',
         description: 'Insert a 3×3 table',
         icon: '⊞',

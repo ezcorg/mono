@@ -1,0 +1,17 @@
+package ezco:fs-wrap@0.1.0;
+
+/// Import-only world — the single shared home of the value types (see lib.rs).
+world fs-raw {
+  import wasi:filesystem/types@0.2.12;
+}
+
+/// The wrapper: import the filesystem and the gated `open` from the
+/// component in front of it, re-export both. Composition (wac) wires these
+/// imports to the shipped filesystem capability's exports (or another
+/// wrapper's); the daemon serves the wrapper's exports.
+world fs-wrap {
+  import wasi:filesystem/types@0.2.12;
+  import icanhaz:nocap/filesystem@0.1.0;
+  export wasi:filesystem/types@0.2.12;
+  export icanhaz:nocap/filesystem@0.1.0;
+}

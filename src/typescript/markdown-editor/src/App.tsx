@@ -1,28 +1,96 @@
 import { useEffect, useRef, useState } from 'react';
 import { createEditor, MarkdownEditor } from './lib/editor';
-import { CodeblockFS, SearchIndex } from '@joinezco/codeblock';
+import { browserVfs } from '@joinezco/storage/browser';
+import { Vault } from '@joinezco/vault';
+import '../fonts/source-serif-4.css'
 import './App.css'
 import { file } from './example';
+import { enableComments } from './lib/editor/extensions/comments-feature';
 
-type Variant = 'custom' | 'default';
+// The comments work is off until it ships (comments-feature.ts): the demo
+// shows it with `?comments` in its URL (`pnpm shot … --url 'http://127.0.0.1:5173/?comments'`).
+if (new URLSearchParams(window.location.search).has('comments')) enableComments();
+
+/** Where the window's width is kept between reloads. */
+const WIDTH_KEY = 'ezco-demo-window-width';
+const MIN_WIDTH = 480;
+
+/** The window's width in the reader's hands: dragged by either edge
+ *  (centred, so the other edge mirrors it), kept across reloads, and given
+ *  back to the page's full width by a double-click on an edge. */
+function useResizableWidth() {
+  const [width, setWidth] = useState<number | null>(() => {
+    const kept = Number(localStorage.getItem(WIDTH_KEY));
+    return kept >= MIN_WIDTH ? kept : null;
+  });
+  const [held, setHeld] = useState<'left' | 'right' | null>(null);
+
+  useEffect(() => {
+    if (width === null) localStorage.removeItem(WIDTH_KEY);
+    else localStorage.setItem(WIDTH_KEY, String(Math.round(width)));
+  }, [width]);
+
+  const grab = (side: 'left' | 'right') => (e: React.PointerEvent<HTMLDivElement>) => {
+    const target = e.currentTarget;
+    const window_ = target.parentElement!;
+    const page = window_.parentElement!;
+    const start = window_.getBoundingClientRect().width;
+    const most = page.getBoundingClientRect().width;
+    const x0 = e.clientX;
+    target.setPointerCapture(e.pointerId);
+    setHeld(side);
+    const move = (ev: PointerEvent) => {
+      const dx = (ev.clientX - x0) * (side === 'right' ? 2 : -2);
+      setWidth(Math.round(Math.max(MIN_WIDTH, Math.min(most, start + dx))));
+    };
+    const up = () => {
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', up);
+      target.removeEventListener('pointercancel', up);
+      setHeld(null);
+    };
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', up);
+    target.addEventListener('pointercancel', up);
+    e.preventDefault();
+  };
+
+  return { width, held, grab, reset: () => setWidth(null) };
+}
 
 /** A simulated macOS window — the editor renders inside it as the
- *  fullscreen input component. The variant drives the chrome's styling.
- *  The library's file-search toolbar is mounted into the titlebar (in place
- *  of a window title) via `toolbarMountRef`. */
+ *  fullscreen input component. The library's file-search toolbar is
+ *  mounted into the titlebar (in place of a window title) via
+ *  `toolbarMountRef`. */
 function MacWindow({
-  variant,
   toolbarMountRef,
   titlebarExtra,
+  size,
   children,
 }: {
-  variant: Variant;
   toolbarMountRef: React.Ref<HTMLDivElement>;
   titlebarExtra?: React.ReactNode;
+  size: ReturnType<typeof useResizableWidth>;
   children: React.ReactNode;
 }) {
+  const edge = (side: 'left' | 'right') => (
+    <div
+      className={`mac-resize mac-resize--${side}${size.held === side ? ' is-held' : ''}`}
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize the window"
+      title="Drag to resize; double-click for the full width"
+      onPointerDown={size.grab(side)}
+      onDoubleClick={size.reset}
+    />
+  );
   return (
-    <div className={`mac-window mac-window--${variant}`}>
+    <div
+      className="mac-window"
+      style={size.width === null ? undefined : ({ '--mac-window-width': `${size.width}px` } as React.CSSProperties)}
+    >
+      {edge('left')}
+      {edge('right')}
       <div className="mac-titlebar">
         <span className="mac-lights" aria-hidden="true">
           <span className="mac-light mac-light--close" />
@@ -101,62 +169,85 @@ export function wordCount(text: string): number {
 const notes: Note[] = [];
 `;
 
+/** Where the demo notes which seeds it wrote last. */
+const SEEDS_KEY = 'ezco-demo-seeds';
+
+/** A short hash of `text` (FNV-1a), to tell the seeds apart. */
+function hashOf(text: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) h = Math.imul(h ^ text.charCodeAt(i), 0x01000193) >>> 0;
+  return `${h.toString(16)}:${text.length}`;
+}
+
 function App() {
   const [markdownContent, setMarkdownContent] = useState('');
-  const [variant, setVariant] = useState<Variant>('default');
   const [themeMode, setThemeMode] = useState<ThemeMode>('system');
+  const size = useResizableWidth();
   const editorBodyRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<MarkdownEditor | null>(null);
   const toolbarMountRef = useRef<HTMLDivElement>(null);
-  const sidebarMountRef = useRef<HTMLDivElement>(null);
 
-  async function loadFs() {
-    const fs = await CodeblockFS.worker('/snapshot.bin');
-    let index: SearchIndex | undefined;
-    try {
-      index = await SearchIndex.get(fs, '.codeblock/index.json');
-    } catch (error) {
-      console.warn('Failed to create search index:', error);
-    }
-    return { fs, index };
+  // The demo's files (the package's own source, as a snapshot) as a vault:
+  // one index behind the palette's search, wikilinks, backlinks and renames.
+  async function loadVault() {
+    return new Vault(await browserVfs('codeblock', { snapshot: '/snapshot.bin' }), { identity: 'theo' });
   }
 
-  // Create the editor once. The custom/default distinction is purely
-  // presentational (CSS scoped to the window's variant class), so toggling
-  // variants doesn't recreate the editor.
+  // Create the editor once.
   useEffect(() => {
     let cancelled = false;
     let ed: MarkdownEditor | null = null;
 
-    loadFs().then(async ({ fs, index }) => {
+    loadVault().then(async (vault) => {
       if (cancelled || !editorBodyRef.current) return;
-      await fs.writeFile('test.md', file);
-      // Seed a non-Markdown file so the titlebar search can open it and show
-      // the "code files render as a single codeblock" behavior (and round-trip
-      // back to raw .ts on edit).
-      await fs.writeFile('example.ts', exampleTs);
+      const { fs } = vault;
+      // The demo's own files: the note, a comment on it (a document
+      // referencing a passage of it) with a reply, and a non-Markdown file
+      // the titlebar search can open (code files render as one codeblock,
+      // and round-trip back to raw .ts on edit). Written once, and again
+      // only when they change here (or are gone), so that edits made in the
+      // demo stay across reloads, as the snapshot's do.
+      const seeds: [string, string][] = [
+        ['test.md', file],
+        ['comments/test/alice 2026-09-23 10.05.md', '![[test#:~:text=travels%20with%20the%20file]]\n\nEven to tools that know nothing of comments: they show a quoted passage and a link.\n'],
+        ['comments/test/theo 2026-09-23 10.06.md', '![[comments/test/alice 2026-09-23 10.05#:~:text=they%20show%20a%20quoted%20passage]]\n\nAnd the version log keeps its history.\n'],
+        ['example.ts', exampleTs],
+      ];
+      const stamp = hashOf(seeds.map(([path, content]) => `${path}\0${content}`).join('\n'));
+      if (localStorage.getItem(SEEDS_KEY) !== stamp || !(await fs.exists('test.md'))) {
+        await fs.mkdir('comments/test', { recursive: true });
+        for (const [path, content] of seeds) await fs.writeFile(path, content);
+        localStorage.setItem(SEEDS_KEY, stamp);
+      }
       if (cancelled) return;
 
       ed = createEditor({
         element: editorBodyRef.current,
         fs: { fs, filepath: 'test.md', autoSave: true },
+        links: { resolver: vault.links, index: vault.links },
+        search: vault.search,
+        files: vault.files,
         // Mount the file-search toolbar into the window titlebar (in place of
         // a title) and keep it always visible there, instead of the default
         // floating auto-hiding pill. `.mac-titlebar-search` retheme lives in
         // App.css.
         toolbar: {
-          fs,
-          index,
           filepath: 'test.md',
           mount: () => toolbarMountRef.current,
           autoHide: false,
           className: 'mac-titlebar-search',
         },
-        // Auto-generated document outline, mounted into the window's left column.
-        sidebar: {
-          mount: () => sidebarMountRef.current,
-          title: 'Document',
-        },
+        // The vault's files and the document's outline, in the editor's own
+        // column beside the note (the rail), so they sit against the text.
+        fileTree: {},
+        sidebar: { title: 'Document' },
+        // Unnamed fences get a stand-in file in the demo's own vault.
+        codeblock: { standIns: true },
+        // Threads in the note, and in other notes of the vault, in the margin.
+        comments: { author: 'theo', index: vault.comments, reactions: vault.reactions },
+        // The reader's settings, as files in the demo's vault (`.settings/theo/`),
+        // with a scope for this editor instance.
+        settings: { instance: 'demo' },
         onUpdate: ({ editor }) => {
           setMarkdownContent((editor as MarkdownEditor).storage.markdown.getMarkdown());
         },
@@ -186,57 +277,27 @@ function App() {
   }, [themeMode]);
 
   return (
-    <div className="dev-page">
+    <div className={`dev-page${size.held ? ' is-resizing' : ''}`}>
       <header className="dev-header">
         <div className="dev-title">
           <code>@joinezco/markdown-editor</code>
           <span className="dev-subtitle">live preview</span>
         </div>
-        <div className="variant-toggle" role="tablist" aria-label="Editor styling">
-          <button
-            role="tab"
-            aria-selected={variant === 'custom'}
-            className={variant === 'custom' ? 'is-active' : ''}
-            onClick={() => setVariant('custom')}
-          >
-            Custom
-          </button>
-          <button
-            role="tab"
-            aria-selected={variant === 'default'}
-            className={variant === 'default' ? 'is-active' : ''}
-            onClick={() => setVariant('default')}
-          >
-            Default
-          </button>
-        </div>
       </header>
 
-      <p className="dev-note">
-        {variant === 'custom'
-          ? 'A heavily-themed instance — how far the editor can be styled inside a native window.'
-          : 'The unstyled, out-of-the-box editor.'}
-      </p>
-
       <MacWindow
-        variant={variant}
         toolbarMountRef={toolbarMountRef}
         titlebarExtra={<ThemeToggle mode={themeMode} onChange={setThemeMode} />}
+        size={size}
       >
         {/* .mac-body is the scroll container with a left gutter; the editor
             mounts into the inset .mac-editor so the block-action indicator
             (which sits to the left of the editor element) has room. The
             search toolbar lives up in the titlebar (see MacWindow). */}
         <div className="mac-body">
-          {/* A flex row INSIDE the scroller, so the sticky sidebar column spans
-              the editor's full scroll height (a flex item placed directly in
-              the scroller is clipped to one viewport and scrolls away). */}
-          <div className="mac-body-row">
-            <div className="mac-sidebar" ref={sidebarMountRef} />
-            {/* The block-action gutter is now a default *inside* the editor —
-                the library's `.ezco-mde` wrapper owns it. */}
-            <div className="mac-editor" ref={editorBodyRef} />
-          </div>
+          {/* The editor owns the row inside: its rail (the outline, the file
+              tree), the block-action gutter, the note and the comments. */}
+          <div className="mac-editor" ref={editorBodyRef} />
         </div>
       </MacWindow>
 

@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestFilesystemGrant } from "./wrpc";
 import { wrpcFilesystem } from "./vfs";
-import { rootPath } from "./generated/workspace";
+import { workspaceRoot } from "./workspace";
 import { createWrpcLspProvider } from "./lsp-provider";
 import { setRemoteLspProvider } from "@joinezco/codeblock";
-import { createEditor, type FileSystemOptions } from "@joinezco/markdown-editor";
+import { createEditor } from "@joinezco/markdown-editor";
 
 // The 'rust branch' through the **markdown-editor**: opening a `.rs` file renders it
 // as a standalone codeblock, and that codeblock must drive the host's rust-analyzer
@@ -24,14 +24,13 @@ describe("rust-analyzer for a .rs file in the markdown-editor (end-to-end)", () 
         const fs = await wrpcFilesystem(t, grant);
 
         // Daemon-reported host path → the rust-analyzer workspace + file:// URIs.
-        const rp = await rootPath(t, grant);
-        if (rp.tag !== "ok") throw new Error(`no workspace path: ${rp.val}`);
+        const root = await workspaceRoot(t, grant);
         // Must be set BEFORE the editor opens the file, so the codeblock's handleOpen
         // finds the provider and requests the `process` grant for rust-analyzer.
         setRemoteLspProvider(
             createWrpcLspProvider({
                 transport: t,
-                workspaceRoot: rp.val,
+                workspaceRoot: root,
                 servers: { rust: { image: "rust-analyzer" } },
             }),
         );
@@ -45,7 +44,7 @@ describe("rust-analyzer for a .rs file in the markdown-editor (end-to-end)", () 
         // the fix it passes the filepath through, so the codeblock lights up LSP.
         const editor = createEditor({
             element: el,
-            fs: { fs, filepath: "src/main.rs", autoSave: true } as FileSystemOptions,
+            fs: { fs, filepath: "src/main.rs", autoSave: true },
         });
 
         // Wait for a CodeMirror lint marker — rust-analyzer → the codeblock's LSP client →

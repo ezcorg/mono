@@ -2,7 +2,8 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
 import { createTerminalBlock, type MountTerminal, type TerminalBlockOptions } from "./terminal-block";
-import { connect, openTerminal, type ConnectOptions } from "./wrpc";
+import { connect, type ConnectOptions } from "./wrpc";
+import { openTerminal } from "./terminal";
 
 /** The default terminal renderer: xterm.js bound to a NoCap `TerminalHandle`. */
 export const mountXterm: MountTerminal = (container, handle) => {

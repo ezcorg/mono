@@ -2,18 +2,23 @@ import { StyleModule } from "style-mod";
 
 const FS = 'var(--cm-font-size, 14px)';
 
+// The menu's frame — surface, text colour, border, corners, inset, shadow
+// and the rows' shape — reads `--cm-menu-*` first, so a host that embeds
+// the editor (markdown-editor) can frame the menu like its own menus; the
+// fallbacks are the codeblock's own look. menu.ts copies these from the
+// editor element onto the menu, which lives on <body>.
 export const contextMenuStyles = new StyleModule({
     '.cm-context-menu': {
         position: 'fixed',
         zIndex: '300',
-        background: 'var(--cm-toolbar-background)',
-        color: 'var(--cm-search-result-color)',
-        border: '2px solid var(--cm-tooltip-border)',
-        borderRadius: '0',
-        padding: '0',
+        background: 'var(--cm-menu-background, var(--cm-toolbar-background))',
+        color: 'var(--cm-menu-color, var(--cm-search-result-color))',
+        border: 'var(--cm-menu-border, 2px solid var(--cm-tooltip-border))',
+        borderRadius: 'var(--cm-menu-radius, 0)',
+        padding: 'var(--cm-menu-padding, 0)',
         fontFamily: 'var(--cm-font-family)',
         fontSize: FS,
-        boxShadow: '0 4px 16px rgba(0, 0, 0, 0.18), 0 1px 4px rgba(0, 0, 0, 0.1)',
+        boxShadow: 'var(--cm-menu-shadow, 0 4px 16px rgba(0, 0, 0, 0.18), 0 1px 4px rgba(0, 0, 0, 0.1))',
         minWidth: '180px',
         // Grow to fit the widest item (e.g. a long "Shift+Alt+F" shortcut)
         // instead of capping at a fixed width and letting it spill past the
@@ -28,7 +33,8 @@ export const contextMenuStyles = new StyleModule({
     '.cm-context-menu-item': {
         display: 'flex',
         alignItems: 'center',
-        padding: '0 6px',
+        padding: 'var(--cm-menu-item-padding, 0 6px)',
+        borderRadius: 'var(--cm-menu-item-radius, 0)',
         cursor: 'pointer',
         gap: '6px',
         lineHeight: '1.4',
@@ -72,9 +78,9 @@ export const contextMenuStyles = new StyleModule({
     },
     '.cm-context-menu-divider': {
         height: '1px',
-        background: 'var(--cm-tooltip-border)',
-        margin: '2px 0',
-        opacity: '0.3',
+        background: 'var(--cm-menu-divider, var(--cm-tooltip-border))',
+        margin: 'var(--cm-menu-divider-margin, 2px 0)',
+        opacity: 'var(--cm-menu-divider-opacity, 0.3)',
     },
     // While a context menu is open, hide hover tooltips anywhere in the
     // document. The `cm-context-menu-open` class lives on <html> (see

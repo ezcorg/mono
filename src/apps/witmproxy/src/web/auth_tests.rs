@@ -1,5 +1,8 @@
 use crate::db::Db;
+use crate::db::Migrate as _;
 use crate::db::tenants::{Group, Tenant};
+use crate::policy::{Effect, Origin, Policy, PolicyDoc};
+use crate::proxy::egress::{Client as EgressClient, Egress};
 use crate::test_utils::create_ca_and_config;
 use crate::wasm::Runtime;
 use crate::web::WebServer;
@@ -9,6 +12,13 @@ use tempfile::tempdir;
 
 /// Helper to create a web server with auth enabled and a DB pool.
 async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, tempfile::TempDir) {
+    setup_auth_server_with(Arc::new(Egress::permissive())).await
+}
+
+/// [`setup_auth_server`] with the policy stack the management API edits.
+async fn setup_auth_server_with(
+    egress: Arc<Egress>,
+) -> (reqwest::Client, String, sqlx::SqlitePool, tempfile::TempDir) {
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let (ca, mut config) = create_ca_and_config().await;
@@ -27,7 +37,7 @@ async fn setup_auth_server() -> (reqwest::Client, String, sqlx::SqlitePool, temp
         Arc::new(crate::plugins::registry::PluginRegistry::new(db, runtime).unwrap());
 
     let mut web_server = WebServer::new(ca, Some(plugin_registry), config);
-    web_server = web_server.with_db_pool(pool.clone());
+    web_server = web_server.with_db_pool(pool.clone()).with_egress(egress);
     web_server.start().await.unwrap();
     let bind_addr = web_server.listen_addr().unwrap();
 
@@ -582,4 +592,329 @@ async fn health_check_no_auth_required() {
         .unwrap();
 
     assert_eq!(resp.status(), 200);
+}
+
+// ---------------------------------------------------------------------------
+// Tenant creation via the management API
+// ---------------------------------------------------------------------------
+
+/// `POST /api/manage/tenants` is an operator creating a tenant: enabled at
+/// once, with the id given or a generated one, and 409 for an id already
+/// taken. The write permission on tenants is what it takes.
+#[tokio::test]
+async fn management_create_tenant() {
+    let (client, base_url, pool, _dir) = setup_auth_server().await;
+
+    Tenant::create(&pool, "t-admin", "Admin", None, None, None, None)
+        .await
+        .unwrap();
+    Group::create(&pool, "g-admin", "admins", "").await.unwrap();
+    Group::add_member(&pool, "g-admin", "t-admin")
+        .await
+        .unwrap();
+    Group::add_permission(&pool, "p1", "g-admin", "grant", "tenants:*:write")
+        .await
+        .unwrap();
+    Group::add_permission(
+        &pool,
+        "p1-configure",
+        "g-admin",
+        "grant",
+        "tenants:*:configure",
+    )
+    .await
+    .unwrap();
+    let token = make_token("t-admin", "test-secret-key");
+    let post = |body: serde_json::Value| {
+        client
+            .post(format!("{}/api/manage/tenants", base_url))
+            .header("Authorization", format!("Bearer {}", token))
+            .json(&body)
+            .send()
+    };
+
+    // An explicit id.
+    let resp = post(serde_json::json!({"id": "vm-1", "display_name": "VM one"}))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["id"], "vm-1");
+    assert_eq!(body["display_name"], "VM one");
+    assert_eq!(body["enabled"], true);
+    assert!(body["email"].is_null());
+    let created = Tenant::by_id(&pool, "vm-1").await.unwrap().unwrap();
+    assert!(created.enabled && created.password_hash.is_none());
+
+    // The same id again.
+    let resp = post(serde_json::json!({"id": "vm-1", "display_name": "Again"}))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 409);
+
+    // No id: one is generated.
+    let resp = post(serde_json::json!({"display_name": "Generated"}))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let body: serde_json::Value = resp.json().await.unwrap();
+    let id = body["id"].as_str().unwrap();
+    assert!(
+        uuid::Uuid::parse_str(id).is_ok(),
+        "generated id is a UUID: {id}"
+    );
+    assert!(Tenant::by_id(&pool, id).await.unwrap().is_some());
+
+    // A name is required.
+    // A colon in an id is part of the id (a Tailscale tenant is ts:<login>:<node>),
+    // and the tenant is as manageable as any other.
+    let resp = post(serde_json::json!({"id": "ts:me:laptop", "display_name": "Colon"}))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 201);
+    let resp = client
+        .post(format!(
+            "{}/api/manage/tenants/ts:me:laptop/ip-mappings",
+            base_url
+        ))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"ip_address": "10.0.0.9"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        201,
+        "a tenant whose id holds colons must be configurable"
+    );
+
+    let resp = post(serde_json::json!({"display_name": "  "}))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // Reading is not writing.
+    Tenant::create(&pool, "t-reader", "Reader", None, None, None, None)
+        .await
+        .unwrap();
+    Group::create(&pool, "g-read", "readers", "").await.unwrap();
+    Group::add_member(&pool, "g-read", "t-reader")
+        .await
+        .unwrap();
+    Group::add_permission(&pool, "p2", "g-read", "grant", "tenants:*:read")
+        .await
+        .unwrap();
+    let resp = client
+        .post(format!("{}/api/manage/tenants", base_url))
+        .header(
+            "Authorization",
+            format!("Bearer {}", make_token("t-reader", "test-secret-key")),
+        )
+        .json(&serde_json::json!({"display_name": "Nope"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+}
+
+/// A tenant's egress policy is set, read back and removed at the API, is in
+/// force on the proxy's policy stack the moment it is set, and a document
+/// that fails to compile or fails its checks is refused without touching
+/// the policy the tenant had.
+#[tokio::test]
+async fn management_tenant_policy_flow() {
+    let floor = Policy::from_toml(
+        "[sets]\nprivate = [\"10.0.0.0/8\"]\n[[rules]]\neffect = \"forbid\"\ndst = [\"@private:*\"]\n",
+        Origin::Instance,
+    )
+    .unwrap();
+    let egress = Arc::new(Egress::new(floor));
+    let (client, base_url, pool, _dir) = setup_auth_server_with(Arc::clone(&egress)).await;
+
+    Tenant::create(&pool, "t-admin", "Admin", None, None, None, None)
+        .await
+        .unwrap();
+    Group::create(&pool, "g-admin", "admins", "").await.unwrap();
+    Group::add_member(&pool, "g-admin", "t-admin")
+        .await
+        .unwrap();
+    for (id, resource) in [
+        ("p-conf", "tenants:*:configure"),
+        ("p-read", "tenants:*:read"),
+    ] {
+        Group::add_permission(&pool, id, "g-admin", "grant", resource)
+            .await
+            .unwrap();
+    }
+    Tenant::create(&pool, "vm", "A guest", None, None, None, None)
+        .await
+        .unwrap();
+    let token = make_token("t-admin", "test-secret-key");
+    let url = format!("{}/api/manage/tenants/vm/policy", base_url);
+    let public: std::net::IpAddr = "93.184.216.34".parse().unwrap();
+    let vm = EgressClient {
+        tenant: Some("vm".into()),
+        ip: None,
+    };
+    let put = |body: serde_json::Value| client.put(&url).bearer_auth(&token).json(&body).send();
+
+    // Nothing yet: the floor alone.
+    assert!(
+        egress
+            .decide(&vm, Some("www.example.com"), Some(public), 443)
+            .is_permit()
+    );
+    let resp = client.get(&url).bearer_auth(&token).send().await.unwrap();
+    assert_eq!(resp.status(), 404);
+
+    let good = serde_json::json!({
+        "default": "forbid",
+        "rules": [{"effect": "permit", "dst": ["api.example.com:443"], "comment": "the API"}],
+        "checks": [{"permit": ["api.example.com:443"],
+                    "forbid": ["api.example.com:80", "www.example.com:443", "10.0.0.5:443"]}]
+    });
+    let resp = put(good).await.unwrap();
+    let status = resp.status();
+    let body = resp.text().await.unwrap();
+    assert_eq!(status, 200, "{body}");
+    // In force at once.
+    assert!(
+        egress
+            .decide(&vm, Some("api.example.com"), Some(public), 443)
+            .is_permit()
+    );
+    assert!(
+        !egress
+            .decide(&vm, Some("www.example.com"), Some(public), 443)
+            .is_permit()
+    );
+    assert!(
+        !egress
+            .decide(&vm, Some("api.example.com"), Some(public), 80)
+            .is_permit()
+    );
+    // For this tenant only.
+    assert!(
+        egress
+            .decide(
+                &EgressClient::default(),
+                Some("www.example.com"),
+                Some(public),
+                443
+            )
+            .is_permit()
+    );
+
+    // Read back as written.
+    let got: PolicyDoc = client
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(got.default, Some(Effect::Forbid));
+    assert_eq!(got.rules.len(), 1);
+    assert_eq!(got.rules[0].dst, ["api.example.com:443"]);
+    assert_eq!(got.checks.len(), 1);
+
+    // A tenant's rules are about its own traffic.
+    let resp =
+        put(serde_json::json!({"rules": [{"effect": "permit", "src": ["*"], "dst": ["*:*"]}]}))
+            .await
+            .unwrap();
+    let status = resp.status();
+    let body = resp.text().await.unwrap();
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("src is `self`"), "{body}");
+    // A check that does not hold refuses the document.
+    let resp = put(
+        serde_json::json!({"default": "forbid", "checks": [{"permit": ["api.example.com:443"]}]}),
+    )
+    .await
+    .unwrap();
+    let status = resp.status();
+    let body = resp.text().await.unwrap();
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        body.contains("check 1: expected permit for api.example.com:443, got forbid"),
+        "{body}"
+    );
+    // So does a set nobody defines, and a destination without a port.
+    let resp = put(serde_json::json!({"rules": [{"effect": "forbid", "dst": ["@nowhere:*"]}]}))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 400);
+    let resp =
+        put(serde_json::json!({"rules": [{"effect": "permit", "dst": ["api.example.com"]}]}))
+            .await
+            .unwrap();
+    assert_eq!(resp.status(), 400);
+    // And the policy the tenant had is untouched by all of that.
+    assert!(
+        egress
+            .decide(&vm, Some("api.example.com"), Some(public), 443)
+            .is_permit()
+    );
+    assert!(
+        !egress
+            .decide(&vm, Some("www.example.com"), Some(public), 443)
+            .is_permit()
+    );
+
+    // A tenant that does not exist.
+    let resp = client
+        .put(format!("{}/api/manage/tenants/nobody/policy", base_url))
+        .bearer_auth(&token)
+        .json(&serde_json::json!({"default": "forbid"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+
+    // Reading is not configuring.
+    Tenant::create(&pool, "t-reader", "Reader", None, None, None, None)
+        .await
+        .unwrap();
+    Group::create(&pool, "g-read", "readers", "").await.unwrap();
+    Group::add_member(&pool, "g-read", "t-reader")
+        .await
+        .unwrap();
+    Group::add_permission(&pool, "p2", "g-read", "grant", "tenants:*:read")
+        .await
+        .unwrap();
+    let resp = client
+        .put(&url)
+        .bearer_auth(make_token("t-reader", "test-secret-key"))
+        .json(&serde_json::json!({"default": "permit"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 403);
+
+    // Removed: the floor alone again.
+    let resp = client
+        .delete(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 200);
+    assert!(
+        egress
+            .decide(&vm, Some("www.example.com"), Some(public), 443)
+            .is_permit()
+    );
+    assert!(egress.tenant("vm").is_none());
+    let resp = client
+        .delete(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let resp = client.get(&url).bearer_auth(&token).send().await.unwrap();
+    assert_eq!(resp.status(), 404);
 }

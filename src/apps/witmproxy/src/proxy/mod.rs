@@ -8,6 +8,7 @@ use crate::http::utils::ContentTyped;
 use crate::plugins::cel::CelRequest;
 use crate::plugins::registry::PluginRegistry;
 use crate::proxy::tenant::TenantContext;
+use crate::proxy::tenant_resolver::{AnonymousResolver, TenantResolver};
 use crate::proxy::utils::convert_hyper_boxed_body_to_reqwest_request;
 use crate::wasm::bindgen::Event as WasmEvent;
 use crate::wasm::bindgen::witmproxy::plugin::capabilities::ContextualResponse as WasiContextualResponse;
@@ -30,13 +31,14 @@ use wasmtime_wasi_http::p3::{Request as WasiRequest, Response as WasiResponse};
 
 use std::sync::OnceLock;
 use std::{net::SocketAddr, sync::Arc};
-use tokio::net::{TcpListener, TcpStream};
+use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tracing::{debug, error, warn};
 
 use hyper_util::server::conn::auto::Builder as AutoServer;
 use hyper_util::{rt::TokioExecutor, rt::TokioIo};
 
+pub mod egress;
 pub mod netfilter;
 pub mod tenant;
 pub mod tenant_resolver;
@@ -44,9 +46,9 @@ pub mod transparent;
 
 pub(crate) mod utils;
 pub use utils::{
-    ProxyError, ProxyResult, UpstreamClient, build_server_tls_for_host, client,
-    convert_hyper_incoming_to_reqwest_request, convert_reqwest_to_hyper_response, is_closed,
-    parse_authority_host_port, strip_proxy_headers,
+    ProxyError, ProxyResult, UpstreamClient, build_server_tls_for_host, build_upstream_client,
+    client, convert_hyper_incoming_to_reqwest_request, convert_reqwest_to_hyper_response,
+    is_closed, parse_authority_host_port, strip_proxy_headers,
 };
 
 #[cfg(test)]
@@ -81,8 +83,16 @@ pub struct ProxyServer {
     listen_addr: Option<SocketAddr>,
     ca: Arc<CertificateAuthority>,
     plugin_registry: Option<Arc<PluginRegistry>>,
+    /// Who a connection belongs to, from its peer address. Decides which
+    /// plugins see its events and with what configuration; anonymous (the
+    /// default, [`AnonymousResolver`]) gets the global set.
+    tenant_resolver: Arc<dyn TenantResolver>,
     config: Arc<AppConfig>,
-    upstream: UpstreamClient,
+    /// The upstream HTTP clients, one per (client, port), each applying the
+    /// policy in its resolver.
+    upstream: Arc<egress::UpstreamClients>,
+    /// Who may dial what: the instance's policy and the tenants'.
+    egress: Arc<egress::Egress>,
     shutdown_notify: Arc<Notify>,
     /// Local bind address of our own management web server, if known.
     /// Connections targeting this port are short-circuited to a direct
@@ -97,16 +107,47 @@ impl ProxyServer {
         plugin_registry: Option<Arc<PluginRegistry>>,
         config: AppConfig,
     ) -> ProxyResult<Self> {
-        let upstream = client(ca.clone())?;
+        let egress = Arc::new(
+            egress::Egress::from_config(&config.proxy)
+                .map_err(|e| ProxyError::Generic(format!("{e:#}")))?,
+        );
+        let upstream = Arc::new(egress::UpstreamClients::new(
+            ca.clone(),
+            Arc::clone(&egress),
+        ));
         Ok(Self {
             listen_addr: None,
             ca: Arc::new(ca),
             plugin_registry,
+            tenant_resolver: Arc::new(AnonymousResolver),
             config: Arc::new(config),
             upstream,
+            egress,
             shutdown_notify: Arc::new(Notify::new()),
             management_addr: Arc::new(OnceLock::new()),
         })
+    }
+
+    /// Judge dials with `egress` instead of the one built from the
+    /// configuration: the one the management API edits tenants' policies in.
+    pub fn with_egress(mut self, egress: Arc<egress::Egress>) -> Self {
+        self.upstream = Arc::new(egress::UpstreamClients::new(
+            (*self.ca).clone(),
+            Arc::clone(&egress),
+        ));
+        self.egress = egress;
+        self
+    }
+
+    pub fn egress(&self) -> Arc<egress::Egress> {
+        Arc::clone(&self.egress)
+    }
+
+    /// Resolve each connection's tenant with `resolver` instead of treating
+    /// every client as anonymous.
+    pub fn with_tenant_resolver(mut self, resolver: Arc<dyn TenantResolver>) -> Self {
+        self.tenant_resolver = resolver;
+        self
     }
 
     /// Returns the actual bound listen address, if the server has been started
@@ -189,10 +230,18 @@ impl ProxyServer {
                             Ok((io, peer)) => {
                                 debug!("Accepted connection from {}", peer);
                                 let shared = server.clone();
-                                // Resolve tenant from peer address (anonymous for now,
-                                // will be replaced by TenantResolver in Phase 4)
-                                let tenant_ctx = TenantContext::anonymous();
                                 tokio::spawn(async move {
+                                    // Who this connection belongs to, decided once
+                                    // per connection: every request in it, and the
+                                    // tunnel a CONNECT opens, carries the answer.
+                                    let tenant_ctx = shared
+                                        .tenant_resolver
+                                        .resolve(&peer)
+                                        .await
+                                        .with_peer(peer.ip());
+                                    if let Some(id) = &tenant_ctx.tenant_id {
+                                        debug!("Connection from {} is tenant {}", peer, id);
+                                    }
                                     let svc = service_fn(move |req: Request<Incoming>| {
                                         let shared = shared.clone();
                                         let tenant_ctx = tenant_ctx.clone();
@@ -236,10 +285,11 @@ impl ProxyServer {
         self.shutdown_notify.notify_waiters();
     }
 
-    /// Determine whether any plugins want to handle this connection
-    /// Returns true if MITM should be performed, false if connection should be forwarded transparently
-    #[tracing::instrument(skip(self), fields(authority = %authority))]
-    async fn handle_connect(&self, authority: &str) -> bool {
+    /// Determine whether any plugins want to handle this connection for
+    /// `tenant`. Returns true if MITM should be performed, false if the
+    /// connection should be forwarded transparently.
+    #[tracing::instrument(skip(self, tenant), fields(authority = %authority, tenant = ?tenant.tenant_id))]
+    async fn handle_connect(&self, authority: &str, tenant: &TenantContext) -> bool {
         let Some(plugin_registry) = &self.plugin_registry else {
             debug!("No plugin registry, skipping MITM for {}", authority);
             return false;
@@ -254,7 +304,9 @@ impl ProxyServer {
         };
 
         let connect_event: Box<dyn Event> = Box::new(Connect::new(host, port));
-        let has_matching_plugin = plugin_registry.can_handle(&*connect_event);
+        let has_matching_plugin = plugin_registry
+            .can_handle_for(&*connect_event, tenant)
+            .await;
 
         if has_matching_plugin {
             debug!(
@@ -271,19 +323,26 @@ impl ProxyServer {
         }
     }
 
-    /// Forward a connection transparently without MITM
+    /// Forward a connection transparently without MITM, to the addresses the
+    /// policy already resolved for it, or by name when there was no policy
+    /// to resolve against.
     async fn forward_connection_transparently(
         &self,
         upgraded: upgrade::Upgraded,
         authority: String,
+        client: egress::Client,
+        resolved: Option<Vec<SocketAddr>>,
     ) -> ProxyResult<()> {
         debug!("Forwarding connection transparently to {}", authority);
 
         // Parse host and port
         let (host, port) = parse_authority_host_port(&authority, 443)?;
 
-        // Connect to the upstream server
-        let upstream = TcpStream::connect(format!("{}:{}", host, port)).await?;
+        // Connect to the upstream server, by an address this proxy may dial.
+        let upstream = match resolved {
+            Some(addrs) => egress::connect_any(&addrs).await?,
+            None => self.egress.connect(&client, &host, port).await?,
+        };
         debug!("Connected to upstream {}:{}", host, port);
 
         // Wrap the upgraded connection with TokioIo for compatibility
@@ -315,7 +374,7 @@ impl ProxyServer {
     async fn handle_plain_http(
         &self,
         mut req: Request<Incoming>,
-        _tenant_ctx: &TenantContext,
+        tenant_ctx: &TenantContext,
     ) -> Result<Response<UnsyncBoxBody<Bytes, ErrorCode>>, ProxyError> {
         if req.method() == Method::CONNECT {
             debug!("Handling CONNECT request");
@@ -348,13 +407,36 @@ impl ProxyServer {
                 is_management_loopback = true;
             }
 
+            // A tunnel the policy forbids is refused here, before the 200,
+            // as a 403 the client can read: the name is resolved now and
+            // each address judged, and the addresses that may be dialed are
+            // handed to the tunnel. With no policy in force there is nothing
+            // to judge and the dial happens as it always did.
+            let client = egress::Client::from(tenant_ctx);
+            let port = parse_authority_host_port(&authority, 443)
+                .map(|(_, p)| p)
+                .unwrap_or(443);
+            let mut resolved: Option<Vec<SocketAddr>> = None;
+            if !is_management_loopback
+                && !self.egress.is_permissive()
+                && let Ok((host, port)) = parse_authority_host_port(&authority, 443)
+            {
+                match self.egress.resolve(&client, &host, port).await {
+                    Ok(addrs) => resolved = Some(addrs),
+                    Err(e) => {
+                        warn!("Refusing CONNECT {}: {}", authority, e);
+                        return Ok(plain_response(StatusCode::FORBIDDEN, e.to_string()));
+                    }
+                }
+            }
+
             // Check if any plugins want to handle this connection. Skip the
             // plugin path entirely for management-loopback so the UI bytes
             // aren't fed through MITM.
             let should_mitm = if is_management_loopback {
                 false
             } else {
-                self.handle_connect(&authority).await
+                self.handle_connect(&authority, tenant_ctx).await
             };
 
             let on_upgrade = upgrade::on(&mut req);
@@ -362,8 +444,9 @@ impl ProxyServer {
             if should_mitm {
                 // Perform MITM - existing behavior
                 let ca = self.ca.clone();
-                let upstream = self.upstream.clone();
+                let upstream = self.upstream.client_for(tenant_ctx, port)?;
                 let plugin_registry = self.plugin_registry.clone();
+                let tenant = tenant_ctx.clone();
 
                 tokio::spawn(async move {
                     match on_upgrade.await {
@@ -374,6 +457,7 @@ impl ProxyServer {
                                 authority.clone(),
                                 ca,
                                 plugin_registry,
+                                tenant,
                             )
                             .await
                             {
@@ -395,7 +479,12 @@ impl ProxyServer {
                     match on_upgrade.await {
                         Ok(upgraded) => {
                             if let Err(e) = server
-                                .forward_connection_transparently(upgraded, authority.clone())
+                                .forward_connection_transparently(
+                                    upgraded,
+                                    authority.clone(),
+                                    client,
+                                    resolved,
+                                )
                                 .await
                             {
                                 match &e {
@@ -420,12 +509,13 @@ impl ProxyServer {
 
         // ----- Plain HTTP proxying (request line is absolute-form from clients) -----
         debug!(
-            "Handling plain HTTP request: {} {}",
+            "Handling plain HTTP request: {} {} (tenant {:?})",
             req.method(),
-            req.uri()
+            req.uri(),
+            tenant_ctx.tenant_id
         );
         strip_proxy_headers(req.headers_mut());
-        // TODO: plugin: on_request(&mut req, &conn).await;
+        // TODO: plugin: on_request(&mut req, &conn).await, for tenant_ctx.
 
         // Short-circuit plain HTTP requests that target our own management
         // server's port: rewrite the URI's authority to 127.0.0.1 so the
@@ -454,9 +544,27 @@ impl ProxyServer {
             }
         }
 
+        // A request for an address the policy forbids. A name goes through
+        // the upstream client's resolver, which drops forbidden addresses.
+        let client = egress::Client::from(tenant_ctx);
+        let port = req
+            .uri()
+            .port_u16()
+            .unwrap_or(match req.uri().scheme_str() {
+                Some("https") => 443,
+                _ => 80,
+            });
+        if let Some(host) = req.uri().host()
+            && let Err(e) = self.egress.check_literal(&client, host, port)
+        {
+            warn!("Refusing {} {}: {}", req.method(), req.uri(), e);
+            return Ok(plain_response(StatusCode::FORBIDDEN, e.to_string()));
+        }
+
         // Convert hyper request to reqwest request
-        let reqwest_req = convert_hyper_incoming_to_reqwest_request(req, &self.upstream)?;
-        let resp = self.upstream.execute(reqwest_req).await?;
+        let upstream = self.upstream.client_for(tenant_ctx, port)?;
+        let reqwest_req = convert_hyper_incoming_to_reqwest_request(req, &upstream)?;
+        let resp = upstream.execute(reqwest_req).await?;
 
         // Convert reqwest response back to hyper response
         let mut response = convert_reqwest_to_hyper_response(resp).await?;
@@ -521,6 +629,18 @@ pub(crate) async fn perform_upstream(
     }
 }
 
+/// Whether a request inside an intercepted connection names a host other
+/// than the one the connection is to. Case does not matter in a host name,
+/// nor a trailing dot; a request with no host at all is left to fail
+/// downstream for that reason.
+pub(crate) fn misdirected(request_host: Option<&str>, tunnel_host: &str) -> bool {
+    let norm = |h: &str| h.trim().trim_end_matches('.').to_ascii_lowercase();
+    match request_host {
+        Some(h) => norm(h) != norm(tunnel_host),
+        None => false,
+    }
+}
+
 /// Fix origin-form requests by adding authority from Host header to URI
 fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
     // Check if URI has no authority but has a Host header (origin-form request)
@@ -569,13 +689,20 @@ fn fix_origin_form_request(mut req: Request<Incoming>) -> Request<Incoming> {
 ///
 /// Generic over the IO type so it can be used from both the standard proxy
 /// (with `TokioIo<Upgraded>`) and the transparent proxy (with `TcpStream`).
-#[tracing::instrument(skip(upstream, stream, ca, plugin_registry), fields(authority = %authority))]
+///
+/// `tenant` is whose connection this is: every event it raises is dispatched
+/// to that tenant's plugins with that tenant's configuration.
+#[tracing::instrument(
+    skip(upstream, stream, ca, plugin_registry, tenant),
+    fields(authority = %authority, tenant = ?tenant.tenant_id)
+)]
 pub(crate) async fn run_tls_mitm<IO>(
     upstream: reqwest::Client,
     stream: IO,
     authority: String,
     ca: Arc<CertificateAuthority>,
     plugin_registry: Option<Arc<PluginRegistry>>,
+    tenant: TenantContext,
 ) -> ProxyResult<()>
 where
     IO: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
@@ -584,6 +711,7 @@ where
 
     // Extract host + port, default :443
     let (host, _port) = parse_authority_host_port(&authority, 443)?;
+    let tunnel_host = host.clone();
 
     // --- Build a server TLS config for the client side (fake cert for `host`) ---
     let server_tls = build_server_tls_for_host(&ca, &host).await?;
@@ -601,6 +729,8 @@ where
         service_fn(move |req: Request<Incoming>| {
             let upstream = upstream.clone();
             let plugin_registry = plugin_registry.clone();
+            let tunnel_host = tunnel_host.clone();
+            let tenant = tenant.clone();
 
             async move {
                 let service_fn_start = std::time::Instant::now();
@@ -608,6 +738,27 @@ where
                 let uri = req.uri().clone();
                 let req = fix_origin_form_request(req);
                 debug!("Handling TLS request: {} {}", method, uri);
+                // The connection was intercepted for one host: the one the
+                // client named in its ClientHello, or in its CONNECT. A
+                // request inside it for some other host would have this
+                // proxy fetch, on the client's behalf, from wherever the
+                // client cares to write in a header, which is how a client
+                // that may reach only this proxy reaches everything the
+                // proxy can. 421 is HTTP's word for exactly this.
+                if misdirected(req.uri().host(), &tunnel_host) {
+                    warn!(
+                        "Refusing request for {:?} inside a connection to {}",
+                        req.uri().host(),
+                        tunnel_host
+                    );
+                    return Ok::<_, hyper::http::Error>(plain_response(
+                        StatusCode::MISDIRECTED_REQUEST,
+                        format!(
+                            "this connection is to {}; a request for another host does not belong in it",
+                            tunnel_host
+                        ),
+                    ));
+                }
                 debug!("🕐 SERVICE_FN START: {} {}", method, uri);
                 let mut request_ctx = CelRequest::from(&req);
 
@@ -616,7 +767,7 @@ where
                         WasiRequest::from_http(wasmtime_wasi_http::default_hooks(), req);
                     let event: Box<dyn Event> = Box::new(request);
 
-                    registry.handle_event(event).await
+                    registry.handle_event_for(event, &tenant).await
                 } else {
                     let request_result = convert_hyper_incoming_to_reqwest_request(req, &upstream);
                     match request_result {
@@ -739,7 +890,9 @@ where
                         request: request_ctx.clone().into(),
                         response,
                     };
-                    registry.handle_event(Box::new(contextual_response)).await
+                    registry
+                        .handle_event_for(Box::new(contextual_response), &tenant)
+                        .await
                 } else {
                     // No plugin registry, just return the initial response
                     return Ok(initial_response);
@@ -847,16 +1000,17 @@ where
                             content_type
                         );
                         let start_handle = std::time::Instant::now();
-                        let (event, mut store) = match registry.handle_event(content).await {
-                            Ok(v) => v,
-                            Err(e) => {
-                                error!("InboundContent event handling error: {}", e);
-                                return Ok(plain_response(
-                                    StatusCode::BAD_GATEWAY,
-                                    format!("Plugin content event handling error: {}", e),
-                                ));
-                            }
-                        };
+                        let (event, mut store) =
+                            match registry.handle_event_for(content, &tenant).await {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    error!("InboundContent event handling error: {}", e);
+                                    return Ok(plain_response(
+                                        StatusCode::BAD_GATEWAY,
+                                        format!("Plugin content event handling error: {}", e),
+                                    ));
+                                }
+                            };
                         debug!(
                             "InboundContent event handled in {:?}",
                             start_handle.elapsed()

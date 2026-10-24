@@ -20,14 +20,16 @@ wit_bindgen::generate!({
     generate_all
 });
 
+use self::ezco::ezcap::types::Scope;
+
 use exports::witmproxy::plugin::witm_plugin::{
     ActualInput, Capability, CapabilityProvider, ConfigureError, Guest, GuestPlugin, InputSchema,
     InputType, Plugin as PluginResource, PluginError, PluginManifest, UserInput,
 };
 use wasi::http::types::{Fields, Method, Scheme};
 use witmproxy::plugin::capabilities::{
-    CapabilityKind, CapabilityScope, ClockClient, Content, ContextualResponse, Event, EventKind,
-    LocalStorageClient, Request, RequestContext, Response,
+    CapabilityKind, ClockClient, Content, ContextualResponse, Event, EventKind, LocalStorageClient,
+    Request, RequestContext, Response,
 };
 
 const PUBLIC_KEY_BYTES: &[u8] = include_bytes!("../key.public");
@@ -74,41 +76,47 @@ impl Guest for Component {
             capabilities: vec![
                 Capability {
                     kind: CapabilityKind::Logger,
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::LocalStorage,
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::Clock,
-                    scope: CapabilityScope {
-                        expression: "true".into(),
+                    scope: Scope {
+                        when: "true".into(),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Connect),
-                    scope: CapabilityScope {
-                        expression: host_scope("connect.host()"),
+                    scope: Scope {
+                        when: host_scope("connect.host()"),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::Request),
-                    scope: CapabilityScope {
-                        expression: host_scope("request.host()"),
+                    scope: Scope {
+                        when: host_scope("request.host()"),
+                        allow: "true".into(),
                     },
                 },
                 Capability {
                     kind: CapabilityKind::HandleEvent(EventKind::InboundContent),
-                    scope: CapabilityScope {
-                        expression: format!(
+                    scope: Scope {
+                        when: format!(
                             "content.content_type().startsWith('text/html') && !request.path().startsWith('{AGENT_PREFIX}') && {}",
                             host_scope("request.host()")
                         ),
+                        allow: "true".into(),
                     },
                 },
             ],
@@ -179,10 +187,16 @@ impl Host {
             .ok_or(PluginError::CapabilityUnavailable(
                 CapabilityKind::LocalStorage,
             ))?;
-        let epoch = clock.now_seconds().await;
+        let epoch = clock
+            .now_seconds()
+            .await
+            .map_err(|_| PluginError::CapabilityUnavailable(CapabilityKind::Clock))?;
         let offset = match settings.utc_offset_override_secs {
             Some(o) => o,
-            None => clock.utc_offset_seconds().await,
+            None => clock
+                .utc_offset_seconds()
+                .await
+                .map_err(|_| PluginError::CapabilityUnavailable(CapabilityKind::Clock))?,
         };
         Ok(Host {
             clock,
@@ -200,6 +214,8 @@ impl Host {
             .storage
             .get(Self::ledger_key(&self.now.date_string()))
             .await
+            .ok()
+            .flatten()
         {
             Some(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
             None => Ledger::default(),
@@ -208,7 +224,10 @@ impl Host {
 
     async fn save_ledger(&self, ledger: &Ledger) {
         let bytes = serde_json::to_vec(ledger).unwrap_or_default();
-        self.storage
+        // A refused or over-quota write is not fatal to the page: the ledger
+        // simply does not advance.
+        let _ = self
+            .storage
             .set(Self::ledger_key(&self.now.date_string()), bytes)
             .await;
         // Yesterday's entry is never read again; keep the store to one key.
@@ -218,7 +237,8 @@ impl Host {
                 .saturating_sub(crate::time::SECS_PER_DAY as u64),
             self.now.offset_secs(),
         );
-        self.storage
+        let _ = self
+            .storage
             .delete(Self::ledger_key(&yesterday.date_string()))
             .await;
     }
@@ -226,7 +246,7 @@ impl Host {
 
 async fn log_info(cap: &CapabilityProvider, msg: String) {
     if let Some(logger) = cap.logger().await {
-        logger.info(format!("[noshorts] {msg}")).await;
+        let _ = logger.info(format!("[noshorts] {msg}")).await;
     }
 }
 
@@ -311,7 +331,7 @@ impl PluginInstance {
                     .and_then(|v| v.parse().ok())
                     .unwrap_or(s.heartbeat_secs);
                 let credited = if active {
-                    let now_ms = host.clock.now_millis().await;
+                    let now_ms = host.clock.now_millis().await.unwrap_or_default();
                     let c = ledger.credit(now_ms, dt, s.heartbeat_secs);
                     if c > 0 {
                         host.save_ledger(ledger).await;

@@ -1,8 +1,9 @@
+use crate::db::Migrate as _;
 use anyhow::Result;
 use conf::{Conf, Subcommands};
 
 use super::GlobalArgs;
-use crate::config::PluginScopedConfig;
+use crate::config::{Instance, PluginScopedConfig};
 use crate::db::{Db, tenants::Tenant};
 
 use crate::cli::api_client::{ApiClient, AuthStore, LocalDaemon};
@@ -62,9 +63,16 @@ impl AuthCommands {
     }
 }
 
-pub struct AuthHandler;
+/// Logs in to, and keeps the login of, one instance's daemon.
+pub struct AuthHandler {
+    instance: Instance,
+}
 
 impl AuthHandler {
+    pub fn new(instance: Instance) -> Self {
+        Self { instance }
+    }
+
     pub async fn handle(&self, command: &AuthCommands) -> Result<()> {
         match command {
             AuthCommands::Login(a) => self.login(a.server.as_deref(), a.email.as_deref()).await,
@@ -90,8 +98,8 @@ impl AuthHandler {
             anyhow::bail!("The password must not be empty.");
         }
 
-        let config = args.config.clone().with_resolved_paths()?;
-        let db_password = config.db.resolve_password()?;
+        let config = args.config.clone().with_resolved_paths(&self.instance)?;
+        let db_password = config.db.resolve_password(&self.instance)?;
         let db = Db::from_path(config.db.db_path.clone(), db_password.expose()).await?;
         drop(db_password);
         db.migrate().await?;
@@ -105,12 +113,13 @@ impl AuthHandler {
     }
 
     async fn login(&self, server: Option<&str>, email: Option<&str>) -> Result<()> {
-        let local = LocalDaemon::from_default_paths();
+        let local = LocalDaemon::for_instance(&self.instance);
         let server = match server {
             Some(s) => crate::cli::api_client::normalise_server_url(s),
             None => local.web_url.clone().ok_or_else(|| {
                 anyhow::anyhow!(
-                    "No --server given and no local daemon found (is witmproxy running?)"
+                    "No --server given and no local daemon found for instance {} (is it running?)",
+                    self.instance
                 )
             })?,
         };
@@ -138,8 +147,11 @@ impl AuthHandler {
                 token: token.to_string(),
                 server_url: server.to_string(),
             };
-            store.save()?;
-            println!("Login successful. Credentials saved.");
+            store.save(&self.instance)?;
+            println!(
+                "Login successful. Credentials saved to {}.",
+                AuthStore::path(&self.instance).display()
+            );
             if let Some(tenant_id) = result.get("tenant_id").and_then(|t| t.as_str()) {
                 println!("Tenant ID: {}", tenant_id);
             }
@@ -151,19 +163,24 @@ impl AuthHandler {
     }
 
     fn logout(&self) -> Result<()> {
-        AuthStore::remove()?;
+        AuthStore::remove(&self.instance)?;
         println!("Logged out. Credentials removed.");
         Ok(())
     }
 
     fn status(&self) -> Result<()> {
-        match AuthStore::load()? {
+        match AuthStore::load(&self.instance)? {
             Some(store) => {
                 println!("Authenticated");
+                println!("Instance: {}", self.instance);
                 println!("Server: {}", store.server_url);
             }
             None => {
-                println!("Not authenticated. Use 'witm auth login' to log in.");
+                let flag = match self.instance.name() {
+                    None => String::new(),
+                    Some(name) => format!(" --instance {name}"),
+                };
+                println!("Not authenticated. Use 'witm auth login{flag}' to log in.");
             }
         }
         Ok(())

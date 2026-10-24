@@ -1,6 +1,6 @@
 [package]
 name = "witmproxy"
-version = "0.0.7"
+version = "0.0.8"
 edition = "2024"
 authors = ["Theodore Brockman <iam@theo.lol>"]
 description = "A WASM-in-the-middle proxy"
@@ -63,6 +63,16 @@ reqwest = { version = "0.13.2", default-features = false, features = ["json", "r
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# The shared capability scope model (ezco:ezcap): per-call admission membranes.
+ezcap = { path = "../../rust/ezcap" }
+# icanhaz's broker as a library: plugin capabilities are grants in its store.
+icanhaz-broker = { path = "../icanhaz/broker" }
+# Install-time consent asks the icanhaz tray app over wRPC (WebSocket; TCP in tests).
+wrpc-transport = { path = "../../rust/wrpc/crates/transport", features = ["net"] }
+wrpc-websockets = { path = "../../rust/wrpc/crates/websockets", features = ["ring", "rand"] }
+tokio-websockets = { version = "0.13", default-features = false, features = ["client"] }
+# The encrypted store (SQLCipher) with a keychain-first key source.
+ezdb = { path = "../../rust/ezdb" }
 toml = "0.9.8"
 
 # Auth
@@ -125,6 +135,11 @@ service-manager = "0.11.0"
 zeroize = "1"
 rpassword = "7"
 
+# SO_ORIGINAL_DST: where a connection the transparent proxy accepted was
+# really going, which only the kernel's conntrack knows.
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # Test dependencies
 tokio-test = "0.4"
@@ -146,3 +161,9 @@ otel = [
 
 [lints]
 workspace = true
+
+[build-dependencies]
+# build.rs generates the ezcap CEL environments for the provider resources from ./wit.
+# No runtime: the build script only needs WIT parsing, and this keeps cel-cpp
+# from being compiled a second time for the host profile.
+ezcap = { path = "../../rust/ezcap", default-features = false }

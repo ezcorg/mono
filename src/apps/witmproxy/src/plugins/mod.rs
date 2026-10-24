@@ -20,6 +20,8 @@ use crate::{
 
 pub mod capabilities;
 pub mod cel;
+pub mod grants;
+pub mod icanhaz;
 pub mod limits;
 pub mod registry;
 
@@ -34,7 +36,7 @@ mod perf_tests;
 #[cfg(test)]
 mod adversarial_tests;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct WitmPlugin {
     pub namespace: String,
     pub name: String,
@@ -85,13 +87,32 @@ impl WitmPlugin {
         self
     }
 
+    /// Compile every capability's scope: event capabilities get their `when`
+    /// program (against the event environment), provider capabilities are
+    /// minted as membrane instances (type-checking `allow` against their
+    /// interface). A scope that does not compile refuses the whole plugin.
     pub fn compile_capability_scope_expressions(
         mut self,
         env: &'static cel_cxx::Env,
+        grants: &grants::Grants,
     ) -> Result<Self> {
-        self.capabilities
+        let id = self.id();
+        let compiled = self
+            .capabilities
             .iter_mut()
-            .try_for_each(|c| c.compile_scope_expression(env))?;
+            .try_for_each(|c| c.compile_scope_expression(env, grants, &id));
+        if let Err(e) = compiled {
+            // A plugin whose scopes do not compile is not installed, and
+            // holds none of the grants issued for the capabilities before
+            // the one that failed.
+            let mut store = grants::lock(grants);
+            for c in self.capabilities.iter_mut() {
+                if let Some(token) = c.token.take() {
+                    store.revoke(&token);
+                }
+            }
+            return Err(e);
+        }
         Ok(self)
     }
 
@@ -104,6 +125,7 @@ impl WitmPlugin {
         db: &mut Db,
         runtime: &Runtime,
         env: &'static cel_cxx::Env<'static>,
+        grants: &grants::Grants,
     ) -> Result<Self> {
         // TODO: consider failure modes (invalid/non-compiling component, etc.)
         let component_bytes: Vec<u8> = plugin_row.try_get("component")?;
@@ -171,7 +193,8 @@ impl WitmPlugin {
             let capability = Capability {
                 inner: config,
                 granted: granted_flag,
-                cel: None,
+                when: None,
+                token: None,
             };
             plugin.capabilities.push(capability);
         }
@@ -198,7 +221,7 @@ impl WitmPlugin {
             });
         }
 
-        plugin = plugin.compile_capability_scope_expressions(env)?;
+        plugin = plugin.compile_capability_scope_expressions(env, grants)?;
         Ok(plugin)
     }
 
@@ -206,6 +229,7 @@ impl WitmPlugin {
         db: &mut Db,
         engine: &wasmtime::Engine,
         env: &'static cel_cxx::Env<'static>,
+        grants: &grants::Grants,
     ) -> Result<Vec<Self>> {
         let rows = query(
             "
@@ -223,7 +247,7 @@ impl WitmPlugin {
 
         let mut plugins = Vec::new();
         for row in rows {
-            match WitmPlugin::from_db_row(row, db, &runtime, env).await {
+            match WitmPlugin::from_db_row(row, db, &runtime, env, grants).await {
                 Ok(plugin) => plugins.push(plugin),
                 Err(e) => {
                     error!(
@@ -249,18 +273,25 @@ impl WitmPlugin {
         Ok(())
     }
 
+    /// Whether this plugin handles `event` for anonymous traffic: it is
+    /// globally enabled and [`WitmPlugin::matches_scope`].
     pub fn can_handle(&self, event: &dyn Event) -> bool {
-        // A globally-disabled plugin never handles events.
-        if !self.enabled {
-            return false;
-        }
+        self.enabled && self.matches_scope(event)
+    }
+
+    /// Whether `event` falls within a granted event capability's scope,
+    /// regardless of whether the plugin is globally enabled. The registry
+    /// decides who a plugin runs for (a tenant override can switch on a
+    /// plugin that is off for everyone else); this answers only whether the
+    /// plugin asked for events like this one.
+    pub fn matches_scope(&self, event: &dyn Event) -> bool {
         self.capabilities
             .iter()
             // Have we been granted the associated event capability?
             .filter(|cap| cap.inner.kind == event.capability())
             .filter(|cap| cap.granted)
             .filter_map(|cap| {
-                let program: &cel_cxx::Program<'_> = cap.cel.as_ref()?;
+                let program: &cel_cxx::Program<'_> = cap.when.as_ref()?;
                 Some(program)
             })
             // Are we interested in and permitted to handle this event?
@@ -298,7 +329,8 @@ impl From<PluginManifest> for WitmPlugin {
             .map(|c| Capability {
                 inner: c,
                 granted: true,
-                cel: None,
+                when: None,
+                token: None,
             })
             .collect::<Vec<Capability>>();
 

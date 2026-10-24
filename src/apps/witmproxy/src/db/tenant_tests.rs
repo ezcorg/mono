@@ -1,4 +1,5 @@
 use crate::db::Db;
+use crate::db::Migrate as _;
 use crate::db::tenants::*;
 
 async fn setup_db() -> (Db, tempfile::TempDir) {
@@ -424,9 +425,15 @@ async fn acl_evaluate_with_db_permissions() {
     let permissions = t1.permissions(pool).await.unwrap();
 
     // Should be granted read access
-    assert!(acl::evaluate(&permissions, "tenants:123:read"));
+    assert!(acl::evaluate(
+        &permissions,
+        &acl::Resource::new(acl::Kind::Tenants, Some("123"), acl::Action::Read)
+    ));
     // Should be denied write access (no grant)
-    assert!(!acl::evaluate(&permissions, "tenants:123:write"));
+    assert!(!acl::evaluate(
+        &permissions,
+        &acl::Resource::new(acl::Kind::Tenants, Some("123"), acl::Action::Write)
+    ));
 }
 
 #[tokio::test]
@@ -454,7 +461,10 @@ async fn acl_deny_overrides_grant_at_same_specificity() {
     let permissions = t1.permissions(pool).await.unwrap();
 
     // Deny wins at equal specificity
-    assert!(!acl::evaluate(&permissions, "tenants:123:read"));
+    assert!(!acl::evaluate(
+        &permissions,
+        &acl::Resource::new(acl::Kind::Tenants, Some("123"), acl::Action::Read)
+    ));
 }
 
 #[tokio::test]
@@ -482,9 +492,15 @@ async fn acl_more_specific_grant_overrides_less_specific_deny() {
     let permissions = t1.permissions(pool).await.unwrap();
 
     // More specific grant wins
-    assert!(acl::evaluate(&permissions, "tenants:123:read"));
+    assert!(acl::evaluate(
+        &permissions,
+        &acl::Resource::new(acl::Kind::Tenants, Some("123"), acl::Action::Read)
+    ));
     // Other tenants still denied
-    assert!(!acl::evaluate(&permissions, "tenants:456:read"));
+    assert!(!acl::evaluate(
+        &permissions,
+        &acl::Resource::new(acl::Kind::Tenants, Some("456"), acl::Action::Read)
+    ));
 }
 
 #[tokio::test]

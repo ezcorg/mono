@@ -93,27 +93,23 @@ export async function openFile(page: Page, filename: string) {
     await waitForFileReady(page, filename);
 }
 
-/** Wait for file loading to complete and editor to be ready for typing.
- *  The async chain is: openFileEffect microtask → handleOpen
- *  (async OPFS read) → safeDispatch content + fileLoadedEffect → panel
- *  update syncs toolbar input → readOnly reconfiguration microtask. */
+/** Wait until the page's editor (`window.__view`) shows `filename` loaded,
+ *  and so editable: awaits the codeblock's own lifecycle (`whenFileLoaded`)
+ *  rather than inferring it from the DOM. Evaluated as a string, so the
+ *  module import runs in the page as written. */
+export async function waitForFileLoaded(page: Page, filename: string) {
+    await page.evaluate(`(async () => {
+        const { whenFileLoaded } = await import('/src/editor.ts');
+        await whenFileLoaded(window.__view, ${JSON.stringify(filename)});
+    })()`);
+}
+
+/** Wait for `filename` to be loaded and shown in the toolbar. */
 async function waitForFileReady(page: Page, filename: string) {
-    // Wait for the toolbar to show the expected filename AND no loading
-    // spinner present.  The toolbar input is set twice during file creation:
-    // once immediately by the toolbar command handler (before loading starts),
-    // and once by the panel update after fileLoadedEffect lands.  The spinner
-    // only disappears after the second update, so checking both conditions
-    // ensures the full loading pipeline has completed.
+    await waitForFileLoaded(page, filename);
     await page.waitForFunction(
-        (fn: string) => {
-            const input = document.querySelector('.cm-toolbar-input') as HTMLInputElement;
-            const loading = document.querySelector('.cm-loading');
-            return input?.value === fn && !loading;
-        },
-        { timeout: 15000 },
+        (fn: string) => (document.querySelector('.cm-toolbar-input') as HTMLInputElement)?.value === fn,
+        { timeout: 5000 },
         filename,
     );
-
-    // Let remaining microtasks (readOnly reconfiguration, spinner fade) settle
-    await new Promise(r => setTimeout(r, 300));
 }

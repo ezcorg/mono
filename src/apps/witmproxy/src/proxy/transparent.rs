@@ -10,9 +10,10 @@ use crate::config::TransparentProxyConfig;
 use crate::events::Event;
 use crate::events::connect::Connect;
 use crate::plugins::registry::PluginRegistry;
+use crate::proxy::egress::{Client, Egress, UpstreamClients};
 use crate::proxy::tenant::TenantContext;
 use crate::proxy::tenant_resolver::TenantResolver;
-use crate::proxy::{UpstreamClient, is_closed, parse_authority_host_port, run_tls_mitm};
+use crate::proxy::{is_closed, parse_authority_host_port, run_tls_mitm};
 
 use super::netfilter::NetfilterManager;
 
@@ -22,7 +23,8 @@ pub struct TransparentProxy {
     ca: Arc<CertificateAuthority>,
     plugin_registry: Option<Arc<PluginRegistry>>,
     tenant_resolver: Arc<dyn TenantResolver>,
-    upstream: UpstreamClient,
+    upstream: Arc<UpstreamClients>,
+    egress: Arc<Egress>,
     config: TransparentProxyConfig,
     shutdown_notify: Arc<Notify>,
     netfilter: Option<NetfilterManager>,
@@ -33,7 +35,8 @@ impl TransparentProxy {
         ca: Arc<CertificateAuthority>,
         plugin_registry: Option<Arc<PluginRegistry>>,
         tenant_resolver: Arc<dyn TenantResolver>,
-        upstream: UpstreamClient,
+        upstream: Arc<UpstreamClients>,
+        egress: Arc<Egress>,
         config: TransparentProxyConfig,
         shutdown_notify: Arc<Notify>,
     ) -> Self {
@@ -43,6 +46,7 @@ impl TransparentProxy {
             plugin_registry,
             tenant_resolver,
             upstream,
+            egress,
             config,
             shutdown_notify,
             netfilter: None,
@@ -87,6 +91,7 @@ impl TransparentProxy {
         let plugin_registry = self.plugin_registry.clone();
         let tenant_resolver = self.tenant_resolver.clone();
         let upstream = self.upstream.clone();
+        let egress = self.egress.clone();
 
         tokio::spawn(async move {
             loop {
@@ -100,15 +105,18 @@ impl TransparentProxy {
                                 let plugin_registry = plugin_registry.clone();
                                 let tenant_resolver = tenant_resolver.clone();
                                 let upstream = upstream.clone();
+                                let egress = egress.clone();
 
                                 tokio::spawn(async move {
-                                    let tenant_ctx = tenant_resolver.resolve(&peer).await;
+                                    let tenant_ctx =
+                                        tenant_resolver.resolve(&peer).await.with_peer(peer.ip());
                                     if let Err(e) = handle_transparent_connection(
                                         stream,
                                         peer,
                                         ca,
                                         plugin_registry,
                                         upstream,
+                                        egress,
                                         tenant_ctx,
                                     ).await
                                         && !is_closed(&e) {
@@ -245,8 +253,105 @@ pub fn extract_sni_from_client_hello(buf: &[u8]) -> Option<String> {
     None
 }
 
-/// Check if any plugin wants to handle a connection to the given host.
-async fn should_intercept(plugin_registry: &Option<Arc<PluginRegistry>>, hostname: &str) -> bool {
+/// Where a redirected connection was going before netfilter sent it here.
+///
+/// A transparent proxy that trusts the bytes it reads for the destination is
+/// an open relay: the SNI and the Host header are the client's to write, and
+/// a client that may only reach this proxy could name a host it may not
+/// reach and have the proxy, which may, connect there on its behalf. The
+/// kernel remembers the real destination of a REDIRECTed or DNATed
+/// connection; that is the only destination a passthrough may use.
+///
+/// `None` when the socket was not redirected (the client dialed this port
+/// itself) or the platform cannot say.
+pub fn original_dst(stream: &TcpStream) -> Option<SocketAddr> {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let fd = stream.as_raw_fd();
+        let v4 = || {
+            // SAFETY: sockaddr_in is plain data for which all-zero is a
+            // valid value.
+            let mut addr: libc::sockaddr_in = unsafe { std::mem::zeroed() };
+            let mut len: libc::socklen_t =
+                libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_in>()).ok()?;
+            // SAFETY: a valid fd, a correctly sized out-buffer, and a length
+            // the kernel may shrink but never grow past what it was given.
+            let rc = unsafe {
+                libc::getsockopt(
+                    fd,
+                    libc::SOL_IP,
+                    libc::SO_ORIGINAL_DST,
+                    (&mut addr as *mut libc::sockaddr_in).cast(),
+                    &mut len,
+                )
+            };
+            if rc != 0 || addr.sin_family as i32 != libc::AF_INET {
+                return None;
+            }
+            let ip = std::net::Ipv4Addr::from(u32::from_be(addr.sin_addr.s_addr));
+            Some(SocketAddr::from((ip, u16::from_be(addr.sin_port))))
+        };
+        let v6 = || {
+            // IP6T_SO_ORIGINAL_DST, the IPv6 twin; libc has no constant for it.
+            const IP6T_SO_ORIGINAL_DST: libc::c_int = 80;
+            // SAFETY: sockaddr_in6 is plain data for which all-zero is a
+            // valid value.
+            let mut addr: libc::sockaddr_in6 = unsafe { std::mem::zeroed() };
+            let mut len: libc::socklen_t =
+                libc::socklen_t::try_from(std::mem::size_of::<libc::sockaddr_in6>()).ok()?;
+            // SAFETY: as above.
+            let rc = unsafe {
+                libc::getsockopt(
+                    fd,
+                    libc::SOL_IPV6,
+                    IP6T_SO_ORIGINAL_DST,
+                    (&mut addr as *mut libc::sockaddr_in6).cast(),
+                    &mut len,
+                )
+            };
+            if rc != 0 || addr.sin6_family as i32 != libc::AF_INET6 {
+                return None;
+            }
+            let ip = std::net::Ipv6Addr::from(addr.sin6_addr.s6_addr);
+            Some(SocketAddr::from((ip, u16::from_be(addr.sin6_port))))
+        };
+        match stream.local_addr().ok()? {
+            SocketAddr::V4(_) => v4(),
+            SocketAddr::V6(_) => v6().or_else(v4),
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = stream;
+        None
+    }
+}
+
+/// The address a passthrough connects to: the original destination, when the
+/// connection was redirected here. A connection that was not (`original` is
+/// missing, or is this listener itself, which is what a direct dial reports)
+/// has no destination this proxy can vouch for, and gets none: dialing the
+/// name the client supplied would make this proxy reach, on the client's
+/// behalf, whatever the client itself may not.
+pub fn passthrough_target(
+    original: Option<SocketAddr>,
+    local: Option<SocketAddr>,
+) -> Option<SocketAddr> {
+    let original = original?;
+    if Some(original) == local {
+        return None;
+    }
+    Some(original)
+}
+
+/// Check if any plugin wants to handle a connection to the given host, for
+/// the tenant the connection belongs to.
+async fn should_intercept(
+    plugin_registry: &Option<Arc<PluginRegistry>>,
+    hostname: &str,
+    tenant: &TenantContext,
+) -> bool {
     let Some(registry) = plugin_registry else {
         return false;
     };
@@ -257,7 +362,7 @@ async fn should_intercept(plugin_registry: &Option<Arc<PluginRegistry>>, hostnam
     };
 
     let connect_event: Box<dyn Event> = Box::new(Connect::new(host, port));
-    registry.can_handle(&*connect_event)
+    registry.can_handle_for(&*connect_event, tenant).await
 }
 
 /// Handle a single transparent connection. Peeks to determine if it's TLS or plain HTTP.
@@ -268,15 +373,42 @@ async fn handle_transparent_connection(
     peer: SocketAddr,
     ca: Arc<CertificateAuthority>,
     plugin_registry: Option<Arc<PluginRegistry>>,
-    upstream: UpstreamClient,
-    _tenant_ctx: TenantContext,
+    upstream: Arc<UpstreamClients>,
+    egress: Arc<Egress>,
+    tenant_ctx: TenantContext,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let client = Client::from(&tenant_ctx);
     // Peek at the first bytes to determine protocol
     let mut peek_buf = [0u8; 5];
     let n = stream.peek(&mut peek_buf).await?;
     if n == 0 {
         return Ok(());
     }
+
+    // Where the client was really going, from the kernel rather than from
+    // anything the client wrote. Every passthrough below dials this and only
+    // this; see `original_dst`.
+    let original = original_dst(&stream);
+    let target = passthrough_target(original, stream.local_addr().ok());
+    // A destination the policy forbids is not forwarded to, whoever
+    // addressed it; the name, once known, is judged again below. The MITM
+    // path judges its upstream at the dial.
+    let target = match target {
+        Some(t)
+            if !egress
+                .decide(&client, None, Some(t.ip()), t.port())
+                .is_permit() =>
+        {
+            warn!(
+                "Transparent: refusing {} from {}: {}",
+                t,
+                peer,
+                egress.decide(&client, None, Some(t.ip()), t.port())
+            );
+            return Ok(());
+        }
+        other => other,
+    };
 
     if peek_buf[0] == 22 {
         // TLS ClientHello -- peek enough to extract SNI. We use a single 16KB
@@ -304,24 +436,53 @@ async fn handle_transparent_connection(
             return Ok(());
         };
 
-        info!("Transparent TLS: SNI={} from {}", hostname, peer);
+        info!(
+            "Transparent TLS: SNI={} from {} (to {})",
+            hostname,
+            peer,
+            original
+                .map(|a| a.to_string())
+                .unwrap_or_else(|| "?".into())
+        );
 
-        if should_intercept(&plugin_registry, &hostname).await {
-            // Plugin(s) want this connection — run the full MITM pipeline
+        if should_intercept(&plugin_registry, &hostname, &tenant_ctx).await {
+            // Plugin(s) want this connection — run the full MITM pipeline.
+            // The upstream is dialed by name, so its certificate is checked
+            // against the name the client asked for; a client that pointed
+            // that name at some other address gets the real host anyway.
             info!("Transparent: intercepting {} (plugins matched)", hostname);
-            let authority = format!("{}:443", hostname);
-            if let Err(e) = run_tls_mitm(upstream, stream, authority, ca, plugin_registry).await
+            let port = original.map(|a| a.port()).unwrap_or(443);
+            let authority = format!("{}:{}", hostname, port);
+            let upstream = upstream.client_for(&tenant_ctx, port)?;
+            if let Err(e) =
+                run_tls_mitm(upstream, stream, authority, ca, plugin_registry, tenant_ctx).await
                 && !is_closed(&e)
             {
                 debug!("Transparent MITM error for {}: {}", hostname, e);
             }
         } else {
-            // No plugins care — raw TCP forward to the real server
+            // No plugins care — raw TCP forward to where it was going.
+            let Some(target) = target else {
+                warn!(
+                    "Transparent: {} from {} was not redirected here; refusing to pick a destination for it",
+                    hostname, peer
+                );
+                return Ok(());
+            };
+            let decision =
+                egress.decide(&client, Some(&hostname), Some(target.ip()), target.port());
+            if !decision.is_permit() {
+                warn!(
+                    "Transparent: refusing {} ({}) from {}: {}",
+                    hostname, target, peer, decision
+                );
+                return Ok(());
+            }
             info!(
-                "Transparent: forwarding {} directly (no plugins matched)",
-                hostname
+                "Transparent: forwarding {} to {} directly (no plugins matched)",
+                hostname, target
             );
-            let mut upstream_stream = TcpStream::connect(format!("{}:443", hostname)).await?;
+            let mut upstream_stream = TcpStream::connect(target).await?;
             match tokio::io::copy_bidirectional(&mut stream, &mut upstream_stream).await {
                 Ok(_) => {}
                 Err(e) if is_closed(&e) => {}
@@ -329,9 +490,16 @@ async fn handle_transparent_connection(
             }
         }
     } else {
-        // Plain HTTP — raw TCP forward (port 80 traffic, no MITM needed)
-        info!("Transparent HTTP: forwarding from {}", peer);
-        // Peek to extract Host header for upstream connection
+        // Plain HTTP — raw TCP forward (port 80 traffic, no MITM needed).
+        // The Host header is read for the log; the destination is the
+        // kernel's.
+        let Some(target) = target else {
+            warn!(
+                "Transparent HTTP from {} was not redirected here; refusing to pick a destination for it",
+                peer
+            );
+            return Ok(());
+        };
         let mut buf = vec![0u8; 8192];
         let n = stream.peek(&mut buf).await?;
         buf.truncate(n);
@@ -341,23 +509,30 @@ async fn handle_transparent_connection(
             .find(|l| l.to_lowercase().starts_with("host:"))
             .and_then(|l| l.split_once(':').map(|(_, v)| v.trim().to_string()))
             .unwrap_or_default();
-
-        if host_header.is_empty() {
-            debug!("Transparent HTTP: no Host header found, dropping");
+        let host_name = host_header
+            .rsplit_once(':')
+            .map(|(h, _)| h)
+            .unwrap_or(&host_header)
+            .to_string();
+        let name = (!host_name.is_empty()).then_some(host_name.as_str());
+        let decision = egress.decide(&client, name, Some(target.ip()), target.port());
+        if !decision.is_permit() {
+            warn!(
+                "Transparent HTTP: refusing {} (Host: {}) from {}: {}",
+                target, host_header, peer, decision
+            );
             return Ok(());
         }
+        info!(
+            "Transparent HTTP: forwarding from {} to {} (Host: {})",
+            peer, target, host_header
+        );
 
-        // The Host header may carry an explicit port (e.g. "example.com:8080").
-        // Parse host/port out rather than blindly appending ":80", which would
-        // otherwise produce a bogus "host:port:80" connect target.
-        let (host, port) =
-            parse_authority_host_port(&host_header, 80).unwrap_or((host_header.clone(), 80));
-
-        let mut upstream_stream = TcpStream::connect(format!("{}:{}", host, port)).await?;
+        let mut upstream_stream = TcpStream::connect(target).await?;
         match tokio::io::copy_bidirectional(&mut stream, &mut upstream_stream).await {
             Ok(_) => {}
             Err(e) if is_closed(&e) => {}
-            Err(e) => debug!("Transparent HTTP forward error for {}: {}", host, e),
+            Err(e) => debug!("Transparent HTTP forward error to {}: {}", target, e),
         }
     }
 
@@ -367,6 +542,43 @@ async fn handle_transparent_connection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A passthrough dials the kernel's record of the destination, and only
+    /// that: no record, or a record that is this listener itself (a direct
+    /// dial), is no destination.
+    #[test]
+    fn passthrough_dials_only_the_original_destination() {
+        let listener: SocketAddr = "10.0.0.1:3128".parse().unwrap();
+        let real: SocketAddr = "93.184.216.34:443".parse().unwrap();
+        assert_eq!(passthrough_target(Some(real), Some(listener)), Some(real));
+        assert_eq!(passthrough_target(None, Some(listener)), None);
+        assert_eq!(passthrough_target(Some(listener), Some(listener)), None);
+        // With no local address to compare against the record still wins:
+        // an unreadable local address is not a reason to dial by name.
+        assert_eq!(passthrough_target(Some(real), None), Some(real));
+    }
+
+    /// A socket nobody redirected reports no original destination, so a
+    /// direct dial of the transparent port is refused rather than relayed.
+    #[tokio::test]
+    async fn a_direct_connection_has_no_original_destination() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let client = TcpStream::connect(addr).await.unwrap();
+        let (accepted, _) = listener.accept().await.unwrap();
+        // Linux answers ENOENT for a connection conntrack did not NAT; other
+        // platforms have no answer at all. Either way: nothing to dial.
+        let original = original_dst(&accepted);
+        assert!(
+            original.is_none() || original == accepted.local_addr().ok(),
+            "{original:?}"
+        );
+        assert_eq!(
+            passthrough_target(original, accepted.local_addr().ok()),
+            None
+        );
+        drop(client);
+    }
 
     #[test]
     fn test_extract_sni_from_real_client_hello() {

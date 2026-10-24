@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { connect, requestProcessGrant } from "./wrpc";
-import { spawn } from "./generated/process";
+import { open, processSpawn } from "./generated/process";
 import { processLspTransport } from "./lsp-transport";
 
 // Needs a running daemon (`ICANHAZ_CONSENT=auto icanhazd`) and `rust-analyzer` on
@@ -12,7 +12,9 @@ describe("remote LSP over the wRPC process capability (rust-analyzer)", () => {
         const t = await connect({ ws: WS });
         // Consent pins the `rust-analyzer` image; it needs no argv for stdio mode.
         const grant = await requestProcessGrant(t, "rust-analyzer", [], false, "rust language server");
-        const session = await spawn(t, grant, []);
+        const proc = await open(t, grant);
+        if (proc.tag !== "ok") throw new Error(`process refused: ${proc.val}`);
+        const session = await processSpawn(t, proc.val, []);
         const lsp = processLspTransport(session);
 
         // Minimal JSON-RPC client over the transport: correlate responses by id,

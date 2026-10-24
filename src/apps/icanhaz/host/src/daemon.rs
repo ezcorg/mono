@@ -9,15 +9,21 @@
 //! `grants`, and the app injects its own native consent surface.
 
 use core::net::SocketAddr;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::Context as _;
 use tokio::net::TcpListener;
 
 use crate::broker::{BrokerProvider, Consent, GrantStore, Hosts, Pairings};
+use crate::configuration::{Declared, Instance, Registry, UserInput};
+use crate::configuration_serve::ConfigurationProvider;
 use crate::process::ProcessProvider;
-use crate::serve::{serve_websocket_all, serve_webtransport_all, FsServe};
+use crate::providers::Providers;
+use crate::serve::{
+    serve_iroh_all, serve_websocket_all, serve_webtransport_all, CapabilitiesServe, ComponentsServe,
+};
+use crate::store::Store;
 use crate::terminal::TerminalProvider;
 use crate::watch::WatchProvider;
 use crate::workspace::WorkspaceProvider;
@@ -28,16 +34,25 @@ pub struct DaemonConfig {
     pub ws_bind: String,
     /// WebTransport bind, e.g. `127.0.0.1:7778`.
     pub wt_bind: SocketAddr,
-    /// The fs root the demo jail lives under (also the preopen for `wasi:filesystem`).
+    /// The jail: the directory filesystem grants are rooted under.
     pub root: std::path::PathBuf,
-    /// The `wasi:filesystem` passthrough component (`.wasm`).
-    pub fs_component: std::path::PathBuf,
+    /// Where the shipped capability components live: `<dir>/<name>/target/
+    /// wasm32-wasip2/release/<name>_capability.wasm` for filesystem, process,
+    /// terminal, watch, workspace and inference.
+    pub capabilities_dir: std::path::PathBuf,
+    /// Serve the daemon's own OCI registry here (`ICANHAZ_REGISTRY_BIND`);
+    /// `None` serves none.
+    pub registry_bind: Option<SocketAddr>,
     /// WebTransport TLS: PEM cert/key paths; a self-signed cert is generated if either
     /// is absent.
     pub cert: Option<String>,
     pub key: Option<String>,
     /// Human-legible consent mode, for the startup banner.
     pub consent_label: String,
+    /// Also serve over iroh (the peer path). The endpoint's id *is* the
+    /// broker's identity: the same key signs certificates and authenticates
+    /// the QUIC handshake, so a certificate's issuer is its locator.
+    pub iroh: bool,
 }
 
 /// Seed the demo tree under `root`: one file inside the jail, one outside, plus a
@@ -60,29 +75,423 @@ fn seed_jail(root: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The daemon's durable services: the store (declared configuration + per-owner
+/// state) and everything configured through it. Built by the caller with
+/// [`Services::open`] so the native app can hold it too: its settings surface
+/// lists and edits the same configuration the capabilities read.
+#[derive(Clone)]
+pub struct Services {
+    /// `None` when the store could not be opened: the daemon still runs, with
+    /// providers from the environment only and no persisted budgets.
+    pub store: Option<Store>,
+    pub providers: Arc<Providers>,
+    /// The broker's signing key: persisted in the store (`broker/identity`)
+    /// so certificates outlive a restart; ephemeral without one.
+    pub identity: ezcap::Keypair,
+    /// Everything declared on this machine: the daemon's own schemas and the
+    /// ones other local hosts registered over `icanhaz:nocap/configuration`.
+    pub registry: Arc<Registry>,
+    /// Capability components by hash (`<store dir>/components/`).
+    pub components: Arc<crate::components::ComponentStore>,
+    /// How this daemon signs in to other registries (`registries/<host>`).
+    pub credentials: Arc<crate::fetch::Credentials>,
+    /// The credential this daemon's own registry requires (`registry`).
+    pub registry_access: Arc<crate::registry::RegistryAccess>,
+}
+
+impl Services {
+    /// Open the default store (warning, not failing, when it cannot be) and
+    /// load everything configured through it.
+    pub async fn open() -> Self {
+        let store = match Store::open(Store::default_path()).await {
+            Ok(store) => Some(store),
+            Err(e) => {
+                tracing::warn!(error = %e, "store unavailable; running without persistence");
+                None
+            }
+        };
+        Self::with_store(store).await
+    }
+
+    pub async fn with_store(store: Option<Store>) -> Self {
+        let providers = Arc::new(Providers::load(store.clone()).await);
+        let identity = match &store {
+            Some(store) => load_identity(store).await,
+            None => None,
+        };
+        let identity = identity.unwrap_or_else(|| {
+            tracing::warn!("broker identity is ephemeral: certificates will not survive a restart");
+            ezcap::Keypair::generate().unwrap_or_else(|e| panic!("no randomness: {e}"))
+        });
+        let registry = Arc::new(Registry::new(store.clone(), Self::declared()));
+        let components_dir = Store::default_path()
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+            .join("components");
+        let components = Arc::new(crate::components::ComponentStore::new(
+            components_dir,
+            store.clone(),
+        ));
+        let credentials = crate::fetch::Credentials::shared();
+        let registry_access = crate::registry::RegistryAccess::shared();
+        if let Some(store) = &store {
+            credentials.reload(store).await;
+            registry_access.reload(store).await;
+        }
+        Self {
+            store,
+            providers,
+            identity,
+            registry,
+            components,
+            credentials,
+            registry_access,
+        }
+    }
+
+    /// Every configuration the daemon's own capabilities declare.
+    pub fn declared() -> Vec<Declared> {
+        vec![
+            Providers::declared(),
+            crate::fetch::Credentials::declared(),
+            crate::registry::RegistryAccess::declared(),
+        ]
+    }
+
+    /// The wRPC provider other local hosts declare through.
+    pub fn configuration_provider(&self) -> ConfigurationProvider {
+        let providers = Arc::clone(&self.providers);
+        let store = self.store.clone();
+        let credentials = Arc::clone(&self.credentials);
+        let registry_access = Arc::clone(&self.registry_access);
+        ConfigurationProvider::new(Arc::clone(&self.registry)).with_changed(Arc::new(
+            move |capability: String| {
+                let providers = Arc::clone(&providers);
+                let store = store.clone();
+                let credentials = Arc::clone(&credentials);
+                let registry_access = Arc::clone(&registry_access);
+                Box::pin(async move {
+                    reload(
+                        &capability,
+                        &providers,
+                        store.as_ref(),
+                        &credentials,
+                        &registry_access,
+                    )
+                    .await
+                })
+            },
+        ))
+    }
+
+    /// The wRPC provider components are added and fetched through.
+    pub fn components_provider(&self) -> crate::components::ComponentsProvider {
+        crate::components::ComponentsProvider::new(Arc::clone(&self.components))
+    }
+
+    /// Every declared configuration (the daemon's and other hosts') with its
+    /// configured instances, secrets masked. Without a store, each schema
+    /// lists no instances.
+    pub async fn configuration(&self) -> anyhow::Result<Vec<(Declared, Vec<Instance>)>> {
+        self.registry.configuration().await
+    }
+
+    /// Create or update one configured instance of `capability`'s schema, then
+    /// let that capability pick the change up.
+    pub async fn configure(
+        &self,
+        capability: &str,
+        instance: &str,
+        inputs: &[UserInput],
+    ) -> anyhow::Result<()> {
+        self.registry
+            .configure(capability, instance, inputs)
+            .await?;
+        self.reload(capability).await;
+        Ok(())
+    }
+
+    /// Remove one configured instance. `Ok(false)` if there was none.
+    pub async fn unconfigure(&self, capability: &str, instance: &str) -> anyhow::Result<bool> {
+        let (_, removed) = self.registry.unconfigure(capability, instance).await?;
+        self.reload(capability).await;
+        Ok(removed)
+    }
+
+    /// The capabilities that cache their configuration re-read it here.
+    async fn reload(&self, capability: &str) {
+        reload(
+            capability,
+            &self.providers,
+            self.store.as_ref(),
+            &self.credentials,
+            &self.registry_access,
+        )
+        .await
+    }
+}
+
+/// The capabilities that cache their configuration re-read it here, after
+/// the tray or the command line changed it.
+async fn reload(
+    capability: &str,
+    providers: &Arc<Providers>,
+    store: Option<&Store>,
+    credentials: &Arc<crate::fetch::Credentials>,
+    registry_access: &Arc<crate::registry::RegistryAccess>,
+) {
+    match capability {
+        "inference" => providers.reload().await,
+        "registries" => {
+            if let Some(store) = store {
+                credentials.reload(store).await;
+            }
+        }
+        "registry" => {
+            if let Some(store) = store {
+                registry_access.reload(store).await;
+            }
+        }
+        _ => {}
+    }
+}
+
+/// The broker's persisted signing key, generated on first run. Lives in the
+/// generic state table under the `broker` owner, like any other capability's
+/// durable state.
+async fn load_identity(store: &Store) -> Option<ezcap::Keypair> {
+    match store.state_get("broker", "identity").await {
+        Ok(Some(bytes)) => {
+            let seed: Option<[u8; 32]> = bytes.try_into().ok();
+            match seed {
+                Some(seed) => return Some(ezcap::Keypair::from_bytes(&seed)),
+                None => tracing::warn!("stored broker identity is malformed; regenerating"),
+            }
+        }
+        Ok(None) => {}
+        Err(e) => {
+            tracing::warn!(error = %e, "could not read the broker identity");
+            return None;
+        }
+    }
+    let key = ezcap::Keypair::generate().ok()?;
+    if let Err(e) = store.state_set("broker", "identity", &key.to_bytes()).await {
+        tracing::warn!(error = %e, "could not persist the broker identity");
+        return None;
+    }
+    Some(key)
+}
+
 /// Bring the whole NoCap surface up and serve it until a transport errors. `grants`,
-/// `pairings`, and `consent` are supplied by the caller (see the module docs).
+/// `pairings`, `consent` and `services` are supplied by the caller (see the module docs).
 pub async fn run(
     config: DaemonConfig,
     grants: Arc<Mutex<GrantStore>>,
     pairings: Arc<Mutex<Pairings>>,
     hosts: Arc<Mutex<Hosts>>,
     consent: Consent,
+    services: Services,
 ) -> anyhow::Result<()> {
     seed_jail(&config.root)?;
 
     // Every capability shares one grant store: a token from `broker.request` is the
     // same one fs + terminal validate. `hosts` gates which origins may even prompt.
-    let broker = BrokerProvider::new(grants.clone(), consent, pairings).with_hosts(hosts);
+    let broker =
+        BrokerProvider::new(grants.clone(), consent, pairings.clone()).with_hosts(hosts.clone());
     let terminal = TerminalProvider::new(grants.clone());
     let process = ProcessProvider::new(grants.clone());
     let workspace = WorkspaceProvider::new(config.root.clone(), grants.clone());
     let watch = WatchProvider::new(config.root.clone(), grants.clone());
-    let fs_serve = FsServe {
-        component_path: config.fs_component.clone(),
-        root: config.root.clone(),
-        grants: grants.clone(),
+    let configuration = services.configuration_provider();
+    let components = services.components_provider();
+    let registry_store = services.store.clone();
+    let Services {
+        providers,
+        identity: broker_key,
+        store,
+        ..
+    } = services;
+    grants.lock().unwrap().set_identity(broker_key.clone());
+    // Pairings and the hosts allowlist live in the store from here on (their
+    // legacy JSON files are imported once, then removed).
+    if let Some(store) = &store {
+        Pairings::restore(&pairings, store).await;
+        Hosts::restore(&hosts, store).await;
+        // Certified grants (and their sturdy references) come back too.
+        GrantStore::restore(&grants, store).await;
+    }
+    let iroh_ep = if config.iroh {
+        let secret = iroh::SecretKey::from_bytes(&broker_key.to_bytes());
+        match iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
+            .secret_key(secret)
+            .alpns(vec![crate::iroh::IROH_ALPN.to_vec()])
+            .bind()
+            .await
+        {
+            Ok(ep) => Some(ep),
+            Err(e) => {
+                tracing::warn!(error = %e, "iroh endpoint unavailable; serving WebSocket + WebTransport only");
+                None
+            }
+        }
+    } else {
+        None
     };
+    let mut broker = broker;
+    let mut process = process;
+    let mut inference = crate::inference::InferenceProvider::new(grants.clone(), providers.clone());
+    let mut remotes = None;
+    if let Some(ep) = &iroh_ep {
+        let peers = crate::remote::Remotes::new(ep.clone());
+        let locator = crate::remote::locator_of(ep, &broker_key.public());
+        grants.lock().unwrap().set_locator(locator);
+        broker = broker.with_remote(Arc::new(peers.clone()));
+        process = process.with_remotes(peers.clone());
+        inference = inference.with_remotes(peers.clone());
+        remotes = Some(peers);
+    }
+    // Components fetched from an OCI registry or from a peer land in the
+    // store with their source as provenance.
+    let fetcher = crate::fetch::Fetcher::shared(remotes, Arc::clone(&services.credentials));
+    // The raw host layer every shipped component imports: the gate over the
+    // grant store, and the providers' native implementations.
+    let (inference_complete, inference_models) = inference.native_for_grants();
+    let raw = Arc::new(crate::raw::Raw {
+        grants: grants.clone(),
+        spawn: Some(process.native_for_grants()),
+        terminal: Some(terminal.native_for_grants()),
+        watch: Some(watch.native_for_grants()),
+        root: Some(workspace.native_for_grants()),
+        open_root: Some(workspace.native_open_root()),
+        complete: Some(inference_complete),
+        models: Some(inference_models),
+    });
+    // The shipped capability components: registered in the store (so a chain
+    // or a novel component can be composed with them by hash) and served.
+    let mut shipped: Vec<(String, PathBuf)> = Vec::new();
+    for name in [
+        "filesystem",
+        "process",
+        "terminal",
+        "watch",
+        "workspace",
+        "inference",
+    ] {
+        shipped.push((
+            name.to_string(),
+            config
+                .capabilities_dir
+                .join(name)
+                .join("target/wasm32-wasip2/release")
+                .join(format!("{name}_capability.wasm")),
+        ));
+    }
+    for (name, path) in &shipped {
+        match std::fs::read(path) {
+            Ok(bytes) => match services.components.add(&bytes, None).await {
+                Ok(info) => {
+                    services.components.register_shipped(&info);
+                    tracing::info!(hash = %info.hash, capability = %name, "shipped capability registered in the component store");
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, capability = %name, "shipped capability did not validate")
+                }
+            },
+            Err(e) => {
+                tracing::warn!(error = %e, path = %path.display(), capability = %name, "shipped capability not readable")
+            }
+        }
+    }
+    // A grant provided through a chain (`via`, chosen at consent) is acquired
+    // on that chain: composed here from the store, in front of the shipped
+    // component providing its interface, the first time a grant names it.
+    let chains: Option<crate::component_serve::ChainSource> = {
+        let components = Arc::clone(&services.components);
+        Some(Arc::new(move |via: Vec<String>| {
+            let components = Arc::clone(&components);
+            Box::pin(async move {
+                tokio::task::spawn_blocking(move || components.capability_chain(&via))
+                    .await
+                    .context("compose capability chain")?
+            })
+                as std::pin::Pin<
+                    Box<dyn std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send>,
+                >
+        }))
+    };
+    // One registry of served handles for the whole daemon: a handle is scoped
+    // to the connection that minted it, whichever transport and capability.
+    let handles = crate::component_serve::Handles::new();
+    let capabilities = CapabilitiesServe {
+        components: shipped,
+        grants: grants.clone(),
+        chains,
+        raw: Arc::clone(&raw),
+        handles: Arc::clone(&handles),
+    };
+    // Novel interfaces store components provide: their admission environments
+    // come from the components' own WIT, and the transports serve them
+    // through shared routers.
+    let components_serve = ComponentsServe::new(
+        Arc::clone(&services.components),
+        grants.clone(),
+        Arc::clone(&raw),
+        handles,
+    );
+    for info in services.components.list().await {
+        crate::serve::register_component_envs_for(&services.components, &grants, &info);
+    }
+    // `components.add` replies only once the component's interfaces are
+    // served everywhere: a page can use what it added as soon as it hears back.
+    let components = components
+        .with_after_add({
+            let components_serve = components_serve.clone();
+            Arc::new(move |info| {
+                let components_serve = components_serve.clone();
+                Box::pin(async move { components_serve.added(info).await })
+            })
+        })
+        .with_fetcher(Arc::clone(&fetcher));
+    // Who may put code in the store: the local user, and the hosts the human
+    // approved (the same gate as asking for a grant). A component request
+    // naming a provider this daemon lacks is resolved through the store
+    // before it reaches the consent window.
+    let components = components.with_install_gate({
+        let hosts = Arc::clone(&hosts);
+        Arc::new(move |principal: &crate::broker::Principal| {
+            let gated = matches!(
+                principal.kind,
+                crate::broker::PrincipalKind::WebOrigin | crate::broker::PrincipalKind::Peer
+            ) && principal.id != "local";
+            if gated && !hosts.lock().unwrap().is_allowed(&principal.id) {
+                return Err(format!(
+                    "{} is not an approved host: adding components is for the local user and approved hosts",
+                    principal.id
+                ));
+            }
+            Ok(())
+        })
+    });
+    // The daemon's own registry, when a bind is configured: the store behind
+    // the distribution API, gated by the `registry` credential.
+    let registry_index =
+        crate::registry::RegistryIndex::new(Arc::clone(&services.components), registry_store);
+    let components = components.with_registry(Arc::clone(&registry_index));
+    if let Some(bind) = config.registry_bind {
+        match tokio::net::TcpListener::bind(bind).await {
+            Ok(listener) => {
+                let registry = crate::registry::Registry::new(
+                    Arc::clone(&registry_index),
+                    Arc::clone(&services.registry_access),
+                );
+                tokio::spawn(registry.serve(listener));
+                tracing::info!(%bind, "registry serving the component store (credential required)");
+            }
+            Err(e) => tracing::warn!(error = %e, %bind, "registry not served: bind failed"),
+        }
+    }
+    let broker = broker.with_components(Arc::new(components.clone()));
 
     // TLS identity for WebTransport: user-supplied cert/key, else self-signed.
     let identity = match (&config.cert, &config.key) {
@@ -100,11 +509,23 @@ pub async fn run(
         .await
         .with_context(|| format!("failed to bind WebSocket on {}", config.ws_bind))?;
 
-    eprintln!("icanhaz — broker (consent gate) + terminal + process + real wasi:filesystem + workspace + watch:");
+    eprintln!("icanhaz — broker (consent gate) + the shipped capabilities (filesystem, process, terminal, watch, workspace, inference) + the component store:");
+    eprintln!(
+        "  inference    : {} model(s) configured",
+        providers.models().len()
+    );
     eprintln!("  WebSocket    : ws://{}", config.ws_bind);
     eprintln!("  WebTransport : https://{}", config.wt_bind);
     eprintln!("  cert hashes  : {cert_hashes}");
     eprintln!("                 ^ paste into the browser demo (serverCertificateHashes)");
+    eprintln!("  identity     : {}", broker_key.public());
+    match &iroh_ep {
+        Some(ep) => {
+            let addrs: Vec<String> = ep.addr().ip_addrs().map(ToString::to_string).collect();
+            eprintln!("  iroh         : {} [{}]", ep.id(), addrs.join(", "));
+        }
+        None => eprintln!("  iroh         : off"),
+    }
     eprintln!("  consent      : {}", config.consent_label);
     eprintln!("  root (jail)  : {}", config.root.display());
 
@@ -114,22 +535,36 @@ pub async fn run(
         serve_websocket_all(
             ws_listener,
             broker.clone(),
-            terminal.clone(),
-            process.clone(),
-            workspace.clone(),
-            watch.clone(),
-            fs_serve.clone()
+            configuration.clone(),
+            components.clone(),
+            capabilities.clone(),
+            components_serve.clone()
         ),
         serve_webtransport_all(
             config.wt_bind,
             identity,
-            broker,
-            terminal,
-            process,
-            workspace,
-            watch,
-            fs_serve
+            broker.clone(),
+            configuration.clone(),
+            components.clone(),
+            capabilities.clone(),
+            components_serve.clone()
         ),
+        async {
+            match iroh_ep {
+                Some(ep) => {
+                    serve_iroh_all(
+                        ep,
+                        broker,
+                        configuration,
+                        components,
+                        capabilities,
+                        components_serve,
+                    )
+                    .await
+                }
+                None => std::future::pending().await,
+            }
+        },
     )?;
     Ok(())
 }

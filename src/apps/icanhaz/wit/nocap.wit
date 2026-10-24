@@ -6,7 +6,7 @@ package icanhaz:nocap@0.1.0;
 /// explicit, narrowable grant bound to a principal — there is no ambient
 /// authority anywhere in these interfaces.
 interface types {
-  use wasi:clocks/wall-clock@0.2.0.{ datetime };
+  use wasi:clocks/wall-clock@0.2.12.{ datetime };
 
   /// Who is asking. Capabilities bind to this.
   record principal {
@@ -25,7 +25,35 @@ interface types {
     sockets(socket-request),
     process(process-request),
     terminal(terminal-request),
+    inference(inference-request),
+    /// A capability a store component provides: a novel interface no native
+    /// provider implements, served from the component(s) the grant is
+    /// provided through (`via`, chosen at consent; `provider` is the
+    /// requester's suggestion, a store hash, used when the human picks none).
+    component(component-request),
   }
+
+  /// `provides` is the interface a store component provides, qualified
+  /// (`example:greeter/greeter@0.1.0`); `provider` the component the requester has
+  /// in mind, if any. Every function of such an interface takes the grant
+  /// token as its first argument; the daemon validates it before the call
+  /// reaches the component.
+  /// `delegated` are grant tokens the requester holds and lends the component
+  /// for what it imports: when the component calls an imported capability
+  /// with its own token, the daemon substitutes the delegated grant of that
+  /// kind. Each must be live and held by the requester.
+  /// `source` says where `provider` can be fetched from when this daemon
+  /// does not hold it (`oci://…` or `iroh:…#sha256:…`, see `components.fetch`):
+  /// the daemon fetches it, checks the bytes hash to `provider`, and keeps
+  /// them with that provenance before the request reaches consent. A fetch
+  /// grants nothing; the consent decides.
+  record component-request { provides: string, provider: option<string>, delegated: list<string>, source: option<string> }
+
+  /// LLM inference through the host's configured providers. `models` lists the
+  /// models the grant may use (empty = any the host has configured); budgets and
+  /// finer limits are the grant's `allow` clause (`state.tokens`,
+  /// `call.args.request.model`, `call.args.request.max_tokens`).
+  record inference-request { models: list<string> }
 
   record fs-request  { roots: list<path-grant> }
   record path-grant  { path: string, rights: fs-rights }
@@ -61,6 +89,8 @@ interface types {
     unsupported(string),   // provider lacks the capability
     quota,
     revoked,
+    invalid-scope(string), // the scope does not compile against the capability's interface
+    out-of-scope(string),  // the grant is live but this call fell outside its `allow`; carries the scope as sentences
   }
 
   record grant-info {
@@ -68,4 +98,18 @@ interface types {
     holder: principal,
     summary: string,       // human-legible, for the consent UI + audit view
   }
+}
+
+/// The one operation the daemon serves beside every capability: releasing a
+/// handle. A call that returns a resource (a filesystem descriptor, a
+/// `process` object) hands the client an opaque handle the daemon keeps on
+/// its behalf, scoped to the connection that acquired it, and the component
+/// model's own handle-drop never crosses the wire. So a client releases a
+/// handle here when it is done, or holds it until the connection closes.
+interface resources {
+  /// Release `handle`: the daemon runs the object's destructor and forgets
+  /// it. `true` when a live handle of this connection's was released; `false`
+  /// when it was already gone or was never this connection's, so dropping
+  /// twice is harmless.
+  drop: func(handle: list<u8>) -> bool;
 }

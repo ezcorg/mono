@@ -1,0 +1,6 @@
+# wkg resolves the wasi:* packages from the registry (see wkg.lock). The
+# ezco:ezcap package is a workspace-local package owned by src/rust/ezcap;
+# this override keeps `wkg wit fetch` pointed at that source instead of a
+# registry, and wit/deps/ezco-ezcap-0.1.0 is a vendored copy of it.
+[overrides]
+"ezco:ezcap" = { path = "../../rust/ezcap/wit" }

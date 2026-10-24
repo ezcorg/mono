@@ -1,15 +1,21 @@
-import { AnyExtension, Editor, EditorOptions } from '@tiptap/core';
+import { AnyExtension, Editor, EditorOptions, Extension } from '@tiptap/core';
 import StarterKit from '@tiptap/starter-kit';
-import TaskList from '@tiptap/extension-task-list';
 import { TableKit } from '@tiptap/extension-table'
+import { MarkdownTable } from './extensions/table'
 import { Markdown, MarkdownStorage } from 'tiptap-markdown';
 import { StyleModule } from 'style-mod';
 
 import { ExtendedCodeblock } from './extensions/codeblock';
 import { ExtendedTaskItem } from './extensions/taskitem';
-import { FileSystem, FileSystemOptions } from './extensions/filesystem';
+import { FileSystem, FileSystemOptions, persistenceOf, type FileSystemStorage } from './extensions/filesystem';
+import { ConflictNotice } from './extensions/conflict-notice';
+import { ProseAI } from './extensions/prose-ai';
+import type { FileVersions } from '@joinezco/codeblock';
 import { styleModule } from './styles';
+import { el } from './ui/dom';
 import { ExtendedLink } from './extensions/link';
+import { Settings, settingsOf, type SettingsOptions } from './settings';
+import { settingsFileExtensions } from './settings-file';
 import { LinkMenu } from './extensions/link-menu';
 import { SlashCommands, SlashCommand } from './extensions/slash-commands';
 import { EmojiPicker } from './extensions/emoji-picker';
@@ -18,11 +24,28 @@ import { InlineCodeExit } from './extensions/inline-code';
 import { WrapSelection } from './extensions/wrap-selection';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions, BlockActionsOptions } from './extensions/block-actions';
+import { Folding } from './extensions/folding';
 import { SelectionMenu } from './extensions/selection-menu';
 import { Sidebar, SidebarOptions } from './extensions/sidebar';
-import { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
+import { BulletList, OrderedList, OrderedListStart, DashListKeymap, ListItemBackspace, TaskList } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
 import { HeadingAnchors } from './extensions/heading-anchors';
+import type { WikilinkOptions } from './extensions/wikilink';
+import { LinksPanel, LinksPanelOptions } from './extensions/links-panel';
+import type { FrontMatterOptions } from './extensions/front-matter';
+import type { MathOptions } from './extensions/math';
+import type { ImageOptions } from './extensions/image';
+import { FileTree, FileTreeOptions } from './extensions/file-tree';
+import { Comments } from './extensions/comments';
+import { CommentMarks } from './extensions/comment-gutter';
+import { CommentMargin, type CommentLayout } from './extensions/comment-margin';
+import { CommentInline } from './extensions/comment-inline';
+import { commentsEnabled } from './extensions/comments-feature';
+import { RailToggle } from './extensions/rail';
+import { revealFragment } from './extensions/fragment';
+import { fileOperations, normalizePath, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage';
+import { Vault, type CommentIndex, type LinkIndex, type LinkResolution, type LinkResolver, type Reactions } from '@joinezco/vault';
+import type { Inference } from './inference';
 import { defaultSlashCommands } from './commands';
 
 // Override native caret blink speed on browsers that support caret-animation (Firefox 130+/Zen)
@@ -65,16 +88,9 @@ export function mountStyles(target?: Document | ShadowRoot): void {
 
 // Shared Markdown (de)serialization config, identical across setups so a document
 // round-trips the same regardless of which bundle built the editor.
-const MARKDOWN_OPTIONS = {
-    html: false,
-    tightLists: true,
-    tightListClass: 'tight',
-    bulletListMarker: '*',
-    linkify: true,
-    breaks: true,
-    transformPastedText: true,
-    transformCopiedText: true,
-} as const;
+import { MARKDOWN_OPTIONS } from './extensions/markdown-options';
+import { syntaxExtensions } from './minimal';
+export { minimalSetup } from './minimal';
 
 /** Feature options shared by `markdownSetup` and `createEditor`. */
 export type MarkdownSetupOptions = {
@@ -91,7 +107,14 @@ export type MarkdownSetupOptions = {
     /** Embedded CodeMirror code blocks. Pass `{ settings }`, or `false` to omit
      *  the (heavy, multi-hundred-KB) extension entirely — code fences then fall
      *  back to whatever code-block node is otherwise registered. */
-    codeblock?: { settings?: Record<string, unknown> } | false;
+    codeblock?: {
+        settings?: Record<string, unknown>;
+        /** Give an unnamed fence of a language with services (`ts`, `py`,
+         *  `rs`, `go`) a hidden stand-in file beside the note, so completions
+         *  and diagnostics work: a file the editor writes into the host's
+         *  filesystem, so off unless the host asks. */
+        standIns?: boolean;
+    } | false;
     /** Slash-command menu. Pass a custom command list, or `false` to omit it. */
     slashCommands?: SlashCommand[] | false;
     /** `:`-triggered emoji picker (dataset lazy-loaded on first use). `false` omits it. */
@@ -100,7 +123,90 @@ export type MarkdownSetupOptions = {
     selectionMenu?: boolean;
     /** Link hover/edit popover. `false` omits it. */
     linkMenu?: boolean;
+    /** Links between notes. The editor parses and renders wikilinks on its
+     *  own; what they point at comes from the host's `resolver`, and the
+     *  backlinks panel from its `index` (a `Vault`'s `links` from
+     *  `@joinezco/vault` is both). */
+    links?: LinksOptions;
+    /** Front matter (a note's YAML properties). Pass `{ assignId }` to give
+     *  notes opened without an `id:` one; `false` leaves front matter as text. */
+    frontMatter?: FrontMatterOptions | false;
+    /** `$…$` and `$$…$$` math. Pass `{ renderer }` to typeset with something
+     *  other than KaTeX; `false` leaves dollars as text. */
+    math?: Partial<MathOptions> | false;
+    /** `[^1]` footnotes. `false` leaves them as text. */
+    footnotes?: boolean;
+    /** `> [!note]` callouts. `false` leaves them as plain quotes. */
+    callouts?: boolean;
+    /** Images. `attachments` is the vault folder pasted and dropped images are
+     *  stored in (default `attachments`); `false` leaves pasting to the browser. */
+    images?: Partial<ImageOptions>;
+    /** Finds files by name and notes by their text, for the toolbar (the
+     *  command palette) and embedded codeblocks. */
+    search?: FileSearch;
+    /** Creates, moves and deletes files for the toolbar and codeblocks. */
+    files?: FileOperations;
+    /** A model, for prose actions (rewrite, summarize, continue, an
+     *  instruction): icanhaz's `inference` capability, a provider's API, a
+     *  local model. Without it none is offered. */
+    inference?: Inference;
+    /** Every file's version log (a vault's `versions`): loads and saves go
+     *  through it, a save naming the version it was made on; one made on a
+     *  stale version is kept as a conflict copy. Without it, files are read
+     *  and written as they are. */
+    versions?: FileVersions;
+    /** The vault as a tree of folders and files — opt-in: built only when set. */
+    fileTree?: Omit<FileTreeOptions, 'files' | 'subscribe'>;
+    /** Comment threads (the comments RFC). A note's threads are read and
+     *  shown whatever is given here; `false` leaves them in the note unshown.
+     *  The work is not finished and is off for every editor for now
+     *  (`extensions/comments-feature.ts`): until it ships only `author` is
+     *  read, as the vault's identity and whose settings are read. */
+    comments?: CommentsSetupOptions | false;
+    /** The reader's settings (`settings.ts`): files in the editor's
+     *  filesystem (`.settings/`), in scopes, the toolbar's `settings` mode
+     *  and the settings file as code to change them. On by default (in
+     *  memory when there is no filesystem); `false` leaves every choice the
+     *  editor's own. */
+    settings?: SettingsOptions | false;
+    /** The notice over the note when a save was refused for a conflict
+     *  (default on). `false` for an editor that only shows a document. */
+    conflictNotice?: boolean;
 }
+
+export interface CommentsSetupOptions {
+    /** The handle comments are written as. Without it threads are shown,
+     *  not written. */
+    author?: string;
+    /** Comments about the note, wherever they live (a vault's `comments`);
+     *  the editor's own vault's when it made one. */
+    index?: CommentIndex;
+    /** Reactions and resolution, per identity (a vault's `reactions`); the
+     *  editor's own vault's, as `author`, when it made one. */
+    reactions?: Reactions;
+    /** A click on commented text looks at its comment (off by default:
+     *  the comment's mark in the column beside the note is the way to it,
+     *  and a click on the text only places the caret). */
+    openOnClick?: boolean;
+    /** How comments are shown, or `false` for not at all (a host showing
+     *  them its own way reads them from `editor.storage.comments`).
+     *  `layout: 'float'` shows nothing beside the note: a comment opens
+     *  over the note's edge, by its text, from its mark. `layout: 'column'`
+     *  keeps every comment in a column beside the note, level with its
+     *  text; `layout: 'panel'` (the default) in a list beside the note
+     *  that scrolls on its own (`createEditor` makes the column; `mount`
+     *  puts it elsewhere). `inline: false` floats an open comment over the
+     *  note's edge where nothing beside the note shows them, instead of
+     *  standing it within the note under its text. */
+    margin?: { mount?: SidebarOptions['mount']; layout?: CommentLayout; inline?: boolean } | false;
+}
+
+export type LinksOptions = Pick<WikilinkOptions, 'resolver' | 'open'> & {
+    /** The vault's link index: backlinks, dangling links, link-keeping renames. */
+    index?: LinkIndex;
+    /** The links panel (shown when there is an `index`). `false` omits it. */
+    panel?: Omit<LinksPanelOptions, 'index'> | false;
+};
 
 export type MarkdownEditorOptions = Partial<EditorOptions> & MarkdownSetupOptions;
 
@@ -108,6 +214,114 @@ export type MarkdownEditor = Editor & {
     storage: {
         markdown: MarkdownStorage;
     } & Record<string, any>;
+}
+
+/** What the editor reaches the vault through. */
+interface VaultServices {
+    fs?: VfsInterface;
+    search?: FileSearch;
+    files?: FileOperations;
+    resolver?: LinkResolver;
+    versions?: FileVersions;
+    comments?: CommentIndex;
+    reactions?: Reactions;
+    /** Be told when the vault changed. */
+    subscribe?: (listener: () => void) => () => void;
+    /** A vault the editor made for itself, to close with the editor. */
+    owned?: Vault;
+}
+
+/**
+ * The host's vault services, and, for any it left out while giving a
+ * filesystem, a `Vault` of the editor's own over that filesystem. The editor
+ * then writes through the vault's observed filesystem, so its index follows
+ * every save, and the vault follows the store's own changes too (a move made
+ * by the host's link index, a file written by another program), where the
+ * store can report them. A rename keeps links as the host's link index means
+ * them when there is one (the vault's own rewrite would follow different rules).
+ */
+function vaultServices(options: MarkdownSetupOptions): VaultServices {
+    const hostSubscribe = options.links?.index?.subscribe ?? options.links?.resolver?.subscribe;
+    const given: VaultServices = {
+        fs: options.fs?.fs,
+        search: options.search,
+        files: options.files,
+        resolver: options.links?.resolver,
+        versions: options.versions,
+        comments: options.comments ? options.comments.index : undefined,
+        reactions: options.comments ? options.comments.reactions : undefined,
+        subscribe: hostSubscribe,
+    };
+    if (!given.fs || (given.search && given.files && given.resolver)) return given;
+    const vault = new Vault(given.fs, { identity: options.comments ? options.comments.author : undefined });
+    const index: LinkIndex | undefined = options.links?.index;
+    const files = options.files ?? (index ? { ...fileOperations(vault.fs), rename: (a: string, b: string) => index.rename(a, b) } : vault.files);
+    return {
+        fs: vault.fs,
+        search: given.search ?? vault.search,
+        files,
+        resolver: given.resolver ?? vault.links,
+        // Versions only when the host asks: a folder given as `fs` alone gets
+        // no `.vault/` of records it did not ask for.
+        versions: given.versions,
+        comments: given.comments ?? vault.comments,
+        reactions: given.reactions ?? vault.reactions,
+        subscribe: hostSubscribe ?? ((listener) => vault.subscribe(listener)),
+        owned: vault,
+    };
+}
+
+/** Closes the vault the editor made for itself when the editor goes. */
+const ownedVault = (vault: Vault) =>
+    Extension.create({
+        name: 'ownedVault',
+        onDestroy() {
+            vault.close();
+        },
+    });
+
+/** Slash commands for prose actions, offered when there is a model. */
+const proseSlashCommands: SlashCommand[] = [
+    {
+        title: 'Ask AI',
+        description: 'Tell a model what to write here',
+        icon: '✦',
+        command: ({ editor, range }) => editor.chain().focus().deleteRange(range).runProseAction('ask').run(),
+    },
+    {
+        title: 'Continue writing',
+        description: 'A model writes on from here',
+        icon: '✦',
+        command: ({ editor, range }) => editor.chain().focus().deleteRange(range).runProseAction('continue').run(),
+    },
+    {
+        title: 'Summarize note',
+        description: 'A model sums the note up here',
+        icon: '✦',
+        command: ({ editor, range }) => editor.chain().focus().deleteRange(range).runProseAction('summarize').run(),
+    },
+]
+
+/**
+ * `files` whose renames keep the open note consistent: its unsaved edits are
+ * written before links are rewritten (so the rewrite reads them), and it is
+ * re-read afterwards if the rename changed it, so the next save does not put
+ * the old links back. The file tree, the palette and code blocks all rename
+ * through this.
+ */
+function keepingOpenNote(files: FileOperations | undefined, open: () => FileSystemStorage | undefined): FileOperations | undefined {
+    if (!files) return files;
+    return {
+        create: (path, content, options) => files.create(path, content, options),
+        mkdir: (path) => files.mkdir(path),
+        remove: (path) => files.remove(path),
+        async rename(oldPath, newPath) {
+            await open()?.save();
+            const count = await files.rename(oldPath, newPath);
+            await open()?.refresh();
+            return count;
+        },
+    };
 }
 
 /**
@@ -123,24 +337,95 @@ export type MarkdownEditor = Editor & {
  */
 export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[] {
     const { toolbar, blockActions, sidebar } = options;
+    let persistence: FileSystemStorage | undefined;
+    const given = vaultServices(options);
+    const services = { ...given, files: keepingOpenNote(given.files, () => persistence) };
+    const base = Array.isArray(options.slashCommands) ? options.slashCommands : defaultSlashCommands;
+    const commands = [
+        ...base,
+        ...(options.inference ? proseSlashCommands : []),
+    ];
+    // What every editor inside this one (a comment's text in a card, an
+    // embedded note) is built from: this setup without the chrome
+    // around the note. A link followed inside opens in the note's editor.
+    const hostOf = (inner: Editor): Editor | undefined => (inner.storage as any).hostEditor as Editor | undefined;
+    const openInHost = async (resolution: LinkResolution, fragment: string | null, inner: Editor) => {
+        const host = hostOf(inner);
+        if (options.links?.open) return options.links.open(resolution, fragment, host ?? inner);
+        const p = host ? persistenceOf(host) : undefined;
+        if (!host || typeof p?.loadFile !== 'function') return;
+        if (normalizePath(p.options.filepath ?? '') !== normalizePath(resolution.path)) await p.loadFile(resolution.path, { create: !resolution.exists });
+        if (fragment) revealFragment(host, fragment);
+    };
+    const innerSetup = (): AnyExtension[] =>
+        markdownSetup({
+            fs: services.fs ? { fs: services.fs, autoSave: false } : undefined,
+            search: services.search,
+            files: services.files,
+            links: { resolver: services.resolver, open: openInHost },
+            codeblock: options.codeblock,
+            inference: options.inference,
+            frontMatter: false,
+            footnotes: false,
+            callouts: false,
+            toolbar: false,
+            blockActions: false,
+            selectionMenu: false,
+            linkMenu: false,
+            comments: false,
+            conflictNotice: false,
+            fileTree: undefined,
+            sidebar: undefined,
+            settings: false,
+        });
     return [
-        FileSystem.configure(options.fs || {}),
+        ...(given.owned ? [ownedVault(given.owned)] : []),
+        ProseAI.configure({ inference: options.inference }),
+        ...(options.conflictNotice === false ? [] : [ConflictNotice]),
+        FileSystem.configure({
+            ...options.fs,
+            fs: services.fs,
+            versions: services.versions,
+            follow: services.subscribe,
+            bind: (storage) => (persistence = storage),
+            // A settings file opened as code is read with its schema.
+            extensionsFor: (path, editor) => {
+                const settings = settingsOf(editor);
+                return settings && settings.isSettingsFile(path) && !path.endsWith('/schema.json') ? settingsFileExtensions(path, settings.schema) : null;
+            },
+        }),
+        // The reader's settings, over the editor's own (read where each
+        // choice is made). First: what follows may read them as it is made.
+        ...(options.settings !== false
+            ? [Settings.configure({
+                ...options.settings,
+                fs: options.settings?.fs ?? services.fs,
+                user: options.settings?.user ?? (options.comments !== false ? options.comments?.author : undefined),
+            })]
+            : []),
         ExtendedLink.configure({}),
+        ...syntaxExtensions({ ...options, links: { ...options.links, resolver: services.resolver }, embeds: { render: innerSetup } }),
         StarterKit.configure({
-            // Our own code block (extensions/codeblock.ts), bullet list
-            // (extensions/lists.ts, disambiguated dash input), paragraph
-            // (survives blank-line runs across a Markdown round-trip), and link
-            // (extensions/link.ts, click-to-follow + inline editor) replace
-            // StarterKit's — disable those so there are no duplicate-name clashes.
+            // Our own code block (extensions/codeblock.ts), lists
+            // (extensions/lists.ts: markers, letters, kinds switched), paragraph
+            // (survives blank-line runs across a Markdown round-trip), link
+            // (extensions/link.ts, click-to-follow + inline editor), document
+            // (room for front matter) and text (escaping) replace StarterKit's —
+            // disable those so there are no duplicate-name clashes.
             codeBlock: false,
             bulletList: false,
+            orderedList: false,
             paragraph: false,
             link: false,
+            document: false,
+            text: false,
         }),
         Paragraph,
         BulletList,
+        OrderedList,
         OrderedListStart,
         DashListKeymap,
+        ListItemBackspace,
         // Real header anchors: each heading gets a slug `id` (DOM-only, via
         // decorations — never serialized), so an outline can link to `#id`.
         HeadingAnchors,
@@ -154,28 +439,37 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         // Embedded codeblocks soft-wrap by default; opt out (or drop the heavy
         // CodeMirror extension entirely) via `options.codeblock`.
         ...(options.codeblock !== false
-            ? [ExtendedCodeblock.configure({ settings: options.codeblock?.settings ?? {} })]
+            ? [ExtendedCodeblock.configure({
+                settings: options.codeblock?.settings ?? {},
+                standIns: options.codeblock?.standIns ?? false,
+                search: services.search,
+                files: services.files,
+            })]
             : []),
         TaskList,
         ExtendedTaskItem.configure({ nested: true }),
-        TableKit.configure({
-            table: { resizable: true, allowTableNodeSelection: true },
-        }),
+        TableKit.configure({ table: false }),
+        // Columns are not resizable: Markdown keeps no widths, and the
+        // resizing plugin's own table node view makes Tiptap build every
+        // node view (each fence's CodeMirror) a second time when it adds
+        // its plugins after the view is made.
+        MarkdownTable.configure({ resizable: false, allowTableNodeSelection: true }),
         ...(options.slashCommands !== false
-            ? [SlashCommands.configure({
-                commands: Array.isArray(options.slashCommands) ? options.slashCommands : defaultSlashCommands,
-            })]
+            ? [SlashCommands.configure({ commands })]
             : []),
         // Emoji picker: `:` + 2+ chars opens a searchable grid; its ~550KB dataset
         // is dynamically imported on first use (not at editor load).
         ...(options.emoji !== false ? [EmojiPicker] : []),
-        // The toolbar reads its fs/filepath from `options.toolbar` when given,
-        // otherwise falls back to the editor's filesystem so a consumer can
-        // configure just `mount`/`className` and still get a working file search.
+        // The toolbar (also the command palette) reads its fs/filepath from
+        // `options.toolbar` when given, otherwise the editor's filesystem, so a
+        // consumer can configure just `mount`/`className` and still get file
+        // search, file management and the editor's commands.
         ...(toolbar !== false
             ? [Toolbar.configure({
-                fs: toolbar?.fs ?? options.fs?.fs,
-                index: toolbar?.index,
+                fs: toolbar?.fs ?? services.fs,
+                search: toolbar?.search ?? services.search,
+                files: toolbar?.files ?? services.files,
+                commands: toolbar?.commands ?? (options.slashCommands !== false ? commands : []),
                 filepath: toolbar?.filepath ?? options.fs?.filepath,
                 mount: toolbar?.mount,
                 className: toolbar?.className,
@@ -183,10 +477,45 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             })]
             : []),
         ...(blockActions !== false
-            ? [BlockActions.configure({ mount: blockActions?.mount })]
+            ? [BlockActions.configure({ mount: blockActions?.mount }), Folding]
             : []),
         ...(options.selectionMenu !== false ? [SelectionMenu] : []),
         ...(options.linkMenu !== false ? [LinkMenu] : []),
+        // The links panel: whenever the host supplies a link index.
+        ...(options.links?.index && options.links.panel !== false
+            ? [LinksPanel.configure({ ...options.links.panel, index: options.links.index })]
+            : []),
+        // The file tree is opt-in (built only when `fileTree` is set).
+        ...(options.fileTree
+            ? [FileTree.configure({ ...options.fileTree, files: services.files, subscribe: services.subscribe })]
+            : []),
+        // Comments: the note's threads (and those written elsewhere) found and
+        // highlighted, and a margin to read and write them in. Off until the
+        // work ships (comments-feature.ts), whatever the host asked for.
+        ...(commentsEnabled() && options.comments !== false
+            ? [
+                Comments.configure({ author: options.comments?.author, index: services.comments, reactions: services.reactions, openOnClick: options.comments?.openOnClick ?? false }),
+                // Each comment's mark in the annotation column beside the note.
+                CommentMarks,
+                ...(options.comments?.margin !== false
+                    ? [
+                        CommentMargin.configure({
+                            mount: options.comments?.margin?.mount,
+                            layout: options.comments?.margin?.layout ?? 'panel',
+                            inline: options.comments?.margin?.inline,
+                            // A comment is written and shown in this editor, in
+                            // small: the same syntax and code blocks over the
+                            // same files, without the chrome around the note.
+                            composer: innerSetup,
+                        }),
+                        // A comment opened within the note, under its text (comment-inline.ts).
+                        CommentInline,
+                    ]
+                    : []),
+            ]
+            : []),
+        // The rail's fold, when there is a rail to fold (an outline, a file tree).
+        ...(sidebar || options.fileTree ? [RailToggle] : []),
         // The outline is opt-in (generated only when `sidebar` is set).
         ...(sidebar
             ? [Sidebar.configure({
@@ -195,41 +524,6 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
                 title: sidebar.title,
             })]
             : []),
-        ...(options.extensions || []),
-    ];
-}
-
-/**
- * A lean, text-only extension set: the markdown document model + I/O, basic
- * marks, links, lists, tasks, and tables — but none of the heavier chrome (no
- * CodeMirror code blocks, file search, outline, slash/emoji/selection menus, or
- * block actions). Code fences fall back to StarterKit's lightweight code block.
- * The CodeMirror-`minimalSetup` analog; add features back by importing the
- * individual extensions you want.
- */
-export function minimalSetup(options: { extensions?: AnyExtension[] } = {}): AnyExtension[] {
-    return [
-        ExtendedLink.configure({}),
-        StarterKit.configure({
-            // Keep StarterKit's lightweight code block here (no CodeMirror).
-            bulletList: false,
-            paragraph: false,
-            link: false,
-        }),
-        Paragraph,
-        BulletList,
-        OrderedListStart,
-        DashListKeymap,
-        HeadingAnchors,
-        InlineCodeExit,
-        WrapSelection,
-        MarkdownBlockPaste,
-        Markdown.configure(MARKDOWN_OPTIONS),
-        TaskList,
-        ExtendedTaskItem.configure({ nested: true }),
-        TableKit.configure({
-            table: { resizable: true, allowTableNodeSelection: true },
-        }),
         ...(options.extensions || []),
     ];
 }
@@ -259,28 +553,36 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
     let navHost: HTMLElement | undefined
     let gutter: HTMLElement | undefined
     let bodyHost: HTMLElement | undefined
+    let annotations: HTMLElement | undefined
+    let commentsHost: HTMLElement | undefined
     if (userEl && typeof document !== 'undefined') {
-        const make = (cls: string) => {
-            const el = document.createElement('div')
-            el.className = cls
-            return el
-        }
-        const wrapper = make('ezco-mde')
-        toolbarSlot = make('ezco-mde-toolbar-slot')
-        const content = make('ezco-mde-content')
-        navHost = make('ezco-mde-nav')
+        const wrapper = el('div', 'ezco-mde')
+        toolbarSlot = el('div', 'ezco-mde-toolbar-slot')
+        const content = el('div', 'ezco-mde-content')
+        navHost = el('div', 'ezco-mde-nav')
         // The gutter exists only to hold the block-action indicator: with block
         // actions off there is nothing to hold, so the column isn't built at all
         // (a built one keeps its 48px even when empty).
-        if (options.blockActions !== false) gutter = make('ezco-mde-gutter')
-        bodyHost = make('ezco-mde-body-host')
-        content.append(...[navHost, gutter, bodyHost].filter((el): el is HTMLElement => !!el))
+        if (options.blockActions !== false) gutter = el('div', 'ezco-mde-gutter')
+        bodyHost = el('div', 'ezco-mde-body-host')
+        // The annotation column right of the note (comment-gutter.ts): each
+        // comment's mark on the line its text starts on. Neither column is
+        // built while the comments work is off (comments-feature.ts).
+        const comments = commentsEnabled() && options.comments !== false ? options.comments : false
+        if (comments !== false) annotations = el('div', 'ezco-mde-annotations')
+        // A column for comments, right of that: the panel that scrolls on
+        // its own (the default, when there is room past the note's text
+        // column) or a column level with the text. With `layout: 'float'`
+        // comments float over the note's edge and take no room.
+        const layout = comments !== false && comments?.margin !== false ? comments?.margin?.layout ?? 'panel' : undefined
+        if (layout === 'column' || layout === 'panel') commentsHost = el('div', 'ezco-mde-comments')
+        content.append(...[navHost, gutter, bodyHost, annotations, commentsHost].filter((host): host is HTMLElement => !!host))
         wrapper.append(toolbarSlot, content)
         userEl.appendChild(wrapper)
     }
     /** A default `mount` for a piece of chrome → its slot (only when we built
      *  the wrapper). */
-    const slotMount = (el: HTMLElement | undefined) => (el ? () => el : undefined)
+    const slotMount = (slot: HTMLElement | undefined) => (slot ? () => slot : undefined)
 
     // Default the chrome into the wrapper's slots (unless the consumer passed its
     // own `mount`, or opted the piece out with `false`), then build the default
@@ -296,6 +598,17 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         sidebar: options.sidebar
             ? { ...options.sidebar, mount: options.sidebar.mount ?? slotMount(navHost) }
             : undefined,
+        fileTree: options.fileTree
+            ? { ...options.fileTree, mount: options.fileTree.mount ?? slotMount(navHost) }
+            : undefined,
+        comments: options.comments === false
+            ? false
+            : {
+                ...options.comments,
+                margin: options.comments?.margin === false
+                    ? false
+                    : { ...options.comments?.margin, mount: options.comments?.margin?.mount ?? slotMount(commentsHost) },
+            },
     }
 
     // `element` and `extensions` are handled explicitly (extras are folded into
@@ -311,9 +624,15 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
         },
         content: options.content || '',
         onUpdate: options.onUpdate || (() => { }),
+        // The note takes focus when it is made, where its selection is,
+        // unless the host says otherwise (`false`): it is what the host is
+        // for. Passed through as given: `undefined` is what Tiptap focuses
+        // on without moving the selection (`true` would move it to the start).
         autofocus: options.autofocus,
-        editable: options.editable,
-        injectCSS: options.injectCSS,
+        // `editable`, `injectCSS` and the rest come with the consumer's
+        // options below, only when given: passed as `undefined` they would
+        // override Tiptap's defaults (an `editable: undefined` made
+        // `editor.isEditable` false, and every code block read-only).
         ...restOptions,
         // Mount ProseMirror into the wrapper's body host (or the consumer's
         // element if no wrapper was built). With neither (headless), leave
@@ -337,14 +656,44 @@ export function createEditor(options: MarkdownEditorOptions = {}): MarkdownEdito
 // what you use and the rest tree-shakes away (`sideEffects: false`). The setup
 // functions above use these same units.
 export { FileSystem } from './extensions/filesystem';
-export type { FileSystemOptions } from './extensions/filesystem';
+export { ConflictNotice } from './extensions/conflict-notice';
+export { ProseAI, type ProseAIOptions } from './extensions/prose-ai';
+export { openDocuments, type OpenDocuments, type OpenDocument, type TextEdit, type TextRange, type TextPosition, type EditResult } from './extensions/edits';
+export type { FileSystemOptions, FileSystemStorage, FileEvent, LoadOptions } from './extensions/filesystem';
 export { ExtendedLink } from './extensions/link';
+export { Settings, settingsOf, EditorSettingsSchema, editorSettingsJsonSchema } from './settings';
+export type { SettingsOptions, SettingsStorage, EditorSettings, SettingPath } from './settings';
+export { Wikilink, WikilinkKeys, wikilinkLabel } from './extensions/wikilink';
+export { LinksPanel } from './extensions/links-panel';
+export { FrontMatter, FrontMatterDocument, documentId } from './extensions/front-matter';
+export type { FrontMatterOptions } from './extensions/front-matter';
+export { Mathematics, MathInline, MathBlock, katexRenderer } from './extensions/math';
+export type { MathOptions, MathRenderer } from './extensions/math';
+export { FootnoteReference, FootnoteDefinition } from './extensions/footnote';
+export { Span, parseSpanAttributes, formatSpanAttributes, type SpanAttributes } from './extensions/span';
+export { Comments, commentsKey, commentAt, authorOf, commentFileName, commentsFolderFor, RESOLVED, DELETED_BODY } from './extensions/comments';
+export type { CommentsOptions, CommentsStorage, CommentTarget, CommentInfo, WebAnnotation } from './extensions/comments';
+export { CommentMargin, type CommentMarginOptions } from './extensions/comment-margin';
+export { CommentMarks } from './extensions/comment-gutter';
+export { CommentInline } from './extensions/comment-inline';
+export { Callout, CalloutTitle, calloutType } from './extensions/callout';
+export { SourceView } from './extensions/source-view';
+export { MarkdownText } from './extensions/text';
+export { Image, attachImages } from './extensions/image';
+export type { ImageOptions } from './extensions/image';
+export { Embed } from './extensions/embed';
+export { FileTree } from './extensions/file-tree';
+export type { FileTreeOptions } from './extensions/file-tree';
+export type { LinksPanelOptions } from './extensions/links-panel';
+export type { WikilinkOptions, WikilinkStorage } from './extensions/wikilink';
+export { findFragment, revealFragment } from './extensions/fragment';
 export { ExtendedCodeblock, codeblockRegistry } from './extensions/codeblock';
 export type { ExtendedCodeblockOptions } from './extensions/codeblock';
 export { ExtendedTaskItem } from './extensions/taskitem';
 export type { ExtendedTaskItemOptions } from './extensions/taskitem';
 export { Paragraph } from './extensions/paragraph';
-export { BulletList, OrderedListStart, DashListKeymap } from './extensions/lists';
+export { BulletList, OrderedList, OrderedListStart, DashListKeymap, retypeListItem, orderedLabel, letterIndex, ListItemBackspace } from './extensions/lists';
+export type { ListTarget } from './extensions/lists';
 export { HeadingAnchors } from './extensions/heading-anchors';
 export { InlineCodeExit } from './extensions/inline-code';
 export { WrapSelection } from './extensions/wrap-selection';
@@ -360,6 +709,7 @@ export type { ToolbarOptions, ToolbarMount } from './extensions/toolbar';
 export { Sidebar } from './extensions/sidebar';
 export type { SidebarOptions, SidebarMount } from './extensions/sidebar';
 export { BlockActions } from './extensions/block-actions';
+export { Folding, foldsOf, foldAt, type Fold } from './extensions/folding';
 export type { BlockActionsOptions, BlockActionsMount } from './extensions/block-actions';
 export { defaultSlashCommands } from './commands';
 export { slugify, computeHeadingSlugs } from './extensions/slug-utils';

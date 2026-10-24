@@ -29,6 +29,10 @@ pub mod workspace;
 /// a consented filesystem grant (`wasi:filesystem@0.2` has no change notifications).
 pub mod watch;
 
+/// LLM inference through the host's configured providers (`inference.wit`).
+pub mod inference;
+/// The inference backends and their streaming clients.
+pub mod providers;
 /// The daemon's serving layer — every capability on one wRPC server per transport.
 pub mod serve;
 
@@ -40,41 +44,32 @@ pub mod daemon;
 /// the grant is revoked or expires. Shared by terminal / process / watch.
 pub mod session;
 
-/// The consent broker — the NoCap gate (request → consent → scoped grant token).
-pub mod broker;
+#[cfg(test)]
+mod capability_tests;
+#[cfg(test)]
+mod iroh_tests;
+#[cfg(test)]
+#[cfg(test)]
+mod remote_tests;
 
-/// The registry of installed host capabilities (id · emoji · localizable description).
-pub mod capabilities;
+// The broker itself is a library (`icanhaz-broker`), re-exported here so the
+// daemon, the tray app and tests address it as they always did.
+pub use icanhaz_broker::next_connection;
+pub use icanhaz_broker::{
+    approve, broker, capabilities, configuration, configuration_serve, store, AsOrigin, ReqCtx,
+};
 
-/// The consent **surface** — notification + the daemon's loopback approval page
-/// (how a backgrounded daemon collects a decision).
-pub mod approve;
-
-/// Per-connection request context the transports attach at accept time and every
-/// handler receives per invocation. Today it carries the browser-attested
-/// `Origin` (which web app is asking). **Trust caveat:** the `Origin` header is
-/// faithful *only because a browser sets it* (page JS can't forge it) — it labels
-/// the requester, it does not authenticate that the peer is a browser. It feeds
-/// the consent decision; it is not itself the gate. Grows a verified peer
-/// identity for the tailnet path later.
-#[derive(Clone, Debug, Default)]
-pub struct ReqCtx {
-    pub origin: Option<String>,
-}
-
-/// Lets a handler read the requesting origin out of whatever context a given
-/// transport supplies — `ReqCtx` on the origin-bearing WebSocket path, `()`
-/// elsewhere (the loopback test serves, and WebTransport until it carries one).
-pub trait AsOrigin {
-    fn origin(&self) -> Option<&str>;
-}
-impl AsOrigin for () {
-    fn origin(&self) -> Option<&str> {
-        None
-    }
-}
-impl AsOrigin for ReqCtx {
-    fn origin(&self) -> Option<&str> {
-        self.origin.as_deref()
-    }
-}
+/// The component store: capability components a user brings, validated and kept by hash.
+pub mod components;
+pub mod fetch;
+/// The peer path: serving over iroh.
+pub mod iroh;
+/// The resolver's runtime: grants provided through store components (wac-composed wrappers).
+pub mod raw;
+pub mod registry;
+/// Other brokers over iroh: locators, connections, remote redemption.
+pub mod remote;
+/// Scaffolds for authoring capabilities (`icanhaz capability new|wrap`).
+pub mod scaffold;
+/// The multiplexed WebSocket client a native program uses to talk to a daemon.
+pub mod ws_client;

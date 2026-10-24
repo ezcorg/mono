@@ -44,8 +44,9 @@ describe('Multi-view file sync (e2e)', () => {
         await page.evaluate(() => {
             const { viewA } = (window as any).__views;
             const bus = (window as any).__fileChangeBus;
+            const fs = (window as any).__fs;
             viewA.dispatch({ changes: { from: 0, to: viewA.state.doc.length, insert: 'changed from A' } });
-            bus.notify('shared.txt', 'changed from A', viewA);
+            bus.notify(fs, 'shared.txt', 'changed from A', viewA);
         });
 
         // B should receive the update synchronously via the bus
@@ -62,8 +63,9 @@ describe('Multi-view file sync (e2e)', () => {
         await page.evaluate(() => {
             const { viewB } = (window as any).__views;
             const bus = (window as any).__fileChangeBus;
+            const fs = (window as any).__fs;
             viewB.dispatch({ changes: { from: 0, to: viewB.state.doc.length, insert: 'changed from B' } });
-            bus.notify('shared.txt', 'changed from B', viewB);
+            bus.notify(fs, 'shared.txt', 'changed from B', viewB);
         });
 
         const textA = await page.$eval('#editor-a .cm-content', el => el.textContent);
@@ -76,14 +78,15 @@ describe('Multi-view file sync (e2e)', () => {
         const result = await page.evaluate(() => {
             const { viewA, viewB } = (window as any).__views;
             const bus = (window as any).__fileChangeBus;
+            const fs = (window as any).__fs;
 
             // Set up tracking
             let aReceived = false;
             let bReceived = false;
-            const unsubA = bus.subscribe('track.txt', viewA, () => { aReceived = true; });
-            const unsubB = bus.subscribe('track.txt', viewB, () => { bReceived = true; });
+            const unsubA = bus.subscribe(fs, 'track.txt', viewA, () => { aReceived = true; });
+            const unsubB = bus.subscribe(fs, 'track.txt', viewB, () => { bReceived = true; });
 
-            bus.notify('track.txt', 'test', viewA);
+            bus.notify(fs, 'track.txt', 'test', viewA);
 
             unsubA();
             unsubB();
@@ -102,17 +105,18 @@ describe('Multi-view file sync (e2e)', () => {
         const result = await page.evaluate(() => {
             const { viewA, viewB } = (window as any).__views;
             const bus = (window as any).__fileChangeBus;
+            const fs = (window as any).__fs;
 
             let notifyCount = 0;
             const originalNotify = bus.notify.bind(bus);
-            bus.notify = function(path: string, content: string, source: any) {
+            bus.notify = function(fs: any, path: string, content: string, source: any) {
                 notifyCount++;
-                originalNotify(path, content, source);
+                originalNotify(fs, path, content, source);
             };
 
             // Simulate: A edits, then "saves" (notify)
             viewA.dispatch({ changes: { from: 0, to: viewA.state.doc.length, insert: 'final content' } });
-            bus.notify('shared.txt', 'final content', viewA);
+            bus.notify(fs, 'shared.txt', 'final content', viewA);
 
             // Restore
             bus.notify = originalNotify;

@@ -1,0 +1,53 @@
+package icanhaz:nocap@0.1.0;
+
+/// Declared configuration as a service. A host on this machine (witmproxy,
+/// for its plugins) declares what one of its parts asks the user for, as an
+/// `ezco:ezcap/forms` schema; the icanhaz tray app renders it beside every
+/// other capability's; the values land in the daemon's store under the
+/// declaration's owner prefix; the declaring host reads them back, secrets
+/// included, since it is their consumer. Local hosts only: a browser origin
+/// is refused every call.
+interface configuration {
+  use ezco:ezcap/forms@0.1.0.{ input-schema, user-input };
+
+  record declared {
+    /// Whose configuration this is (`witmproxy:@ezco/noshorts`). The tray
+    /// groups by it; a name the daemon's own capabilities use is refused.
+    capability: string,
+    /// What one instance is called (`backend`, `configuration`).
+    instance-noun: string,
+    /// Where instances live in the store (`witmproxy/@ezco/noshorts/`).
+    owner-prefix: string,
+    /// Exactly one instance (a plugin's settings) rather than a named set
+    /// (inference backends). The tray shows one form, no name.
+    single: bool,
+    fields: list<input-schema>,
+    /// Shown with the form.
+    description: option<string>,
+  }
+
+  record instance {
+    name: string,
+    values: list<user-input>,
+  }
+
+  record snapshot {
+    /// Changes on every write under the prefix; poll it to notice edits.
+    revision: u64,
+    instances: list<instance>,
+  }
+
+  /// Register or refresh a schema. Idempotent.
+  declare: func(declared: declared) -> result<_, string>;
+
+  /// Withdraw a schema; its instances stay in the store.
+  undeclare: func(capability: string) -> result<bool, string>;
+
+  /// Every instance under `owner-prefix`, values unmasked, and the revision.
+  configured: func(owner-prefix: string) -> result<snapshot, string>;
+}
+
+world configuration-wrpc {
+  import configuration;
+  export configuration;
+}

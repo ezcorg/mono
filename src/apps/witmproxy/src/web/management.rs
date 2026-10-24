@@ -6,7 +6,13 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tracing::warn;
 
+use std::sync::Arc;
+
 use crate::db::tenants::{self, Group, Tenant};
+use crate::policy::{Origin, Policy, PolicyDoc};
+use crate::proxy::egress::Egress;
+use crate::proxy::tenant_resolver::TenantResolver;
+use crate::web::AppState;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -17,6 +23,57 @@ fn db(depot: &mut Depot) -> Result<SqlitePool, StatusError> {
         .obtain::<SqlitePool>()
         .cloned()
         .map_err(|e| crate::web::internal_error("Database not available", e))
+}
+
+/// Drop the plugin registry's cached view of a tenant's plugin policy, so an
+/// edit made here is seen on the tenant's next event rather than when the
+/// cache expires. Nothing to do when the plugin system is off.
+fn forget_tenant_policy(depot: &mut Depot, tenant_id: &str) {
+    if let Ok(state) = depot.obtain::<AppState>()
+        && let Some(registry) = &state.plugin_registry
+    {
+        registry.invalidate_tenant_policy(tenant_id);
+    }
+}
+
+/// Drop the tenant resolver's cached answer for `ip`, so a mapping added or
+/// removed here decides the address's very next connection. Without this a
+/// client that gets the address next would be dispatched, for the length of
+/// the cache, as the tenant that used to have it.
+async fn forget_ip(depot: &mut Depot, ip: &str) {
+    if let Ok(ip) = ip.parse::<std::net::IpAddr>()
+        && let Ok(resolver) = depot.obtain::<Arc<dyn TenantResolver>>()
+    {
+        resolver.forget_ip(ip).await;
+    }
+}
+
+/// Drop the tenant resolver's cached answers for every address of `tenant_id`.
+async fn forget_tenant(depot: &mut Depot, tenant_id: &str) {
+    if let Ok(resolver) = depot.obtain::<Arc<dyn TenantResolver>>() {
+        resolver.forget_tenant(tenant_id).await;
+    }
+}
+
+fn egress(depot: &mut Depot) -> Result<Arc<Egress>, StatusError> {
+    depot
+        .obtain::<Arc<Egress>>()
+        .cloned()
+        .map_err(|e| crate::web::internal_error("Policy not available", e))
+}
+
+fn conflict(brief: &'static str) -> StatusError {
+    StatusError::from_code(StatusCode::CONFLICT)
+        .unwrap_or_else(StatusError::internal_server_error)
+        .brief(brief)
+}
+
+/// Whether a database error is SQLite refusing a duplicate key.
+fn is_unique_violation(e: &anyhow::Error) -> bool {
+    matches!(
+        e.downcast_ref::<sqlx::Error>(),
+        Some(sqlx::Error::Database(db)) if db.is_unique_violation()
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -73,6 +130,77 @@ pub async fn get_tenant(
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
+pub struct CreateTenantRequest {
+    /// The tenant's id, the handle every other tenant endpoint takes.
+    /// Generated (a UUID) when absent.
+    pub id: Option<String>,
+    pub display_name: String,
+    pub email: Option<String>,
+}
+
+/// POST /api/manage/tenants -- create a tenant.
+///
+/// Unlike `/api/auth/register`, this is an operator's act: the tenant is
+/// enabled at once and has no password (it is addressed by IP mapping, or
+/// given credentials later). 409 when the id or the email is taken.
+#[endpoint(security(("bearer" = [])), status_codes(201, 400, 401, 403, 409, 500))]
+pub async fn create_tenant(
+    body: JsonBody<CreateTenantRequest>,
+    depot: &mut Depot,
+    res: &mut Response,
+) -> Result<Json<TenantResponse>, StatusError> {
+    let pool = db(depot)?;
+    let body = body.into_inner();
+    if body.display_name.trim().is_empty() {
+        return Err(StatusError::bad_request().brief("display_name must not be empty"));
+    }
+    let id = match body.id.map(|id| id.trim().to_string()) {
+        Some(id) if !id.is_empty() => id,
+        _ => uuid::Uuid::new_v4().to_string(),
+    };
+    let email = body
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|e| !e.is_empty());
+
+    match Tenant::by_id(&pool, &id).await {
+        Ok(Some(_)) => return Err(conflict("A tenant with that id already exists")),
+        Ok(None) => {}
+        Err(e) => {
+            warn!("Failed to look up tenant: {}", e);
+            return Err(StatusError::internal_server_error().brief("Internal error"));
+        }
+    }
+
+    match Tenant::create(
+        &pool,
+        &id,
+        body.display_name.trim(),
+        email,
+        None,
+        None,
+        None,
+    )
+    .await
+    {
+        Ok(tenant) => {
+            res.status_code(StatusCode::CREATED);
+            Ok(Json(TenantResponse::from(tenant)))
+        }
+        // The lookup above and this insert are not one transaction; a
+        // duplicate that lands between them is still a duplicate.
+        Err(e) if is_unique_violation(&e) => {
+            Err(conflict("A tenant with that id or email already exists"))
+        }
+        Err(e) => {
+            warn!("Failed to create tenant: {}", e);
+            Err(StatusError::internal_server_error().brief("Internal error"))
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
 pub struct UpdateTenantRequest {
     pub display_name: Option<String>,
     pub enabled: Option<bool>,
@@ -89,11 +217,16 @@ pub async fn update_tenant(
     let body = body.into_inner();
     let tenant_id = id.into_inner();
 
-    if let Some(enabled) = body.enabled
-        && let Err(e) = Tenant::update_enabled(&pool, &tenant_id, enabled).await
-    {
-        warn!("Failed to update tenant: {}", e);
-        return Err(StatusError::internal_server_error().brief("Internal error"));
+    if let Some(enabled) = body.enabled {
+        if let Err(e) = Tenant::update_enabled(&pool, &tenant_id, enabled).await {
+            warn!("Failed to update tenant: {}", e);
+            return Err(StatusError::internal_server_error().brief("Internal error"));
+        }
+        // A disabled tenant gets the global plugin policy; an enabled one
+        // gets its own back. Its connections are re-resolved, since the
+        // resolver answers anonymous for a disabled tenant.
+        forget_tenant_policy(depot, &tenant_id);
+        forget_tenant(depot, &tenant_id).await;
     }
 
     if let Some(ref display_name) = body.display_name
@@ -125,8 +258,14 @@ pub async fn delete_tenant(
     res: &mut Response,
 ) -> Result<&'static str, StatusError> {
     let pool = db(depot)?;
-    match Tenant::delete(&pool, &id.into_inner()).await {
+    let tenant_id = id.into_inner();
+    match Tenant::delete(&pool, &tenant_id).await {
         Ok(true) => {
+            forget_tenant_policy(depot, &tenant_id);
+            forget_tenant(depot, &tenant_id).await;
+            if let Ok(egress) = depot.obtain::<Arc<Egress>>() {
+                egress.remove_tenant(&tenant_id);
+            }
             res.status_code(StatusCode::OK);
             Ok("Tenant deleted")
         }
@@ -333,6 +472,9 @@ pub async fn add_group_permission(
     if body.effect != "grant" && body.effect != "deny" {
         return Err(StatusError::bad_request().brief("Effect must be 'grant' or 'deny'"));
     }
+    if let Err(e) = crate::acl::ResourcePattern::parse(&body.resource) {
+        return Err(StatusError::bad_request().brief(format!("resource: {e}")));
+    }
 
     let permission_id = uuid::Uuid::new_v4().to_string();
 
@@ -397,10 +539,11 @@ pub async fn set_tenant_plugin_enabled(
 ) -> Result<&'static str, StatusError> {
     let pool = db(depot)?;
     let body = body.into_inner();
+    let tenant_id = id.into_inner();
 
     tenants::set_plugin_override(
         &pool,
-        &id.into_inner(),
+        &tenant_id,
         &ns.into_inner(),
         &name.into_inner(),
         Some(body.enabled),
@@ -410,6 +553,7 @@ pub async fn set_tenant_plugin_enabled(
         warn!("Failed to set plugin override: {}", e);
         StatusError::internal_server_error().brief(format!("Failed: {}", e))
     })?;
+    forget_tenant_policy(depot, &tenant_id);
 
     Ok("Plugin override set")
 }
@@ -449,6 +593,7 @@ pub async fn set_tenant_plugin_config(
             StatusError::internal_server_error().brief(format!("Failed: {}", e))
         })?;
     }
+    forget_tenant_policy(depot, &tenant_id);
 
     Ok("Plugin config updated")
 }
@@ -506,6 +651,7 @@ pub async fn add_ip_mapping(
             warn!("Failed to add IP mapping: {}", e);
             StatusError::internal_server_error().brief(format!("Failed: {}", e))
         })?;
+    forget_ip(depot, &body.ip_address).await;
 
     res.status_code(StatusCode::CREATED);
     Ok("IP mapping added")
@@ -527,8 +673,91 @@ pub async fn remove_ip_mapping(
             warn!("Failed to remove IP mapping: {}", e);
             StatusError::internal_server_error().brief(format!("Failed: {}", e))
         })?;
+    forget_ip(depot, &body.ip_address).await;
 
     Ok("IP mapping removed")
+}
+
+// ---------------------------------------------------------------------------
+// Tenant egress policy endpoints
+// ---------------------------------------------------------------------------
+
+/// GET /api/manage/tenants/:id/policy -- the tenant's egress policy as it
+/// was written; 404 when the tenant has none (and is judged by the
+/// instance's policy alone).
+#[endpoint(security(("bearer" = [])), status_codes(200, 401, 403, 404, 500))]
+pub async fn get_tenant_policy(
+    id: PathParam<String>,
+    depot: &mut Depot,
+) -> Result<Json<PolicyDoc>, StatusError> {
+    let pool = db(depot)?;
+    let tenant_id = id.into_inner();
+    let json = tenants::get_policy(&pool, &tenant_id)
+        .await
+        .map_err(|e| crate::web::internal_error("Failed to read tenant policy", e))?
+        .ok_or_else(|| StatusError::not_found().brief("Tenant has no policy"))?;
+    let doc: PolicyDoc = serde_json::from_str(&json)
+        .map_err(|e| crate::web::internal_error("Stored tenant policy is unreadable", e))?;
+    Ok(Json(doc))
+}
+
+/// PUT /api/manage/tenants/:id/policy -- set the tenant's egress policy: the
+/// rules about its own traffic (`src` is `self`), its `default`, its sets
+/// and checks. Compiled and checked against the instance's policy before
+/// anything is stored; a document that fails is refused with the reason, and
+/// the tenant keeps the policy it had. Binds the proxy's next dial.
+#[endpoint(security(("bearer" = [])), status_codes(200, 400, 401, 403, 404, 500))]
+pub async fn set_tenant_policy(
+    id: PathParam<String>,
+    body: JsonBody<PolicyDoc>,
+    depot: &mut Depot,
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
+    let egress = egress(depot)?;
+    let tenant_id = id.into_inner();
+    let doc = body.into_inner();
+
+    match Tenant::by_id(&pool, &tenant_id).await {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err(StatusError::not_found().brief("Tenant not found")),
+        Err(e) => return Err(crate::web::internal_error("Failed to read tenant", e)),
+    }
+
+    let policy = Policy::compile(&doc, Origin::Tenant(tenant_id.clone()))
+        .map_err(|e| StatusError::bad_request().brief(e.to_string()))?;
+    policy
+        .validate(Some(egress.floor()))
+        .map_err(|e| StatusError::bad_request().brief(e.to_string()))?;
+
+    let json = serde_json::to_string(&doc)
+        .map_err(|e| crate::web::internal_error("Failed to encode policy", e))?;
+    tenants::set_policy(&pool, &tenant_id, &json)
+        .await
+        .map_err(|e| crate::web::internal_error("Failed to store tenant policy", e))?;
+    egress.set_tenant(&tenant_id, policy);
+    Ok("Tenant policy set")
+}
+
+/// DELETE /api/manage/tenants/:id/policy -- the tenant is judged by the
+/// instance's policy alone again.
+#[endpoint(security(("bearer" = [])), status_codes(200, 401, 403, 404, 500))]
+pub async fn delete_tenant_policy(
+    id: PathParam<String>,
+    depot: &mut Depot,
+) -> Result<&'static str, StatusError> {
+    let pool = db(depot)?;
+    let tenant_id = id.into_inner();
+    let removed = tenants::remove_policy(&pool, &tenant_id)
+        .await
+        .map_err(|e| crate::web::internal_error("Failed to remove tenant policy", e))?;
+    if let Ok(egress) = depot.obtain::<Arc<Egress>>() {
+        egress.remove_tenant(&tenant_id);
+    }
+    if removed {
+        Ok("Tenant policy removed")
+    } else {
+        Err(StatusError::not_found().brief("Tenant has no policy"))
+    }
 }
 
 // ---------------------------------------------------------------------------

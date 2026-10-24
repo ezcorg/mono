@@ -1,0 +1,21 @@
+[package]
+name = "wrpc-transport-iroh"
+version = "0.1.0"
+edition = "2024"
+publish = false
+license = "MIT"
+description = "wRPC transport adapter over iroh QUIC bi-streams (Invoke/Serve + framing). Vendored from djt (crates/wrpc-transport-iroh) against the mono's vendored wrpc-transport; the QUIC-authenticated remote endpoint id is the per-connection context."
+
+[dependencies]
+anyhow = "1"
+bytes = "1"
+iroh = "1"
+tracing = "0.1"
+wrpc-transport = { path = "../wrpc/crates/transport" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+
+[lints]
+workspace = true

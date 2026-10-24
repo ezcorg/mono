@@ -1,32 +1,33 @@
 import { createCodeblock, fileChangeBus } from "../../editor";
-import { Vfs } from "../../utils/fs";
-import { SearchIndex } from "../../utils/search";
+import { browserVfs } from "@joinezco/storage/browser";
+import { Vault } from "@joinezco/vault";
 
 async function init() {
     // Use FSA (OPFS) directly — SharedWorker hangs in headless Chrome.
-    const fs = await Vfs.worker(undefined, `codeblock-test-multiview-${Date.now()}`);
-    const index = await SearchIndex.get(fs, '.codeblock/index.json');
+    // The vault indexes the store for the toolbar's search; editors write through its fs.
+    const vault = new Vault(await browserVfs(`codeblock-test-multiview-${Date.now()}`));
+    const { fs, search, files } = vault;
 
     const parentA = document.getElementById('editor-a') as HTMLDivElement;
     const parentB = document.getElementById('editor-b') as HTMLDivElement;
 
     // Create editors with initial content (not filepath) to avoid VFS read timing issues
     const viewA = createCodeblock({
-        parent: parentA, fs, content: 'hello world', language: 'md', toolbar: true, index, cwd: '/',
+        parent: parentA, fs, content: 'hello world', language: 'md', toolbar: true, search, files, cwd: '/',
     });
 
     const viewB = createCodeblock({
-        parent: parentB, fs, content: 'hello world', language: 'md', toolbar: true, index, cwd: '/',
+        parent: parentB, fs, content: 'hello world', language: 'md', toolbar: true, search, files, cwd: '/',
     });
 
     // Manually subscribe both to the same file for sync testing
-    // Use 'shared.txt' to match what the tests notify on
-    fileChangeBus.subscribe('shared.txt', viewA, (content) => {
+    // Use 'shared.txt' to match what the tests notify on; the bus is the vault's filesystem's.
+    fileChangeBus.subscribe(fs, 'shared.txt', viewA, (content) => {
         if (viewA.state.doc.toString() !== content) {
             viewA.dispatch({ changes: { from: 0, to: viewA.state.doc.length, insert: content } });
         }
     });
-    fileChangeBus.subscribe('shared.txt', viewB, (content) => {
+    fileChangeBus.subscribe(fs, 'shared.txt', viewB, (content) => {
         if (viewB.state.doc.toString() !== content) {
             viewB.dispatch({ changes: { from: 0, to: viewB.state.doc.length, insert: content } });
         }
@@ -35,6 +36,7 @@ async function init() {
     // Expose to window for test access
     (window as any).__views = { viewA, viewB };
     (window as any).__fileChangeBus = fileChangeBus;
+    (window as any).__fs = fs;
     (window as any).__editorsReady = true;
 }
 
