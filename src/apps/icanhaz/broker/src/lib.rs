@@ -26,6 +26,8 @@ pub mod configuration_serve;
 #[cfg(test)]
 mod scoped_tests;
 pub mod store;
+#[cfg(test)]
+mod wit_tests;
 
 /// Per-connection request context the transports attach at accept time and every
 /// handler receives per invocation. It carries the browser-attested `Origin`
