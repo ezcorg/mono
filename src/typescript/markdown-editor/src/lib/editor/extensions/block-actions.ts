@@ -4,8 +4,9 @@ import type { EditorView } from '@tiptap/pm/view'
 import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { caretRect, menuPopover, type Popover } from '../ui/popover'
 import { ContextMenu, sectioned, type ContextMenuEntry } from '../ui/context-menu'
-import { foldsOf, type Fold } from './folding'
+import { foldAt, foldsOf, type Fold } from './folding'
 import { CALLOUT_KINDS, calloutIcon, calloutType } from './callout'
+import { codeRunAt } from './code-runs'
 import { button, el, labelled, pressable } from '../ui/dom'
 import { observeResize, rafThrottle, resolveMount, type Mount } from '../ui/layout'
 
@@ -408,7 +409,10 @@ export function actionsForNode(node: PMNode, editor?: Editor): BlockAction[] {
             section: BLOCK,
             run: ({ editor, pos, node }) => {
                 const { doc } = editor.state
-                const selection = node.isLeaf || node.isAtom ? NodeSelection.create(doc, pos) : TextSelection.between(doc.resolve(pos + 1), doc.resolve(pos + node.nodeSize - 1))
+                // A code block's group is commented on whole (code-runs.ts).
+                const run = node.type.name === 'ezcodeBlock' ? codeRunAt(doc, pos) : null
+                const span = run ? { from: run.from, to: run.to } : { from: pos, to: pos + node.nodeSize }
+                const selection = node.isLeaf || node.isAtom ? NodeSelection.create(doc, pos) : TextSelection.between(doc.resolve(span.from + 1), doc.resolve(span.to - 1))
                 editor.view.dispatch(editor.state.tr.setSelection(selection))
                 editor.commands.startComment()
             },
@@ -630,10 +634,15 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
                     label: 'Copy contents',
                     icon: '⎘',
                     section: 'Code',
-                    run: ({ node }) => {
-                        if (typeof navigator !== 'undefined' && navigator.clipboard) {
-                            navigator.clipboard.writeText(node.textContent).catch(() => { })
-                        }
+                    // A lone block's code; a group's fences as written, so
+                    // each file keeps its name (code-runs.ts).
+                    run: ({ editor, pos, node }) => {
+                        if (typeof navigator === 'undefined' || !navigator.clipboard) return
+                        const run = codeRunAt(editor.state.doc, pos)
+                        const text = run && run.blocks.length > 1
+                            ? (editor.storage as { markdown?: { serializer?: { serialize(doc: PMNode): string } } }).markdown?.serializer?.serialize(editor.state.doc.cut(run.from, run.to)) ?? node.textContent
+                            : node.textContent
+                        navigator.clipboard.writeText(text).catch(() => { })
                     },
                 },
                 remove,
@@ -749,6 +758,16 @@ class BlockActionsView {
 
         pressable(this.btn, (_, e) => {
             e.preventDefault()
+            // The indicator stands over the active block's glyph. When that
+            // block is a fold's head, the glyph is the fold's chevron, and a
+            // press there opens the fold (as a press on the chevron of any
+            // other fold does), not the menu.
+            const fold = this.activePos >= 0 ? foldAt(this.view.state, this.activePos) : null
+            if (fold && fold.from === this.activePos) {
+                this.editor.commands.unfold(fold.from)
+                this.editor.view.focus()
+                return
+            }
             // Anchor the dropdown to the click's viewport Y so the menu
             // opens near where the user clicked, rather than always at
             // the icon at the top of the button. For tall blocks (long
@@ -843,7 +862,9 @@ class BlockActionsView {
             icon.dataset.blockType = entry.type
             if (icon.dataset.glyph !== entry.glyph) {
                 icon.dataset.glyph = entry.glyph
-                if (entry.glyph.startsWith('<')) icon.innerHTML = entry.glyph
+                // Drawn glyphs are markup (an `<svg`, a `<span`); `</>`, a
+                // code block's, opens no tag and is text.
+                if (/^<[a-z]/i.test(entry.glyph)) icon.innerHTML = entry.glyph
                 else icon.textContent = entry.glyph
             }
             const title = entry.fold ? 'Unfold' : 'Block actions'

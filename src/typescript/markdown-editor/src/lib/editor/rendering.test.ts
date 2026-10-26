@@ -333,7 +333,9 @@ describe('The note rendered, every block kind and a comment', () => {
             record('toolbar input', themed(toolbar!.querySelector('.cm-toolbar-input'), allowed, 'the toolbar input'))
             // A code block's editor, not the front matter's (folded, that one
             // has no surface of its own by design).
-            const code = container.querySelector('.ezco-mde-body > .cm-editor') as HTMLElement
+            // The code's surface is the scroller: the block itself is bare
+            // behind its tabs (styles.ts, "Code blocks as embedded windows").
+            const code = container.querySelector('.ezco-mde-body > .cm-editor .cm-scroller') as HTMLElement
             colours['code background'] = getComputedStyle(code).backgroundColor
             cancel.click()
             await waitFor(() => !container.querySelector('.ezco-mde-comment-card.is-draft'), 3000)

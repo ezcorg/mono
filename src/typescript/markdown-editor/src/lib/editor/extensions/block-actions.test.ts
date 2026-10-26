@@ -641,6 +641,17 @@ describe('Block actions', () => {
         expect(ellipsis()!.title).toBe('Unfold')
         // The gutter marks the head with a chevron.
         expect(glyphs(container).map((g) => (g.classList.contains('is-fold') ? 'chevron' : g.querySelector('svg') ? 'drawn' : g.textContent))).toEqual(['H1', 'chevron', 'drawn', 'drawn'])
+        // The head is the active block, so the indicator stands over its
+        // chevron: a press there opens the fold, not the block's menu.
+        const indicator = container.querySelector('.ezco-mde-block-action-btn') as HTMLButtonElement
+        await waitFor(() => indicator.style.opacity === '1', 2000)
+        indicator.click()
+        await frames()
+        expect(mark()).toBeNull()
+        expect(menu()).toBeNull()
+        expect(paragraphs()[0].classList.contains('ezco-mde-fold-head')).toBe(false)
+        runAction(editor, 'paragraph', 'Fold')
+        await frames()
         ellipsis()!.click()
         await frames()
         expect(mark()).toBeNull()

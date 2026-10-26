@@ -241,19 +241,21 @@ describe('A code block, used', () => {
         const { editor, container } = openNote({ content: USED })
         await ready(container)
         const cm = cmOf(container)
+        // The code's surface is the scroller (the block is bare behind its tabs).
+        const surface = (el: HTMLElement) => getComputedStyle(el.querySelector('.cm-scroller') as HTMLElement).backgroundColor
         const token = () => computed(getComputedStyle(cm).getPropertyValue('--cm-background').trim())
-        await waitFor(() => getComputedStyle(cm).backgroundColor === token(), 2000)
-        const light = getComputedStyle(cm).backgroundColor
+        await waitFor(() => surface(cm) === token(), 2000)
+        const light = surface(cm)
         document.documentElement.setAttribute('data-theme', 'dark')
         expect(editor.commands.setCodeblockTheme({ dark: true })).toBe(true)
         await waitFor(() => cm.getAttribute('data-theme') === 'dark', 2000)
-        const dark = getComputedStyle(cm).backgroundColor
+        const dark = surface(cm)
         expect(dark).not.toBe(light)
         expect(dark).toBe(token())
         // A block made while the root is dark starts dark.
         const second = openNote({ content: USED })
         await ready(second.container)
-        await waitFor(() => getComputedStyle(cmOf(second.container)).backgroundColor === dark, 2000)
+        await waitFor(() => surface(cmOf(second.container)) === dark, 2000)
         expect(cmOf(second.container).getAttribute('data-theme')).toBe('dark')
     })
 })

@@ -25,6 +25,7 @@ import { WrapSelection } from './extensions/wrap-selection';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions, BlockActionsOptions } from './extensions/block-actions';
 import { Folding } from './extensions/folding';
+import { CodeTabs } from './extensions/code-tabs';
 import { SelectionMenu } from './extensions/selection-menu';
 import { Sidebar, SidebarOptions } from './extensions/sidebar';
 import { BulletList, OrderedList, OrderedListStart, DashListKeymap, ListItemBackspace, TaskList } from './extensions/lists';
@@ -443,6 +444,8 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         // A path typed after a backtick, or as a link's destination, is
         // completed from the vault's files.
         ...(options.pathComplete !== false ? [PathComplete] : []),
+        // Adjacent fences as one window with tabs (extensions/code-tabs.ts).
+        CodeTabs,
         // Wrap a non-empty selection on ` (inline code) / [ (brackets).
         WrapSelection,
         // Must come before `Markdown` so our higher-priority clipboardTextParser
@@ -725,6 +728,8 @@ export { Sidebar } from './extensions/sidebar';
 export type { SidebarOptions, SidebarMount } from './extensions/sidebar';
 export { BlockActions } from './extensions/block-actions';
 export { Folding, foldsOf, foldAt, type Fold } from './extensions/folding';
+export { CodeTabs, codeTabsAt, activeBlockOf, isHiddenCodeTab, keepApartFromCodeAbove } from './extensions/code-tabs';
+export { codeRuns, codeRunAt, type CodeRun } from './extensions/code-runs';
 export type { BlockActionsOptions, BlockActionsMount } from './extensions/block-actions';
 export { defaultSlashCommands } from './commands';
 export { slugify, computeHeadingSlugs } from './extensions/slug-utils';

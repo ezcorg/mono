@@ -1,4 +1,6 @@
 import { SlashCommand } from '../extensions/slash-commands'
+import type { Transaction } from '@tiptap/pm/state'
+import { keepApartFromCodeAbove } from '../extensions/code-tabs'
 
 /**
  * Default slash-command palette for the markdown editor.
@@ -55,12 +57,18 @@ export const defaultSlashCommands: SlashCommand[] = [
         title: 'Code block',
         description: 'A formatted block of code',
         icon: '</>',
+        // Apart from a code block above it: the block's own "+" joins its
+        // group (code-tabs.ts).
         command: ({ editor, range }) =>
             editor
                 .chain()
                 .focus()
                 .deleteRange(range)
                 .insertContent({ type: 'ezcodeBlock', attrs: { language: '' } })
+                .command(({ tr }: { tr: Transaction }) => {
+                    keepApartFromCodeAbove(tr)
+                    return true
+                })
                 .run(),
     },
     {

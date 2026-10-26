@@ -996,8 +996,14 @@ export const styleModule: StyleModule = new StyleModule({
         'max-height': '1lh',
         overflow: 'hidden',
     },
-    '.ezco-mde-body > .cm-editor.ezco-mde-fold-head, .ezco-mde-body > .tableWrapper.ezco-mde-fold-head': {
+    // Padded blocks are not cut by height (the cut falls inside the
+    // padding, and a sliver of the second line shows in it): a code block
+    // loses its scroller, a table its other rows, a callout its body.
+    '.ezco-mde-body > .cm-editor.ezco-mde-fold-head, .ezco-mde-body > .tableWrapper.ezco-mde-fold-head, .ezco-mde-body > .ezco-mde-callout.ezco-mde-fold-head': {
         'max-height': 'none',
+    },
+    '.ezco-mde-body > .ezco-mde-callout.ezco-mde-fold-head > .ezco-mde-callout-content > :not(.ezco-mde-callout-title)': {
+        display: 'none',
     },
     // (`!important`: CodeMirror's own base theme makes the scroller a flex box with one.)
     '.ezco-mde-body > .cm-editor.ezco-mde-fold-head .cm-scroller': {
@@ -1039,6 +1045,161 @@ export const styleModule: StyleModule = new StyleModule({
         color: 'var(--ezco-mde-fg)',
         background: 'color-mix(in srgb, var(--ezco-mde-accent) 18%, var(--ezco-mde-code-bg))',
         outline: 'none',
+    },
+    // ─────────────────────────────────────────────────────────────
+    // Code blocks as embedded windows with tabs (extensions/code-tabs.ts).
+    // A bar along the top holds the group's tabs: each a fence of the
+    // group, its icon and name, with a close button; the active tab is the
+    // toolbar's field (a press on the name opens the dropdown), on the
+    // code's own surface and joined to the code area under it; the others
+    // stand on a tint, shorter, muted, until pointed at; "+" after the last
+    // adds a fence to the group. The bar itself is bare: only the tabs have
+    // a surface and a hairline, and the code area under them has its own
+    // (square at the corner the first tab stands on). A group's hidden
+    // blocks are not drawn at all. For fences in the note only: the front
+    // matter's editor and the code host are not windows.
+    //
+    // One column for the tab's glyph, the rows' icons and the line
+    // numbers, and one for the tab's text, the rows' labels and the code:
+    // the toolbar's gutter layout, kept. The active tab's left end lies
+    // under the icon column (a negative margin), so the glyph keeps its
+    // place whether it is the file's icon or the search's, which differ in
+    // width; the tabs before it push it right together with the column. The
+    // dropdown hangs from the active tab (`--cm-toolbar-tab-left`), its
+    // rows' icon columns the gutter's.
+    // ─────────────────────────────────────────────────────────────
+    '.ezco-mde .ezco-mde-body > .cm-editor': {
+        '--ezco-mde-cb-tab-border': 'var(--ezco-mde-context-menu-border)',
+        '--ezco-mde-cb-tab-tint': 'color-mix(in srgb, var(--cm-foreground) 6%, var(--cm-background))',
+        background: 'transparent',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor[data-tab-hidden="true"]': {
+        display: 'none !important',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor > .cm-panels.cm-panels-top': {
+        background: 'transparent',
+        border: 'none',
+        overflow: 'visible',
+    },
+    // The bar: bare (0,5,0: over the rule that blends the toolbar into the
+    // block, above), the tabs standing on its bottom edge.
+    '.ezco-mde .ezco-mde-body > .cm-editor[data-theme] .cm-toolbar-panel': {
+        '--cm-toolbar-background': 'transparent',
+        position: 'relative',
+        'box-sizing': 'border-box',
+        'align-items': 'flex-end',
+        'min-height': '30px',
+        padding: '0 8px 0 0',
+    },
+    // The code area: the surface, square under the first tab.
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-scroller': {
+        background: 'var(--cm-background)',
+        border: '1px solid var(--ezco-mde-cb-tab-border)',
+        'border-radius': '0 8px 8px 8px',
+        padding: '6px 0 7px',
+    },
+    // The icon column over the active tab's left end.
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-state-icon-container': {
+        position: 'relative',
+        'z-index': 3,
+        'align-self': 'center',
+    },
+    // The active tab: the field, on the code's surface, a hairline round
+    // its top and sides, standing a pixel over the code area's top edge so
+    // the two are one.
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-input-container': {
+        position: 'relative',
+        'z-index': 2,
+        flex: '0 1 auto',
+        'min-width': 0,
+        'box-sizing': 'border-box',
+        height: '31px',
+        'margin-bottom': '-1px',
+        'margin-left': 'calc(0px - var(--cm-gutter-width, 2em))',
+        'padding-left': 'var(--cm-gutter-width, 2em)',
+        'padding-right': '6px',
+        border: '1px solid var(--ezco-mde-cb-tab-border)',
+        'border-bottom': 'none',
+        'border-radius': '7px 7px 0 0',
+        background: 'var(--cm-background)',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-input': {
+        'field-sizing': 'content',
+        width: 'auto',
+        'min-width': '8ch',
+        'max-width': 'min(40ch, 50vw)',
+        padding: '0 4px 0 6px',
+        'line-height': '30px',
+    },
+    // The other tabs: on a tint, a little shorter, muted until pointed at.
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tabs': {
+        gap: '3px',
+        'align-items': 'flex-end',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tabs-before': {
+        'margin-right': '3px',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tabs-after': {
+        'margin-left': '3px',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab': {
+        height: '28px',
+        padding: '0 6px 0 9px',
+        border: '1px solid var(--ezco-mde-cb-tab-border)',
+        'border-bottom': 'none',
+        'border-radius': '7px 7px 0 0',
+        background: 'var(--ezco-mde-cb-tab-tint)',
+        color: 'var(--cm-foreground)',
+        opacity: 0.72,
+        transition: 'opacity 120ms ease-out, background-color 120ms ease-out',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab:hover, .ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab:focus-visible': {
+        opacity: 1,
+        background: 'color-mix(in srgb, var(--cm-foreground) 10%, var(--cm-background))',
+        outline: 'none',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab.cm-toolbar-tab-add': {
+        padding: '0 8px',
+        border: 'none',
+        background: 'transparent',
+        'border-radius': '6px',
+        'margin-bottom': '1px',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab.cm-toolbar-tab-add:hover': {
+        background: 'var(--ezco-mde-cb-tab-tint)',
+    },
+    // The dropdown: a menu hung from the active tab, no wider than the window.
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-results': {
+        left: 'calc(var(--cm-toolbar-tab-left, 0px) - 5px)',
+        right: 'auto',
+        width: 'max-content',
+        'min-width': '260px',
+        'max-width': 'min(560px, calc(100% - var(--cm-toolbar-tab-left, 0px) + 5px))',
+        'margin-top': '2px',
+        padding: '4px',
+        'box-sizing': 'border-box',
+        background: 'var(--cm-background)',
+        border: '1px solid var(--ezco-mde-cb-tab-border)',
+        'border-radius': '8px',
+        'box-shadow': 'var(--ezco-mde-chrome-shadow)',
+        'max-height': `calc(1.4em * 12)`,
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-result': {
+        'border-radius': '4px',
+        padding: '2px 6px 2px 0',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-result > .cm-search-result-icon-container': {
+        width: 'var(--cm-gutter-width, 2em)',
+        'min-width': 0,
+    },
+    // The icon's right edge on the line numbers' (the container the whole
+    // gutter's, so the label starts where the code does).
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
+        width: 'var(--cm-gutter-lineno-width, 2em)',
+        'min-width': 0,
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-separator': {
+        margin: '3px 6px',
     },
     // Codeblocks have their own sticky toolbar at the top of the
     // block. Align the indicator icon's stuck position with that
@@ -1606,18 +1767,22 @@ export const styleModule: StyleModule = new StyleModule({
         opacity: 0,
         'pointer-events': 'none',
     },
-    // Tight, left-aligned search glyph + filename.
-    '.ezco-mde-toolbar .cm-toolbar-state-icon-container': {
-        width: 'auto',
-        'min-width': '0',
+    // One narrow icon column for the field and the rows (not the code
+    // block's gutter width, which the field has nothing to line up with
+    // here): each glyph centred in it, so the file name and the results'
+    // labels start on one line whatever the glyphs' widths.
+    '.ezco-mde-toolbar .cm-toolbar-state-icon-container, .ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container': {
+        width: 'var(--ezco-mde-toolbar-icon-col, 22px)',
+        'min-width': 'var(--ezco-mde-toolbar-icon-col, 22px)',
+        'justify-content': 'center',
     },
     '.ezco-mde-toolbar .cm-toolbar-state-icon': {
-        width: 'auto',
+        width: '100%',
         'min-width': '0',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         color: 'var(--ezco-mde-toolbar-muted, var(--ezco-mde-context-menu-item-color-muted))',
-        'padding-right': '6px',
-        'text-align': 'left',
+        padding: 0,
+        'text-align': 'center',
     },
     '.ezco-mde-toolbar .cm-toolbar-input': {
         // The toolbar reads as a file/command field, so its input + results use
@@ -1628,7 +1793,8 @@ export const styleModule: StyleModule = new StyleModule({
         'font-weight': 400,
         color: 'var(--ezco-mde-toolbar-fg, var(--ezco-mde-context-menu-color))',
         background: 'transparent',
-        padding: '0',
+        // The same gap after the icon column as the rows' labels keep.
+        padding: '0 0 0 6px',
     },
     '.ezco-mde-toolbar .cm-toolbar-input::placeholder': {
         color: 'var(--ezco-mde-toolbar-muted, var(--ezco-mde-context-menu-item-color-muted))',
@@ -1653,17 +1819,18 @@ export const styleModule: StyleModule = new StyleModule({
         'max-height': '320px',
         overflow: 'hidden auto',
     },
+    // The rows' icon column stands under the field's: the list hangs from
+    // the panel's padding edge, 1px of border and 4px of its own padding in,
+    // so a row's left padding of 3px (not the 9px of its right) puts its
+    // icon column 6px further in than the field's, and the field's icon
+    // stands 11px of padding in from the panel's edge: one column.
     '.ezco-mde-toolbar .cm-search-result': {
         'font-family': 'var(--cm-font-family)',
         'align-items': 'center',
         'border-radius': '6px',
-        padding: '6px 9px',
+        padding: '6px 9px 6px 3px',
         'line-height': '1.4',
         color: 'inherit',
-    },
-    '.ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container': {
-        width: 'auto',
-        'min-width': '0',
     },
     // The lines between the list's sections (toolbar-core.ts), in the menus' rule colour.
     '.ezco-mde-toolbar .cm-search-separator': {
@@ -1671,18 +1838,16 @@ export const styleModule: StyleModule = new StyleModule({
         background: 'var(--ezco-mde-context-menu-border)',
     },
     '.ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
-        width: 'auto',
+        width: '100%',
         'min-width': '0',
-        // The icon's drawn width is its advance width (the font's Propo
-        // build), so this gap is what is seen.
-        'padding-right': '6px',
+        padding: 0,
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
-        'text-align': 'left',
+        'text-align': 'center',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
     },
     '.ezco-mde-toolbar .cm-search-result > .cm-search-result-label': {
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
-        padding: '0',
+        padding: '0 0 0 6px',
     },
     // macOS-style single highlight: only the `.selected` row is coloured
     // (solid accent blue, matching the codeblock search dropdown). No
@@ -1976,6 +2141,33 @@ export const styleModule: StyleModule = new StyleModule({
         padding: '0.5em 0.8em 0.6em 0.7em',
         'border-left': '3px solid var(--ezco-mde-callout-color, #448aff)',
         background: 'color-mix(in srgb, var(--ezco-mde-callout-color, #448aff) 7%, transparent)',
+    },
+    // The title's row is the icon, the title and the chevron; the body's
+    // blocks stand under it across the whole width (not in the title's
+    // column, which would leave the icon a column of its own down the
+    // side). The content element has no box of its own (`display:
+    // contents`), so the title and the body are the grid's items.
+    '.ezco-mde-body .ezco-mde-callout > .ezco-mde-callout-content': {
+        display: 'contents',
+    },
+    '.ezco-mde-body .ezco-mde-callout > .ezco-mde-callout-icon': {
+        'grid-column': 1,
+        'grid-row': 1,
+    },
+    '.ezco-mde-body .ezco-mde-callout .ezco-mde-callout-title': {
+        'grid-column': 2,
+        'grid-row': 1,
+        'min-width': 0,
+    },
+    '.ezco-mde-body .ezco-mde-callout > .ezco-mde-callout-fold': {
+        'grid-column': 3,
+        'grid-row': 1,
+    },
+    // The body's text starts under the icon's drawing, not its button's
+    // edge (the glyph stands a few pixels into its box).
+    '.ezco-mde-body .ezco-mde-callout > .ezco-mde-callout-content > :not(.ezco-mde-callout-title)': {
+        'grid-column': '1 / -1',
+        'margin-left': '4px',
     },
     '[data-callout-type="note"]': { '--ezco-mde-callout-color': '#448aff' },
     '[data-callout-type="abstract"]': { '--ezco-mde-callout-color': '#00b0ff' },

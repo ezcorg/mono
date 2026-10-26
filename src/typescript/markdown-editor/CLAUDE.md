@@ -235,3 +235,36 @@ demo. So, for any change that shows:
   a widget *between* blocks, placed by script at the first line's end
   (`FoldMarks` in folding.ts), since a mark inside the head would be cut
   with the head's second line.
+- A gutter glyph is markup only when it opens a tag (`/^<[a-z]/i`):
+  `</>`, the code block's, starts with `<` too and was once taken for SVG
+  and drawn as nothing. `visible.test.ts` checks every drawn part of the
+  editor for a box, for being painted and for holding something, in the
+  browser; add to it when a new part is drawn.
+- Code blocks in the note are drawn as windows (styles.ts, "Code blocks as
+  embedded windows"): a card whose bar holds the field as a tab. The code
+  is 16px by default (`DEFAULT_CODE_FONT_PX`, no longer measured from the
+  prose), the toolbar 3px under it (codeblock's `--cm-toolbar-font-size`);
+  the icon columns are gutter-sized in px, so the sizes do not move them.
+  The toolbar keeps its *gutter* layout: the glyph, the rows' icons and
+  the line numbers share one column, the field's text, the labels and the
+  code another (`layout.test.ts` holds both, across the glyph's switch
+  from the file's icon to the search's). The pill's left end lies under
+  the icon column (a negative margin), and the rows' icon columns are the
+  gutter's less the pill's inset.
+- The toolbar's state icon is the open file's at rest and the search's
+  while the field is focused, has results, or is pointed at
+  (`updateStateIcon`); the copy button still takes it over on hover inside
+  a code block. A mode's own glyph (naming, settings, browse, delete) is
+  left alone.
+- Adjacent fences are one window with tabs (`extensions/code-tabs.ts`,
+  runs from `code-runs.ts`). Which fence is shown is view state like a
+  fold; the others carry `data-tab-hidden="true"` by node decoration. An
+  attribute, not a class: CodeMirror writes its editor's `class` whole
+  whenever its own changes (focus), and a class ProseMirror added would go
+  with it. The decoration's `spec.tabs` is the group's signature; the node
+  view dispatches codeblock's `refreshTabsEffect` when it changes, and
+  the toolbar asks the host (`ToolbarHost.tabs`) for the tabs again. Tab
+  ids are indexes in the group, resolved against `getPos()` at the press,
+  so none goes stale.
+- Escape in a new empty fence's field gives the fence up (it becomes a
+  paragraph): the same for a fence from "+" as for a typed one.

@@ -23,6 +23,7 @@ import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
 import { button, el, labelled, pressable } from '../ui/dom'
 import { observeResize, rafThrottle } from '../ui/layout'
+import { CODE_BLOCK, codeRunAt } from './code-runs'
 
 export interface Fold {
     /** The start of the first folded block (the head) and the end of the last. */
@@ -69,10 +70,15 @@ export function foldHeadEnd(doc: PMNode, fold: Fold): number {
 
 /** What "Fold" folds for the top-level block at `pos`: a heading with its
  *  section (to the next heading of its level or above, else the end of the
- *  note); any other block, itself. */
+ *  note); a code block with the group it stands in (code-runs.ts); any
+ *  other block, itself. */
 export function foldRangeFor(doc: PMNode, pos: number): Fold | null {
     const node = doc.nodeAt(pos)
     if (!node) return null
+    if (node.type.name === CODE_BLOCK) {
+        const run = codeRunAt(doc, pos)
+        if (run) return { from: run.from, to: run.to }
+    }
     let to = pos + node.nodeSize
     if (node.type.name === 'heading') {
         const level = (node.attrs as { level?: number }).level ?? 1
