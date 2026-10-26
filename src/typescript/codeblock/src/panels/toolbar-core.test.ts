@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it, vi } from 'vitest';
 import { memoryVfs } from '@joinezco/storage';
-import { ToolbarCore } from './toolbar-core';
+import { ToolbarCore, getFileIcon } from './toolbar-core';
 
 vi.mock('../lsps', () => ({ extOrLanguageToLanguageId: { ts: 'typescript', md: 'markdown' } }));
 
@@ -290,6 +290,43 @@ describe('The list, in sections', () => {
         const all = labels(core);
         expect(all).toContain('Delete "test.md"');
         expect(all.some((l) => l?.startsWith('Create new file'))).toBe(false);
+        core.destroy();
+        core.dom.remove();
+    });
+});
+
+describe('The state icon', () => {
+    it('is the open file’s at rest, in its colour, and the search’s while the field is used or pointed at', () => {
+        const core = new ToolbarCore({
+            fs: memoryVfs({ 'notes/a.md': '# A' }),
+            filepath: 'notes/a.md',
+            openFile() {},
+            getDocContent: () => '# A',
+            focusEditor() {},
+            persist: async () => {},
+            closeFile() {},
+        });
+        document.body.append(core.dom);
+        const md = getFileIcon('notes/a.md').glyph;
+        const search = String.fromCharCode(0xf002);
+        expect(md).not.toBe(search);
+        expect(core.stateIcon.textContent).toBe(md);
+        expect(core.stateIcon.style.color).not.toBe('');
+        core.input.focus();
+        core.input.dispatchEvent(new Event('focus'));
+        expect(core.stateIcon.textContent).toBe(search);
+        expect(core.stateIcon.style.color).toBe('');
+        core.input.blur();
+        core.input.dispatchEvent(new Event('blur'));
+        expect(core.stateIcon.textContent).toBe(md);
+        core.dom.dispatchEvent(new Event('pointerenter'));
+        expect(core.stateIcon.textContent).toBe(search);
+        core.dom.dispatchEvent(new Event('pointerleave'));
+        expect(core.stateIcon.textContent).toBe(md);
+        // Another file opened: its icon.
+        core.setFilePath('src/lib.ts');
+        expect(core.stateIcon.textContent).toBe(getFileIcon('src/lib.ts').glyph);
+        expect(core.stateIcon.textContent).not.toBe(md);
         core.destroy();
         core.dom.remove();
     });

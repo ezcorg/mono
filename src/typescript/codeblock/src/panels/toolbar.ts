@@ -7,7 +7,7 @@
  */
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { CodeblockFacet, openFileEffect, currentFileField, regionField, setRegionEffect, setThemeEffect, setLanguageEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, regionField, setRegionEffect, setThemeEffect, setLanguageEffect, refreshTabsEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
 import type { ExtensionOrLanguage } from "../lsps";
 import { formatLineRange, lineRange, type LineRange } from "../utils/region";
 import { foldGutter } from "@codemirror/language";
@@ -266,6 +266,14 @@ export const toolbarPanel = (view: EditorView): Panel => {
         buildSettingsEntries(filter) { return buildCMSettingsEntries(view, filter); },
         handleSettingsEntry(entry) { handleCMSettingsEntry(view, entry); },
         confirmSettingsEdit(key, rawValue) { confirmCMSettingsEdit(view, key, rawValue); },
+        // The group's tabs, when the host keeps blocks in groups (the
+        // markdown editor's adjacent fences).
+        ...(view.state.facet(CodeblockFacet).tabs ? {
+            tabs: view.state.facet(CodeblockFacet).tabs,
+            activateTab: view.state.facet(CodeblockFacet).activateTab,
+            closeTab: view.state.facet(CodeblockFacet).closeTab,
+            addTab: view.state.facet(CodeblockFacet).addTab,
+        } : {}),
         fileActions: fileActionRegistry.map(fa => ({
             extensions: fa.extensions,
             label: fa.label,
@@ -451,6 +459,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
         dom,
         top: true,
         update(update) {
+            if (update.transactions.some((tr) => tr.effects.some((e) => e.is(refreshTabsEffect)))) core.refreshTabs();
             // Settings changes
             const prevSettings = update.startState.field(settingsField);
             const nextSettings = update.state.field(settingsField);

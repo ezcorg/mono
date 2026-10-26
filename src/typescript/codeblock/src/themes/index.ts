@@ -3,6 +3,8 @@ import { EditorView } from '@codemirror/view';
 // Font size helpers — all relative to --cm-font-size so changing the
 // base font size in settings automatically scales the entire UI.
 const FS = 'var(--cm-font-size, 16px)';
+/** The toolbar's type: 3px under the code's (`--cm-toolbar-font-size`, themes/vscode.ts). */
+const TFS = 'var(--cm-toolbar-font-size, var(--cm-font-size, 16px))';
 const FS_75 = `calc(${FS} * 0.75)`;   // 12px at base 16
 const FS_85 = `calc(${FS} * 0.85)`;   // ~14px at base 16
 const FS_875 = `calc(${FS} * 0.875)`; // 14px at base 16
@@ -20,7 +22,7 @@ export const codeblockTheme = EditorView.theme({
         border: 'none',
         background: 'transparent',
         outline: 'none',
-        fontSize: FS,
+        fontSize: TFS,
         color: 'var(--cm-toolbar-color)',
         padding: '0 2px 0 6px',
         width: '100%',
@@ -54,7 +56,7 @@ export const codeblockTheme = EditorView.theme({
             minWidth: 'var(--cm-icon-col-width, 2ch)',
 
             '& > .cm-search-result-icon': {
-                fontSize: FS,
+                fontSize: TFS,
                 textAlign: 'right',
                 paddingRight: '3px',
                 boxSizing: 'border-box',
@@ -75,6 +77,14 @@ export const codeblockTheme = EditorView.theme({
         '& > .cm-search-result-label': {
             flex: 1,
             padding: '0 2px 0 6px',
+            minWidth: '0',
+            whiteSpace: 'nowrap',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+        },
+        '&.selected > .cm-search-result-label, &.selected .cm-search-result-snippet': {
+            whiteSpace: 'normal',
+            overflowWrap: 'anywhere',
         },
     },
     // Sized to the FULL gutter width (line numbers + fold gutter) — matching
@@ -93,7 +103,7 @@ export const codeblockTheme = EditorView.theme({
     // padding-right: 3px matches CM's .cm-gutterElement right padding (the
     // icon font's drawn width is its advance width, so the drawing ends there).
     '.cm-toolbar-state-icon': {
-        fontSize: FS,
+        fontSize: TFS,
         color: 'var(--cm-foreground)',
         fontFamily: 'var(--cm-icon-font-family)',
         paddingRight: '3px',
@@ -241,10 +251,10 @@ export const codeblockTheme = EditorView.theme({
         padding: 0,
         background: 'var(--cm-toolbar-background)',
         fontFamily: 'var(--cm-font-family)',
-        fontSize: FS,
+        fontSize: TFS,
         listStyleType: 'none',
         width: '100%',
-        maxHeight: `calc(${FS} * 1.4 * 10)`,
+        maxHeight: `calc(${TFS} * 1.4 * 10)`,
         overflowY: 'auto',
         zIndex: 200,
     },
@@ -295,8 +305,8 @@ export const codeblockTheme = EditorView.theme({
     // layout.test.ts against `.cm-lineNumbers`).
     '.cm-loading': {
         display: 'inline-block',
-        width: FS,
-        height: FS,
+        width: TFS,
+        height: TFS,
         border: '2px solid var(--cm-foreground, currentColor)',
         borderTopColor: 'transparent',
         borderRadius: '50%',
@@ -306,6 +316,12 @@ export const codeblockTheme = EditorView.theme({
         marginLeft: 'auto',
         marginRight: 'calc(var(--cm-gutter-width) - var(--cm-gutter-lineno-width))',
         alignSelf: 'center',
+    },
+    // In the compact layout the icon column is the glyph's own width, so
+    // the spinner stands at its left with the glyph's gap after it.
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-loading': {
+        marginLeft: 0,
+        marginRight: '1ch',
     },
     '@keyframes cm-spin': {
         '0%': { transform: 'rotate(0deg)' },
@@ -482,6 +498,13 @@ export const codeblockTheme = EditorView.theme({
         // handler also fires when the user clicks the (transparent)
         // text underneath the SVG.
         pointerEvents: 'none',
+    },
+    // In the compact layout the glyph is left-aligned with no padding
+    // before it, so its drawing's centre is 0.46em in from the left.
+    '.cm-toolbar-panel.cm-toolbar-compact .cm-copy-icon-overlay': {
+        right: 'auto',
+        left: '0.46em',
+        transform: 'translate(-50%, -50%)',
     },
     '.cm-copy-icon-overlay > svg': {
         width: '100%',

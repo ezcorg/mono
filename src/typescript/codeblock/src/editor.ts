@@ -1,3 +1,4 @@
+import type { ToolbarTab } from "./panels/toolbar-core";
 import { Compartment, EditorState, Extension, Facet, StateEffect, StateField, Transaction, TransactionSpec } from "@codemirror/state";
 import { EditorView, ViewPlugin, ViewUpdate, keymap, KeyBinding, showPanel, tooltips, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine } from "@codemirror/view";
 import { debounce } from "lodash";
@@ -156,6 +157,13 @@ export type CodeblockConfig = {
      *  When unset, defaults to `true` for `.sh` files and `false`
      *  otherwise. */
     copyButton?: boolean;
+    /** The tabs of the group this editor's block stands in, drawn in its
+     *  toolbar beside the field (see `ToolbarHost.tabs`); the host
+     *  dispatches `refreshTabsEffect` when they change. */
+    tabs?: () => ToolbarTab[];
+    activateTab?: (id: string) => void;
+    closeTab?: (id: string) => void;
+    addTab?: () => void;
 };
 export type CreateCodeblockArgs = CodeblockConfig & {
     parent: HTMLElement;
@@ -186,6 +194,8 @@ export const closeFileEffect = StateEffect.define<void>();
  *  file" with the naming step skipped): highlighted as that language, still
  *  no file. */
 export const setLanguageEffect = StateEffect.define<ExtensionOrLanguage>();
+/** The toolbar's tabs changed (`CodeblockConfig.tabs`): drawn again. */
+export const refreshTabsEffect = StateEffect.define<null>();
 
 // Light mode/dark mode theme toggle
 export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
@@ -389,7 +399,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton, tabs, activateTab, closeTab, addTab }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -402,7 +412,7 @@ export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, langua
     const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, range, anonymous, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, range, anonymous, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript, tabs, activateTab, closeTab, addTab })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
         regionField,

@@ -66,6 +66,18 @@ export interface HostCommand {
 
 export type SearchResult = FileResult | CommandResult | BrowseEntry | SettingsEntry;
 
+/** A tab of the group the toolbar's block stands in (`ToolbarHost.tabs`).
+ *  The active one is the field itself; the others are drawn beside it,
+ *  each with its icon, its label and a close button, and "+" after the
+ *  last. `id` is the host's own (an index in the group, say). */
+export interface ToolbarTab {
+    id: string;
+    label: string;
+    icon: string;
+    iconColor?: string;
+    active: boolean;
+}
+
 export interface NamingMode {
     active: boolean;
     type: 'create-file' | 'save-as' | 'rename-file';
@@ -149,6 +161,16 @@ export interface ToolbarHost {
     setLanguage?(language: string): void;
     /** Commands the host offers, matched against the query. */
     commands?(query: string): HostCommand[];
+    /** The tabs of the group the block stands in, in order, this block's
+     *  `active`. Given, the field is drawn as a tab among them, with "+"
+     *  after the last; the host calls `refreshTabs()` when they change. */
+    tabs?(): ToolbarTab[];
+    /** A tab pressed: the host shows that block in the field's place. */
+    activateTab?(id: string): void;
+    /** A tab's close button pressed. */
+    closeTab?(id: string): void;
+    /** "+" pressed: the host adds a block to the group and opens its field. */
+    addTab?(): void;
     /** Get the current file path from host state (may differ from initial filepath). */
     getCurrentFilePath?(): string | null;
     /** Whether autosave is enabled. */
@@ -292,7 +314,8 @@ function injectNerdFontFace() {
 // ---------------------------------------------------------------------------
 // Standalone toolbar styles (not scoped to .cm-editor)
 // ---------------------------------------------------------------------------
-const FS = 'var(--cm-font-size, 16px)';
+/** The toolbar's type: 3px under the code's (`--cm-toolbar-font-size`, themes/vscode.ts). */
+const TFS = 'var(--cm-toolbar-font-size, var(--cm-font-size, 16px))';
 
 const toolbarStyleModule = new StyleModule({
     '.cm-toolbar-panel': {
@@ -308,7 +331,7 @@ const toolbarStyleModule = new StyleModule({
         border: 'none',
         background: 'transparent',
         outline: 'none',
-        fontSize: FS,
+        fontSize: TFS,
         color: 'var(--cm-toolbar-color)',
         padding: '0 2px 0 6px',
         width: '100%',
@@ -319,6 +342,77 @@ const toolbarStyleModule = new StyleModule({
         display: 'flex',
         alignItems: 'center',
         flex: 1,
+    },
+    // The group's other tabs (`ToolbarHost.tabs`), before and after the
+    // field, and "+" after the last: plain here, shaped by the host's
+    // styles (the markdown editor draws them as a window's tabs).
+    '.cm-toolbar-tabs': {
+        display: 'flex',
+        alignItems: 'stretch',
+        gap: '2px',
+        flex: 'none',
+        minWidth: 0,
+    },
+    '.cm-toolbar-tabs:empty': {
+        display: 'none',
+    },
+    '.cm-toolbar-tab': {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        maxWidth: '28ch',
+        padding: '0 8px',
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--cm-command-result-color)',
+        fontFamily: 'var(--cm-font-family)',
+        fontSize: TFS,
+        lineHeight: 1.4,
+        whiteSpace: 'nowrap',
+        cursor: 'pointer',
+        opacity: 0.7,
+    },
+    '.cm-toolbar-tab:hover, .cm-toolbar-tab:focus-visible': {
+        opacity: 1,
+    },
+    '.cm-toolbar-tab-icon': {
+        fontFamily: 'var(--cm-icon-font-family)',
+        flex: 'none',
+    },
+    '.cm-toolbar-tab-label': {
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+    },
+    '.cm-toolbar-tab-close': {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: 'none',
+        width: '16px',
+        height: '16px',
+        margin: '0 0 0 2px',
+        padding: 0,
+        border: 'none',
+        borderRadius: '4px',
+        background: 'transparent',
+        color: 'inherit',
+        font: 'inherit',
+        fontSize: '13px',
+        lineHeight: 1,
+        cursor: 'pointer',
+        opacity: 0.6,
+    },
+    '.cm-toolbar-tab-close:hover, .cm-toolbar-tab-close:focus-visible': {
+        opacity: 1,
+        background: 'color-mix(in srgb, currentColor 15%, transparent)',
+    },
+    '.cm-toolbar-tab-close[hidden]': {
+        display: 'none',
+    },
+    '.cm-toolbar-tab-add': {
+        padding: '0 7px',
+        fontSize: '1.15em',
     },
     // Sized to the FULL gutter width (line numbers + fold gutter) —
     // matching `.cm-search-result-icon-container` below — so the toolbar
@@ -336,7 +430,7 @@ const toolbarStyleModule = new StyleModule({
     // The icon's drawn right edge sits where the line numbers' does: 3px
     // (CodeMirror's gutter padding) in from the column's edge.
     '.cm-toolbar-state-icon': {
-        fontSize: FS,
+        fontSize: TFS,
         color: 'var(--cm-foreground)',
         fontFamily: 'var(--cm-icon-font-family)',
         paddingRight: '3px',
@@ -365,10 +459,10 @@ const toolbarStyleModule = new StyleModule({
         padding: '0',
         background: 'var(--cm-toolbar-background)',
         fontFamily: 'var(--cm-font-family)',
-        fontSize: FS,
+        fontSize: TFS,
         listStyleType: 'none',
         width: '100%',
-        maxHeight: `calc(${FS} * 1.4 * 10)`,
+        maxHeight: `calc(${TFS} * 1.4 * 10)`,
         overflowY: 'auto',
         zIndex: '200',
         '&:empty': {
@@ -387,7 +481,7 @@ const toolbarStyleModule = new StyleModule({
             width: 'var(--cm-gutter-width, 2em)',
             minWidth: 'var(--cm-icon-col-width, 2em)',
             '& > .cm-search-result-icon': {
-                fontSize: FS,
+                fontSize: TFS,
                 textAlign: 'right',
                 paddingRight: '3px',
                 boxSizing: 'border-box',
@@ -450,6 +544,11 @@ export class ToolbarCore {
     readonly inputContainer: HTMLElement;
     readonly input: HTMLInputElement;
     readonly resultsList: HTMLElement;
+    /** The group's tabs before and after the field, and the field's own close button (`ToolbarHost.tabs`). */
+    readonly tabsBefore: HTMLElement;
+    readonly tabsAfter: HTMLElement;
+    readonly closeButton: HTMLButtonElement;
+    private activeTabId: string | null = null;
 
     private host: ToolbarHost;
     private fileOps: FileOperations;
@@ -491,6 +590,8 @@ export class ToolbarCore {
     private results: SearchResult[] = [];
     private currentFilePath: string | null;
     private handleClickOutsideBound: (event: Event) => void;
+    /** The pointer over the toolbar: the state icon is the search's then. */
+    private hovered = false;
 
     // AI intent classification state
     private aiClassifyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -532,6 +633,27 @@ export class ToolbarCore {
         this.inputContainer.appendChild(this.input);
         this.dom.appendChild(this.inputContainer);
 
+        // The group's tabs: the ones before the field, the ones after it
+        // with "+", and the field's own close button. Empty, and hidden,
+        // for a host without tabs.
+        this.tabsBefore = document.createElement("div");
+        this.tabsBefore.className = "cm-toolbar-tabs cm-toolbar-tabs-before";
+        this.dom.insertBefore(this.tabsBefore, this.stateIconContainer);
+        this.closeButton = document.createElement("button");
+        this.closeButton.type = "button";
+        this.closeButton.className = "cm-toolbar-tab-close";
+        this.closeButton.textContent = "×";
+        this.closeButton.hidden = true;
+        this.closeButton.addEventListener("mousedown", (e) => e.preventDefault());
+        this.closeButton.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (this.activeTabId !== null) this.host.closeTab?.(this.activeTabId);
+        });
+        this.inputContainer.appendChild(this.closeButton);
+        this.tabsAfter = document.createElement("div");
+        this.tabsAfter.className = "cm-toolbar-tabs cm-toolbar-tabs-after";
+        this.dom.appendChild(this.tabsAfter);
+
         this.resultsList = document.createElement("ul");
         this.resultsList.className = "cm-search-results";
         this.dom.appendChild(this.resultsList);
@@ -542,6 +664,79 @@ export class ToolbarCore {
         this.input.addEventListener("click", () => this.onInputClick());
         this.input.addEventListener("input", (e) => this.onInputChange(e));
         this.input.addEventListener("keydown", (e) => this.onInputKeydown(e));
+        // At rest the state icon is the open file's; the search's while the
+        // field is being used or pointed at.
+        this.input.addEventListener("focus", () => this.updateStateIcon());
+        this.input.addEventListener("blur", () => this.updateStateIcon());
+        this.dom.addEventListener("pointerenter", () => { this.hovered = true; this.updateStateIcon(); });
+        this.dom.addEventListener("pointerleave", () => { this.hovered = false; this.updateStateIcon(); });
+        this.updateStateIcon();
+        this.refreshTabs();
+    }
+
+    /** The group's tabs drawn again from the host (`ToolbarHost.tabs`):
+     *  the active one is the field, the others stand before and after it
+     *  in the group's order, "+" after the last. Where the field stands is
+     *  published as `--cm-toolbar-tab-left` for the dropdown to hang from. */
+    refreshTabs() {
+        const tabs = this.host.tabs?.() ?? [];
+        this.tabsBefore.replaceChildren();
+        this.tabsAfter.replaceChildren();
+        this.dom.classList.toggle("cm-toolbar-tabbed", tabs.length > 0);
+        this.closeButton.hidden = tabs.length === 0;
+        this.activeTabId = null;
+        if (tabs.length) {
+            const active = Math.max(0, tabs.findIndex((tab) => tab.active));
+            this.activeTabId = tabs[active].id;
+            this.closeButton.title = `Close ${tabs[active].label}`;
+            this.closeButton.setAttribute("aria-label", `Close ${tabs[active].label}`);
+            tabs.forEach((tab, i) => {
+                if (i !== active) (i < active ? this.tabsBefore : this.tabsAfter).appendChild(this.renderTab(tab));
+            });
+            const add = document.createElement("button");
+            add.type = "button";
+            add.className = "cm-toolbar-tab cm-toolbar-tab-add";
+            add.textContent = "+";
+            add.title = "Open a file in a new tab";
+            add.setAttribute("aria-label", "Open a file in a new tab");
+            add.addEventListener("mousedown", (e) => e.preventDefault());
+            add.addEventListener("click", (e) => { e.stopPropagation(); this.host.addTab?.(); });
+            this.tabsAfter.appendChild(add);
+        }
+        this.placeTab();
+    }
+
+    private renderTab(tab: ToolbarTab): HTMLElement {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "cm-toolbar-tab";
+        button.title = tab.label;
+        const icon = document.createElement("span");
+        icon.className = "cm-toolbar-tab-icon";
+        icon.textContent = tab.icon;
+        if (tab.iconColor) icon.style.color = tab.iconColor;
+        const label = document.createElement("span");
+        label.className = "cm-toolbar-tab-label";
+        label.textContent = tab.label;
+        // A close button inside a button is not allowed: a span with the role.
+        const close = document.createElement("span");
+        close.className = "cm-toolbar-tab-close";
+        close.setAttribute("role", "button");
+        close.setAttribute("aria-label", `Close ${tab.label}`);
+        close.tabIndex = 0;
+        close.textContent = "×";
+        close.addEventListener("click", (e) => { e.stopPropagation(); this.host.closeTab?.(tab.id); });
+        close.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); this.host.closeTab?.(tab.id); } });
+        button.append(icon, label, close);
+        button.addEventListener("mousedown", (e) => e.preventDefault());
+        button.addEventListener("click", (e) => { e.stopPropagation(); this.host.activateTab?.(tab.id); });
+        return button;
+    }
+
+    /** Where the field's icon column starts, within the panel. */
+    private placeTab() {
+        const left = `${this.stateIconContainer.offsetLeft}px`;
+        if (this.dom.style.getPropertyValue("--cm-toolbar-tab-left") !== left) this.dom.style.setProperty("--cm-toolbar-tab-left", left);
     }
 
     // -----------------------------------------------------------------------
@@ -562,6 +757,7 @@ export class ToolbarCore {
         if (typing || this.namingMode.active || this.settingsMode.active) return;
         this.input.value = shownAs ?? path ?? '';
         this.inputTouched = false;
+        this.updateStateIcon();
     }
 
     /** Ask the host for `path`: a file the toolbar opens is named in the field when it arrives. */
@@ -593,6 +789,7 @@ export class ToolbarCore {
         if (results.length === 0) {
             document.removeEventListener("click", this.handleClickOutsideBound);
         }
+        this.updateStateIcon();
     }
 
     private getCurrentFilePath(): string | null {
@@ -1001,6 +1198,7 @@ export class ToolbarCore {
         this.resultsList.replaceChildren(...children);
         const sel = this.resultsList.querySelector('.selected') as HTMLElement;
         if (sel) sel.scrollIntoView({ block: 'nearest' });
+        this.placeTab();
     }
 
     /** The rest of the files shown. The selection stays where it was: on
@@ -1082,14 +1280,30 @@ export class ToolbarCore {
     // -----------------------------------------------------------------------
     // State icon
     // -----------------------------------------------------------------------
+    /** What the state icon shows: a mode's own glyph; otherwise, at rest, the
+     *  open file's icon in its colour (what the field names), and the search
+     *  glyph while the field is focused, has results, or is pointed at. The
+     *  colour is the file's own only for the file icon. */
     updateStateIcon() {
+        let color = '';
         if (this.namingMode.active) {
             this.stateIcon.textContent = (this.namingMode.type === 'create-file' || this.namingMode.type === 'save-as') ? DEFAULT_FILE_ICON : '\uf044';
         } else if (this.settingsMode.active) {
             this.stateIcon.textContent = COG_ICON;
+        } else if (this.browseMode.active || this.deleteMode.active || this.overwriteMode.active || this.clearFilesystemPending) {
+            return;
         } else {
-            this.stateIcon.textContent = SEARCH_ICON;
+            const path = this.getCurrentFilePath();
+            const searching = document.activeElement === this.input || this.results.length > 0 || this.hovered;
+            const named = this.shownAs ? getLanguageIcon(this.shownAs) : path ? getFileIcon(path) : this.host.language ? getLanguageIcon(this.host.language) : null;
+            if (!searching && named) {
+                this.stateIcon.textContent = named.glyph;
+                color = named.color;
+            } else {
+                this.stateIcon.textContent = SEARCH_ICON;
+            }
         }
+        if (this.stateIcon.style.color !== color) this.stateIcon.style.color = color;
     }
 
     // -----------------------------------------------------------------------
