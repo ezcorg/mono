@@ -1,10 +1,15 @@
 import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { getMarkdownContent, trackEditors, waitFor } from '../../../test/utils'
+import { calloutKindsMatching } from './callout'
 
 const { make } = trackEditors()
 
 const callouts = (c: HTMLElement) => [...c.querySelectorAll('.ezco-mde-callout')] as HTMLElement[]
+const kindMenu = () => document.querySelector<HTMLElement>('.ezco-mde-callout-menu')
+const kindRows = () => [...document.querySelectorAll<HTMLElement>('.ezco-mde-callout-menu .ezco-mde-slash-item')]
+const kindTitles = () => kindRows().map((r) => r.querySelector('.ezco-mde-slash-item-title')?.textContent)
+const kindSelected = () => document.querySelector('.ezco-mde-callout-menu .is-selected .ezco-mde-slash-item-title')?.textContent
 
 describe('Callout syntax', () => {
     const roundTrips = [
@@ -68,11 +73,50 @@ describe('Callout view', () => {
         expect(question.querySelector('.ezco-mde-callout-fold')?.hasAttribute('hidden')).toBe(true)
     })
 
-    it('cycles the kind from its icon', async () => {
-        const { editor, container } = make('> [!note] x\n> y')
+    it('draws the kind’s icon before the title, and offers every kind from it: the menu filtered by typing, the callout’s own kind selected', async () => {
+        const { editor, container } = make('> [!tip] x\n> y')
         await waitFor(() => callouts(container).length === 1, 2000)
-        ;(callouts(container)[0].querySelector('.ezco-mde-callout-icon') as HTMLElement).click()
+        const icon = callouts(container)[0].querySelector('.ezco-mde-callout-icon') as HTMLElement
+        expect(icon.textContent).toBe('✦')
+        icon.click()
+        await waitFor(() => !!kindMenu(), 2000)
+        expect(kindTitles()).toEqual(['Note', 'Abstract', 'Info', 'Todo', 'Tip', 'Success', 'Question', 'Warning', 'Failure', 'Danger', 'Bug', 'Example', 'Quote'])
+        expect(kindSelected()).toBe('Tip')
+        expect(kindRows()[7].dataset.calloutType).toBe('warning')
+        expect(icon.getAttribute('aria-expanded')).toBe('true')
+        // Typed: the kinds called that (by any of their names), the first selected; nothing lands in the note.
+        await userEvent.keyboard('ca')
+        expect(kindTitles()).toEqual(['Warning'])
+        expect(kindSelected()).toBe('Warning')
         expect(getMarkdownContent(editor)).toBe('> [!tip] x\n> y')
+        await userEvent.keyboard('{Backspace}{Backspace}d')
+        expect(kindTitles()).toEqual(['Success', 'Danger'])
+        await userEvent.keyboard('{ArrowDown}{Enter}')
+        await waitFor(() => !kindMenu(), 2000)
+        expect(getMarkdownContent(editor)).toBe('> [!danger] x\n> y')
+        expect(icon.textContent).toBe('⚡')
+        // A second press closes it; Escape too; Backspace on no filter too.
+        icon.click()
+        await waitFor(() => !!kindMenu(), 2000)
+        icon.click()
+        await waitFor(() => !kindMenu(), 2000)
+        icon.click()
+        await waitFor(() => !!kindMenu(), 2000)
+        await userEvent.keyboard('{Escape}')
+        await waitFor(() => !kindMenu(), 2000)
+        expect(icon.getAttribute('aria-expanded')).toBe('false')
+        icon.click()
+        await waitFor(() => !!kindMenu(), 2000)
+        await userEvent.keyboard('{Backspace}')
+        await waitFor(() => !kindMenu(), 2000)
+        expect(getMarkdownContent(editor)).toBe('> [!danger] x\n> y')
+    })
+
+    it('matches kinds by every name accepted for them', () => {
+        expect(calloutKindsMatching('').map((k) => k.type)).toHaveLength(13)
+        expect(calloutKindsMatching('tl').map((k) => k.type)).toEqual(['abstract'])
+        expect(calloutKindsMatching('T').map((k) => k.type)).toEqual(['abstract', 'todo', 'tip'])
+        expect(calloutKindsMatching('xyz')).toEqual([])
     })
 })
 
@@ -91,5 +135,41 @@ describe('Making callouts', () => {
         editor.commands.setCallout('info')
         editor.commands.insertContent('Title')
         expect(getMarkdownContent(editor)).toBe('> [!info] Title\n> Some text.')
+    })
+
+    it('asks the kind after the slash command, typed to filter', async () => {
+        const { editor } = make('Hello')
+        await userEvent.click(editor.view.dom)
+        editor.commands.focus('end')
+        await userEvent.keyboard('{Enter}/call')
+        await waitFor(() => document.querySelectorAll('.ezco-mde-slash-menu .ezco-mde-slash-item').length === 1, 2000)
+        await userEvent.keyboard('{Enter}')
+        await waitFor(() => !!kindMenu(), 2000)
+        expect(editor.state.doc.textContent).toBe('Hello')
+        await userEvent.keyboard('war{Enter}')
+        await waitFor(() => !kindMenu(), 2000)
+        await userEvent.keyboard('Heads up{Enter}body')
+        expect(getMarkdownContent(editor)).toBe('Hello\n\n> [!warning] Heads up\n> body')
+    })
+
+    it('changes kind, folds, and comes apart again by command, a quote or plain blocks', () => {
+        const { editor } = make('> [!note] Title\n> one\n> \n> two')
+        const pos = 0
+        editor.commands.setCalloutKind('bug', pos)
+        expect(getMarkdownContent(editor)).toBe('> [!bug] Title\n> one\n>\n> two')
+        editor.commands.toggleCalloutFold(pos)
+        expect(getMarkdownContent(editor)).toBe('> [!bug]+ Title\n> one\n>\n> two')
+        editor.commands.toggleCalloutFold(pos)
+        expect(getMarkdownContent(editor)).toBe('> [!bug] Title\n> one\n>\n> two')
+        // By the caret, when no position is given.
+        editor.commands.setTextSelection(4)
+        editor.commands.setCalloutKind('info')
+        expect(getMarkdownContent(editor)).toBe('> [!info] Title\n> one\n>\n> two')
+        editor.commands.calloutToQuote(pos)
+        expect(getMarkdownContent(editor)).toBe('> Title\n>\n> one\n>\n> two')
+        editor.commands.setCallout('tip')
+        expect(getMarkdownContent(editor)).toBe('> [!tip]\n> Title\n>\n> one\n>\n> two')
+        editor.commands.unsetCallout()
+        expect(getMarkdownContent(editor)).toBe('Title\n\none\n\ntwo')
     })
 })

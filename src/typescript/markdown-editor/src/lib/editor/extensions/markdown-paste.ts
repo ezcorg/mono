@@ -156,7 +156,17 @@ export const MarkdownBlockPaste = Extension.create({
                         // follows the caret becomes a paragraph of its own
                         // rather than the tail of the last block pasted (a
                         // list's last item, say).
-                        const slice = /\n[ \t]*\n[ \t]*$/.test(text.replace(/\r\n?/g, '\n')) ? new Slice(parsed.content, parsed.openStart, 0) : parsed
+                        let slice = /\n[ \t]*\n[ \t]*$/.test(text.replace(/\r\n?/g, '\n')) ? new Slice(parsed.content, parsed.openStart, 0) : parsed
+                        // A callout keeps its shape. The parser opens the slice
+                        // into the first block's text so a pasted line joins the
+                        // paragraph at the caret; opened into a callout, that
+                        // would put the title's words in the paragraph and the
+                        // body after it as plain blocks, and the callout would be
+                        // gone. Closed at a callout, the slice puts the callout in
+                        // whole (the paragraph at the caret split around it).
+                        const openStart = slice.content.firstChild?.type.name === 'callout' ? 0 : slice.openStart
+                        const openEnd = slice.content.lastChild?.type.name === 'callout' ? 0 : slice.openEnd
+                        if (openStart !== slice.openStart || openEnd !== slice.openEnd) slice = new Slice(slice.content, openStart, openEnd)
                         const first = slice.content.firstChild
                         if (atTop && frontMatter && first?.type === frontMatter) {
                             // The front matter goes before the note's first

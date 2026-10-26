@@ -213,7 +213,7 @@ documents; a ✅ resolves. `editor.storage.comments` has the comments and
 | Math `$…$`, `$$…$$` | KaTeX by default (loaded on first use), any `MathRenderer` otherwise; prices stay text |
 | Footnotes `[^1]` | numbered by first use, definitions kept where written |
 | Bracketed spans `[text]{#id .class key=value}` | Pandoc's and Djot's attributed text; a comment's pin |
-| Callouts `> [!note] Title` | kinds and aliases, fold markers, Obsidian's syntax |
+| Callouts `> [!note] Title` | kinds and aliases, fold markers, Obsidian's syntax. Drawn as a quote in the kind's colour (a rule down the left, a tint, no corners), the kind's icon before the title and, when it folds, a chevron at the title's end. The icon is a menu of every kind, each in its colour, typed to filter (`war` for a warning); the same menu opens under the caret after the "Callout" slash command and "Turn into → Callout", so the kind is chosen as the callout is made. The gutter shows the kind's icon, and the block's menu the common kinds (the one in force checked), "Other kind…", whether it is collapsible, and a plain quote or paragraphs instead. A pasted callout stays one |
 
 Every extension is exported on its own; `markdownSetup()` returns the default
 set (`minimalSetup()` a lean one) for `new Editor({ extensions })`, and
@@ -228,11 +228,15 @@ line between, by what an action is for: what the block can become, then
 what its own kind can do (a list's marker and lifting it to paragraphs;
 a task list's marking; a table's rows, columns and header; a code block's
 copy; the front matter's properties), then what any block can: Comment
-(the block quoted, the composer by it), Fold, which folds the block to one
-line of its first words and a count (the line, its glyph in the gutter, or
-the caret moving into it opens it again), and Delete. Folds are the view's,
-not the note's. A selection spanning blocks folds, or is commented on,
-together. The selection menu (the button at a selection's end, or Tab) is
+(the block quoted, the composer by it), Fold, and Delete. Fold folds as a
+code editor does: the block stays, cut to its first line, an ellipsis at
+the line's end, a chevron in the gutter; a heading folds its section (to
+the next heading of its level or above) behind itself, so an outline of
+folded sections reads as one. The ellipsis, the chevron, or the caret
+moving into what is hidden opens the fold; the first line stays the
+note's and can be edited. Folds are the view's, not the note's. A
+selection spanning blocks folds, or is commented on, together. The
+selection menu (the button at a selection's end, or Tab) is
 divided the same way: the text's (its marks, a link, clearing them), the
 block's (what it can become), the list's (its depth), the rest.
 
@@ -262,6 +266,10 @@ in only when accepted.
   (naming the file, not linking it) or the link.
 - ⌘P / Ctrl+P, then the file's name (or nothing, for the open file):
   "Delete …" asks, Enter deletes. The Delete key on a result does the same.
+  The list stands in sections, a line between: the files found (the one
+  the name is exactly first, whatever else mentions its words), the file's
+  commands (save, create, rename, open, import, delete), the editor's, and
+  Settings last. "Show more" keeps the selection where it was.
 - ⌘/Ctrl+Enter or a click: follow a link. Backspace after a wikilink: edit its
   source. A link ends with its text: what is typed after a pasted URL is
   text; "Link" in the selection menu takes the link off what is selected.

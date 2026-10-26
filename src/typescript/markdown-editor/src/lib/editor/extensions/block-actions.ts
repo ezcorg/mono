@@ -5,6 +5,7 @@ import { Fragment, type Node as PMNode } from '@tiptap/pm/model'
 import { caretRect, menuPopover, type Popover } from '../ui/popover'
 import { ContextMenu, sectioned, type ContextMenuEntry } from '../ui/context-menu'
 import { foldsOf, type Fold } from './folding'
+import { CALLOUT_KINDS, calloutIcon, calloutType } from './callout'
 import { button, el, labelled, pressable } from '../ui/dom'
 import { observeResize, rafThrottle, resolveMount, type Mount } from '../ui/layout'
 
@@ -38,11 +39,24 @@ export interface BlockAction {
     section?: string
     /** A setting rather than an action: on or off, shown as a switch. */
     checked?: boolean
+    /** One of a set of choices (a callout's kind): the one in force has a check. */
+    selected?: boolean
     run: (ctx: { editor: Editor; pos: number; node: PMNode }) => void
 }
 
-/** The glyph of a fold in the gutter (folding.ts). */
+/** The glyph of "Fold" in the menus. */
 const FOLD_ICON = '▸'
+
+/** A fold's glyph in the gutter (folding.ts): a chevron at its head's first
+ *  line, as a code editor marks a folded line. Pressed, it opens the fold. */
+const CHEVRON_ICON =
+    '<svg class="ezco-mde-block-icon-chevron" viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+
+/** The glyph of "Callout" where a block can become one: the `!` of `[!kind]`. */
+const CALLOUT_ICON = '!'
+
+/** The kinds a callout's menu offers directly (the rest through "Other kind…"). */
+const COMMON_KINDS = ['note', 'tip', 'info', 'warning', 'danger', 'example', 'quote']
 
 const TYPE_ICONS: Record<string, string> = {
     frontMatter: '---',
@@ -108,6 +122,9 @@ function iconForNode(node: PMNode): string {
             return attrs.marker === 'dash' ? '–' : '•'
         case 'orderedList':
             return `${orderedMarker(attrs.start ?? 1, attrs.type ?? null)}${attrs.delimiter ?? '.'}`
+        case 'callout':
+            // The kind's own icon, as the callout draws it before its title.
+            return calloutIcon((attrs as { kind?: string }).kind ?? 'note')
         default:
             return TYPE_ICONS[node.type.name] ?? '·'
     }
@@ -398,7 +415,8 @@ export function actionsForNode(node: PMNode, editor?: Editor): BlockAction[] {
         })
     }
     if (name !== 'frontMatter' && name !== 'horizontalRule') {
-        extras.push({ label: 'Fold', icon: FOLD_ICON, section: BLOCK, run: ({ editor, pos, node }) => editor.commands.foldBlocks(pos, pos + node.nodeSize) })
+        // A heading folds its section; any other block, itself (folding.ts).
+        extras.push({ label: 'Fold', icon: FOLD_ICON, section: BLOCK, run: ({ editor, pos }) => editor.commands.foldBlock(pos) })
     }
     if (!extras.length) return actions
     const last = actions[actions.length - 1]
@@ -466,6 +484,7 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
                 into('Lettered list', 'a.', ({ editor }) => editor.chain().focus().toggleOrderedList().updateAttributes('orderedList', { type: 'a' }).run()),
                 into('Task list', '☐', ({ editor }) => editor.chain().focus().toggleTaskList().run()),
                 into('Quote', '"', ({ editor }) => editor.chain().focus().toggleBlockquote().run()),
+                into('Callout', CALLOUT_ICON, ({ editor }) => editor.chain().focus().chooseCalloutKind().run()),
                 remove,
             ]
         case 'heading': {
@@ -571,9 +590,34 @@ function typeActions(node: PMNode, editor?: Editor): BlockAction[] {
                         editor.view.focus()
                     },
                 },
+                // A callout of the quote's blocks (the kind asked for, at its title).
+                into('Callout', CALLOUT_ICON, ({ editor, pos }) =>
+                    editor.chain().focus(pos + 1).setCallout('note').chooseCalloutKind(pos).run(),
+                ),
                 toParagraph,
                 remove,
             ]
+        case 'callout': {
+            // The common kinds to choose from directly, the one in force
+            // checked, and the menu of every kind for the rest; whether it
+            // folds; a quote or plain blocks instead.
+            const kind = calloutType((node.attrs as { kind: string }).kind)
+            const kinds = CALLOUT_KINDS.filter((k) => COMMON_KINDS.includes(k.type)).map<BlockAction>((k) => ({
+                label: k.label,
+                icon: k.icon,
+                section: 'Kind',
+                selected: k.type === kind,
+                run: ({ editor, pos }) => editor.chain().focus().setCalloutKind(k.type, pos).run(),
+            }))
+            return [
+                ...kinds,
+                { label: 'Other kind…', icon: '…', section: 'Kind', run: ({ editor, pos }) => editor.chain().focus(pos + 2).chooseCalloutKind(pos).run() },
+                { label: 'Collapsible', icon: '▾', section: 'Callout', checked: !!(node.attrs as { fold: string }).fold, run: ({ editor, pos }) => editor.chain().focus().toggleCalloutFold(pos).run() },
+                into('Plain quote', '"', ({ editor, pos }) => editor.chain().focus().calloutToQuote(pos).run()),
+                into('Paragraphs', '¶', ({ editor, pos }) => editor.chain().focus().unsetCallout(pos).run()),
+                remove,
+            ]
+        }
         case 'ezcodeBlock':
         case 'codeBlock':
             // No `toParagraph` here: converting a codeblock to a
@@ -760,11 +804,15 @@ class BlockActionsView {
         doc.forEach((node, offset) => {
             const fold = folds.find((f) => offset >= f.from && offset < f.to)
             if (fold) {
+                // The chevron at the fold's head, on its first line (the one
+                // line of it shown); the hidden blocks have no glyph.
                 if (fold.from !== offset) return
-                const line = this.view.dom.querySelector<HTMLElement>(`.ezco-mde-fold[data-from="${fold.from}"]`)
-                if (!line) return
-                const rect = line.getBoundingClientRect()
-                entries.push({ glyph: FOLD_ICON, top: rect.top + base, height: rect.height, font: '', pos: offset, type: 'fold', fold })
+                const head = this.view.nodeDOM(offset) as HTMLElement | null
+                if (!head || typeof head.getBoundingClientRect !== 'function') return
+                const line = firstLineBox(head)
+                const rect = head.getBoundingClientRect()
+                if (line) entries.push({ glyph: CHEVRON_ICON, top: line.top + base, height: line.height, font: '', pos: offset, type: 'fold', fold })
+                else entries.push({ glyph: CHEVRON_ICON, top: rect.top + base + computeIconOffsetY(head) - 3, height: 20, font: '', pos: offset, type: 'fold', fold })
                 return
             }
             const dom = this.view.nodeDOM(offset) as HTMLElement | null
@@ -1257,6 +1305,7 @@ class BlockActionsView {
                 label: action.label,
                 icon: action.icon,
                 ...(action.checked !== undefined ? { checked: action.checked } : {}),
+                ...(action.selected !== undefined ? { selected: action.selected } : {}),
                 onSelect: () => {
                     // Action runs its own `.focus()` chain, which
                     // re-focuses the editor at the (possibly changed)

@@ -689,7 +689,7 @@ export type { CommentsOptions, CommentsStorage, CommentTarget, CommentInfo, WebA
 export { CommentMargin, type CommentMarginOptions } from './extensions/comment-margin';
 export { CommentMarks } from './extensions/comment-gutter';
 export { CommentInline } from './extensions/comment-inline';
-export { Callout, CalloutTitle, calloutType } from './extensions/callout';
+export { Callout, CalloutTitle, CalloutKindMenu, CALLOUT_KINDS, calloutIcon, calloutType, type CalloutKind } from './extensions/callout';
 export { SourceView } from './extensions/source-view';
 export { MarkdownText } from './extensions/text';
 export { Image, attachImages } from './extensions/image';

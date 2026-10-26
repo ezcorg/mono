@@ -970,6 +970,11 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-block-icon.is-fold': {
         opacity: 0.7,
     },
+    '.ezco-mde-block-icon > .ezco-mde-block-icon-chevron': {
+        display: 'block',
+        width: '12px',
+        height: '12px',
+    },
     // The active block's glyph stands at full strength beside the
     // indicator's line, which is all the indicator shows for one block (its
     // own glyph would slide between lines as the caret moves).
@@ -979,47 +984,61 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-block-action-btn:not([data-block-type="spanning"]) > .ezco-mde-block-action-btn-icon': {
         visibility: 'hidden',
     },
-    // A folded block is only hidden (the note still has it); in its place,
-    // one line: the first words of what is folded and how many blocks,
-    // in the chrome's type, dashed as a thing that is not the note's own.
+    // A fold (folding.ts), as a code editor shows one: the head block stays,
+    // cut to its first line (its padding kept, so the line is whole), with
+    // an ellipsis after the line's end; the blocks behind it are only
+    // hidden (the note still has them). A code block's first line is its
+    // toolbar; a table's its first row.
     '.ezco-mde-body > .ezco-mde-folded': {
         display: 'none !important',
     },
-    '.ezco-mde-body > .ezco-mde-fold': {
+    '.ezco-mde-body > .ezco-mde-fold-head': {
+        'max-height': '1lh',
+        overflow: 'hidden',
+    },
+    '.ezco-mde-body > .cm-editor.ezco-mde-fold-head, .ezco-mde-body > .tableWrapper.ezco-mde-fold-head': {
+        'max-height': 'none',
+    },
+    // (`!important`: CodeMirror's own base theme makes the scroller a flex box with one.)
+    '.ezco-mde-body > .cm-editor.ezco-mde-fold-head .cm-scroller': {
+        display: 'none !important',
+    },
+    '.ezco-mde-body > .tableWrapper.ezco-mde-fold-head tr + tr': {
+        display: 'none',
+    },
+    // The ellipsis: placed by script at the end of the head's first line,
+    // as tall as the line and centred on it, a small chip in the chrome's
+    // type (not the note's text: it is not in the note).
+    '.ezco-mde-body > .ezco-mde-fold-mark': {
+        position: 'absolute',
         display: 'flex',
-        'align-items': 'baseline',
-        gap: '10px',
-        'box-sizing': 'border-box',
-        'max-width': '100%',
-        padding: '3px 10px',
-        border: '1px dashed var(--ezco-mde-context-menu-border)',
-        'border-radius': '6px',
+        'align-items': 'center',
+        margin: 0,
+        'padding-left': '6px',
+        'pointer-events': 'none',
+        'z-index': 2,
+    },
+    '.ezco-mde-fold-ellipsis': {
+        'pointer-events': 'auto',
+        margin: 0,
+        padding: '0 6px',
+        border: 'none',
+        'border-radius': '4px',
+        background: 'var(--ezco-mde-code-bg)',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
         'font-family': 'var(--ezco-mde-chrome-font)',
-        'font-size': '13px',
-        'line-height': 1.5,
+        'font-size': '12px',
+        'font-weight': 600,
+        'line-height': '16px',
+        'letter-spacing': '1px',
         cursor: 'pointer',
         'user-select': 'none',
-        transition: 'color 120ms ease-out, border-color 120ms ease-out',
+        transition: 'color 120ms ease-out, background-color 120ms ease-out',
     },
-    '.ezco-mde-body > .ezco-mde-fold:hover': {
+    '.ezco-mde-fold-ellipsis:hover, .ezco-mde-fold-ellipsis:focus-visible': {
         color: 'var(--ezco-mde-fg)',
-        'border-color': 'var(--ezco-mde-context-menu-item-color-muted)',
-    },
-    '.ezco-mde-fold-text': {
-        flex: '1 1 auto',
-        'min-width': 0,
-        overflow: 'hidden',
-        'white-space': 'nowrap',
-        'text-overflow': 'ellipsis',
-    },
-    '.ezco-mde-fold-count': {
-        flex: 'none',
-        padding: '0 7px',
-        'border-radius': '999px',
-        'font-size': '11px',
-        'line-height': '17px',
-        background: 'var(--ezco-mde-code-bg)',
+        background: 'color-mix(in srgb, var(--ezco-mde-accent) 18%, var(--ezco-mde-code-bg))',
+        outline: 'none',
     },
     // Codeblocks have their own sticky toolbar at the top of the
     // block. Align the indicator icon's stuck position with that
@@ -1135,6 +1154,19 @@ export const styleModule: StyleModule = new StyleModule({
     },
     '.ezco-mde-context-menu-item-label': {
         flex: 1,
+    },
+    // The check at the end of the chosen one of a set of items (a callout's
+    // kind): there on every item of the set, shown on the chosen one, so the
+    // labels line up.
+    '.ezco-mde-context-menu-check': {
+        flex: 'none',
+        width: '14px',
+        'text-align': 'center',
+        'font-size': '12px',
+        opacity: 0,
+    },
+    '.ezco-mde-context-menu-item[role="menuitemradio"][aria-checked="true"] > .ezco-mde-context-menu-check': {
+        opacity: 1,
     },
     // A setting's state at its item's end: a switch, filled with the accent
     // when the setting is on. On the focused row (the accent) the track is
@@ -1584,7 +1616,7 @@ export const styleModule: StyleModule = new StyleModule({
         'min-width': '0',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         color: 'var(--ezco-mde-toolbar-muted, var(--ezco-mde-context-menu-item-color-muted))',
-        'padding-right': '8px',
+        'padding-right': '6px',
         'text-align': 'left',
     },
     '.ezco-mde-toolbar .cm-toolbar-input': {
@@ -1633,13 +1665,17 @@ export const styleModule: StyleModule = new StyleModule({
         width: 'auto',
         'min-width': '0',
     },
+    // The lines between the list's sections (toolbar-core.ts), in the menus' rule colour.
+    '.ezco-mde-toolbar .cm-search-separator': {
+        margin: '4px 8px',
+        background: 'var(--ezco-mde-context-menu-border)',
+    },
     '.ezco-mde-toolbar .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
         width: 'auto',
         'min-width': '0',
-        // Roomier gap between the result icon and its label. 1.5ch of padding
-        // lands the *visible* glyph about a character clear of the text once
-        // the icon glyph's own right-side bearing is accounted for.
-        'padding-right': '1.5ch',
+        // The icon's drawn width is its advance width (the font's Propo
+        // build), so this gap is what is seen.
+        'padding-right': '6px',
         'font-size': 'var(--ezco-mde-toolbar-font-size, var(--ezco-mde-text-xs))',
         'text-align': 'left',
         color: 'var(--ezco-mde-context-menu-item-color-muted)',
@@ -1923,70 +1959,72 @@ export const styleModule: StyleModule = new StyleModule({
         'margin-top': '0.5em',
     },
 
-    // Callouts (extensions/callout.ts): a tinted box in the kind's colour with
-    // its icon; the title in the colour; a collapsed callout shows only it.
+    // Callouts (extensions/callout.ts): a quote with a kind. The kind's
+    // colour runs down the left edge and tints the box (no radius: it is a
+    // rule in the margin, as a quote's is, not a card), its icon stands
+    // before the title in the colour, and a foldable callout's chevron at
+    // the title's end. The three are the columns of a grid, so the icon and
+    // the chevron stand on the title's first line (each a line tall, `1lh`)
+    // without being placed by hand. The colours are set on anything that
+    // carries `data-callout-type` (the block, the kind menu's rows), so one
+    // table serves both.
     '.ezco-mde-body .ezco-mde-callout': {
-        position: 'relative',
-        padding: '0.6em 0.9em 0.6em 2.4em',
+        display: 'grid',
+        'grid-template-columns': 'auto minmax(0, 1fr) auto',
+        'column-gap': '0.55em',
+        'align-items': 'start',
+        padding: '0.5em 0.8em 0.6em 0.7em',
         'border-left': '3px solid var(--ezco-mde-callout-color, #448aff)',
-        'border-radius': '6px',
-        background: 'color-mix(in srgb, var(--ezco-mde-callout-color, #448aff) 9%, transparent)',
+        background: 'color-mix(in srgb, var(--ezco-mde-callout-color, #448aff) 7%, transparent)',
     },
-    '.ezco-mde-callout[data-callout-type="note"]': { '--ezco-mde-callout-color': '#448aff' },
-    '.ezco-mde-callout[data-callout-type="note"] > .ezco-mde-callout-icon::before': { content: '"✎"' },
-    '.ezco-mde-callout[data-callout-type="abstract"]': { '--ezco-mde-callout-color': '#00b0ff' },
-    '.ezco-mde-callout[data-callout-type="abstract"] > .ezco-mde-callout-icon::before': { content: '"☰"' },
-    '.ezco-mde-callout[data-callout-type="info"]': { '--ezco-mde-callout-color': '#00b8d4' },
-    '.ezco-mde-callout[data-callout-type="info"] > .ezco-mde-callout-icon::before': { content: '"ℹ"' },
-    '.ezco-mde-callout[data-callout-type="todo"]': { '--ezco-mde-callout-color': '#448aff' },
-    '.ezco-mde-callout[data-callout-type="todo"] > .ezco-mde-callout-icon::before': { content: '"☐"' },
-    '.ezco-mde-callout[data-callout-type="tip"]': { '--ezco-mde-callout-color': '#00bfa5' },
-    '.ezco-mde-callout[data-callout-type="tip"] > .ezco-mde-callout-icon::before': { content: '"✦"' },
-    '.ezco-mde-callout[data-callout-type="success"]': { '--ezco-mde-callout-color': '#00c853' },
-    '.ezco-mde-callout[data-callout-type="success"] > .ezco-mde-callout-icon::before': { content: '"✓"' },
-    '.ezco-mde-callout[data-callout-type="question"]': { '--ezco-mde-callout-color': '#64dd17' },
-    '.ezco-mde-callout[data-callout-type="question"] > .ezco-mde-callout-icon::before': { content: '"?"' },
-    '.ezco-mde-callout[data-callout-type="warning"]': { '--ezco-mde-callout-color': '#ff9100' },
-    '.ezco-mde-callout[data-callout-type="warning"] > .ezco-mde-callout-icon::before': { content: '"⚠"' },
-    '.ezco-mde-callout[data-callout-type="failure"]': { '--ezco-mde-callout-color': '#ff5252' },
-    '.ezco-mde-callout[data-callout-type="failure"] > .ezco-mde-callout-icon::before': { content: '"✗"' },
-    '.ezco-mde-callout[data-callout-type="danger"]': { '--ezco-mde-callout-color': '#ff1744' },
-    '.ezco-mde-callout[data-callout-type="danger"] > .ezco-mde-callout-icon::before': { content: '"⚡"' },
-    '.ezco-mde-callout[data-callout-type="bug"]': { '--ezco-mde-callout-color': '#f50057' },
-    '.ezco-mde-callout[data-callout-type="bug"] > .ezco-mde-callout-icon::before': { content: '"✱"' },
-    '.ezco-mde-callout[data-callout-type="example"]': { '--ezco-mde-callout-color': '#7c4dff' },
-    '.ezco-mde-callout[data-callout-type="example"] > .ezco-mde-callout-icon::before': { content: '"☷"' },
-    '.ezco-mde-callout[data-callout-type="quote"]': { '--ezco-mde-callout-color': '#9e9e9e' },
-    '.ezco-mde-callout[data-callout-type="quote"] > .ezco-mde-callout-icon::before': { content: '"❝"' },
-    '.ezco-mde-callout-icon': {
-        position: 'absolute',
-        left: '0.55em',
-        top: '0.55em',
+    '[data-callout-type="note"]': { '--ezco-mde-callout-color': '#448aff' },
+    '[data-callout-type="abstract"]': { '--ezco-mde-callout-color': '#00b0ff' },
+    '[data-callout-type="info"]': { '--ezco-mde-callout-color': '#00b8d4' },
+    '[data-callout-type="todo"]': { '--ezco-mde-callout-color': '#448aff' },
+    '[data-callout-type="tip"]': { '--ezco-mde-callout-color': '#00bfa5' },
+    '[data-callout-type="success"]': { '--ezco-mde-callout-color': '#00c853' },
+    '[data-callout-type="question"]': { '--ezco-mde-callout-color': '#64dd17' },
+    '[data-callout-type="warning"]': { '--ezco-mde-callout-color': '#ff9100' },
+    '[data-callout-type="failure"]': { '--ezco-mde-callout-color': '#ff5252' },
+    '[data-callout-type="danger"]': { '--ezco-mde-callout-color': '#ff1744' },
+    '[data-callout-type="bug"]': { '--ezco-mde-callout-color': '#f50057' },
+    '[data-callout-type="example"]': { '--ezco-mde-callout-color': '#7c4dff' },
+    '[data-callout-type="quote"]': { '--ezco-mde-callout-color': '#9e9e9e' },
+    // The icon is the menu of kinds: a button a line tall, lit on hover.
+    '.ezco-mde-callout-icon, .ezco-mde-callout-fold': {
+        display: 'flex',
+        'align-items': 'center',
+        'justify-content': 'center',
         width: '1.4em',
-        height: '1.4em',
+        height: '1lh',
+        margin: 0,
         padding: 0,
         border: 'none',
+        'border-radius': '3px',
         background: 'transparent',
         color: 'var(--ezco-mde-callout-color, #448aff)',
-        cursor: 'pointer',
         font: 'inherit',
-        'line-height': 1.4,
-    },
-    '.ezco-mde-callout-fold': {
-        position: 'absolute',
-        right: '0.5em',
-        top: '0.55em',
-        padding: 0,
-        border: 'none',
-        background: 'transparent',
-        color: 'var(--ezco-mde-callout-color, #448aff)',
+        'font-weight': 600,
         cursor: 'pointer',
-        transition: 'transform 120ms ease',
+        'user-select': 'none',
+        transition: 'background-color 120ms ease-out',
+    },
+    '.ezco-mde-callout-icon:hover, .ezco-mde-callout-icon[aria-expanded="true"], .ezco-mde-callout-fold:hover': {
+        background: 'color-mix(in srgb, var(--ezco-mde-callout-color, #448aff) 16%, transparent)',
+    },
+    '.ezco-mde-callout-icon:focus-visible, .ezco-mde-callout-fold:focus-visible': {
+        outline: '2px solid var(--ezco-mde-callout-color, #448aff)',
+        'outline-offset': '1px',
+    },
+    '.ezco-mde-callout-fold[hidden]': {
+        display: 'none',
     },
     '.ezco-mde-callout-fold::before': {
         content: '"▾"',
+        display: 'block',
+        transition: 'transform 120ms ease',
     },
-    '.ezco-mde-callout.is-collapsed > .ezco-mde-callout-fold': {
+    '.ezco-mde-callout.is-collapsed > .ezco-mde-callout-fold::before': {
         transform: 'rotate(-90deg)',
     },
     '.ezco-mde-callout.is-collapsed > .ezco-mde-callout-content > :not(.ezco-mde-callout-title)': {
@@ -1995,6 +2033,12 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde-body .ezco-mde-callout-title': {
         color: 'var(--ezco-mde-callout-color, #448aff)',
         'font-weight': 600,
+    },
+    // The menu of kinds (`CalloutKindMenu`): the slash menu's rows, each
+    // kind's icon in its colour on a tint of it.
+    '.ezco-mde-callout-menu .ezco-mde-slash-item-icon': {
+        color: 'var(--ezco-mde-callout-color, #448aff)',
+        background: 'color-mix(in srgb, var(--ezco-mde-callout-color, #448aff) 14%, transparent)',
     },
     '.ezco-mde-body .ezco-mde-callout-title:has(> br.ProseMirror-trailingBreak:only-child)::before': {
         content: 'var(--ezco-mde-callout-default-title)',

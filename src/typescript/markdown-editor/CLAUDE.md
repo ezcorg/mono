@@ -214,3 +214,24 @@ demo. So, for any change that shows:
   Only a widget's own box may be styled directly (its mutations are
   ignored). WAAPI animations are no mutation, so a row can still be
   animated on the element.
+- The icon font is the Nerd Font's *Propo* build
+  (`public/fonts/UbuntuMonoNerdFontPropo-Regular.ttf`, the same file in
+  codeblock, eznote and ezco-web). Its icons' advance widths are their
+  drawn widths, so an icon centred or right-aligned by its box lands where
+  it looks; the plain build keeps every icon to one cell and overhangs the
+  next, which put every icon a few pixels right of centre. Letters stay
+  monospace, so `ch` still measures a cell. Icon columns are padded `3px`
+  (CodeMirror's gutter padding), no longer `1ch + 3px`.
+- CodeMirror's base theme makes `.cm-scroller` a flex box with
+  `!important`: hiding it (a folded code block, the folded front matter)
+  needs `display: none !important`.
+- The menus that filter by typing without a trigger in the text (the
+  callout kinds, `CalloutKindMenu`) take their keys on the document in the
+  capture phase, ahead of ProseMirror, so nothing lands in the note while
+  they stand; `SuggestionMenu` takes a `rect` to open by a button instead
+  of a range, and `show()` a selected index.
+- A fold's head keeps `max-height: 1lh` with `overflow: hidden`
+  (content-box, so a padded block's first line is whole); the ellipsis is
+  a widget *between* blocks, placed by script at the first line's end
+  (`FoldMarks` in folding.ts), since a mark inside the head would be cut
+  with the head's second line.

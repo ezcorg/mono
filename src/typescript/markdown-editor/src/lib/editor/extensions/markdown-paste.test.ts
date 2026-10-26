@@ -124,6 +124,21 @@ describe('Markdown block-level paste', () => {
         expect(getMarkdownContent(editor)).toBe('Start here\n\n* one\n* two\n\nend.')
     })
 
+    it('pastes a callout whole: a block of its own, the paragraph at the caret split around it', () => {
+        editor.commands.setContent('StartEnd.')
+        editor.commands.setTextSelection(posOf(editor, 'End'))
+        expect(pasteText('> [!warning] Mind the gap\n> The body.')).toBe(true)
+        expect(kinds()).toEqual(['paragraph', 'callout', 'paragraph'])
+        expect(getMarkdownContent(editor)).toBe('Start\n\n> [!warning] Mind the gap\n> The body.\n\nEnd.')
+        // On an empty line: the callout in its place.
+        editor.commands.setContent('Before.\n\nAfter.')
+        editor.commands.insertContentAt(9, { type: 'paragraph' })
+        editor.commands.setTextSelection(10)
+        expect(editor.state.selection.$from.parent.textContent).toBe('')
+        expect(pasteText('> [!tip] Hint\n> Body.')).toBe(true)
+        expect(getMarkdownContent(editor)).toBe('Before.\n\n> [!tip] Hint\n> Body.\n\nAfter.')
+    })
+
     it('pastes Windows line endings as the same blocks', () => {
         expect(pasteText('# Title\r\n\r\nOne.\r\n\r\nTwo.')).toBe(true)
         expect(kinds()).toEqual(['heading', 'paragraph', 'paragraph'])

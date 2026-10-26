@@ -73,6 +73,9 @@ describe('The toolbar as a command palette', () => {
         const labels = () => results(container).map((r) => r.querySelector('.cm-search-result-label')?.textContent)
         await waitFor(() => labels().join() === '> Callout', 3000)
         results(container).find((r) => r.textContent?.includes('> Callout'))!.click()
+        // The command asks the kind first (callout.ts); the one selected is taken.
+        await waitFor(() => !!document.querySelector('.ezco-mde-callout-menu'), 3000)
+        await userEvent.keyboard('{Enter}')
         await waitFor(() => editor.state.doc.lastChild?.type.name === 'callout' || editor.state.doc.child(1)?.type.name === 'callout', 3000)
     })
 

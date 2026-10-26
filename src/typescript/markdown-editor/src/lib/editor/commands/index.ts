@@ -72,10 +72,13 @@ export const defaultSlashCommands: SlashCommand[] = [
     },
     {
         title: 'Callout',
-        description: 'A highlighted note, tip or warning',
+        description: 'A note, tip, warning… of a kind you choose next',
         icon: '!',
+        // The kinds are asked for in a menu of their own under the caret
+        // (callout.ts, `chooseCalloutKind`), typed to filter: `/callout`,
+        // `war`, Enter writes a warning.
         command: ({ editor, range }) =>
-            editor.chain().focus().deleteRange(range).setCallout('note').run(),
+            editor.chain().focus().deleteRange(range).chooseCalloutKind().run(),
     },
     {
         title: 'Math block',
