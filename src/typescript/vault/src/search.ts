@@ -89,7 +89,23 @@ export class SearchIndex {
         const q = query.trim()
         if (!q) return []
         const limit = options.limit ?? 50
-        const results = this.index.search(q, options.content === false ? { fields: PATH_FIELDS } : undefined).slice(0, limit)
+        const needle = q.toLowerCase()
+        // The file the query names outranks whatever else mentions its words:
+        // MiniSearch scores `test.md` by how often "test" and "md" occur, so a
+        // note that says "test" in every line would stand above the file
+        // called `test.md`. A path or name that is the query comes first, one
+        // that starts with it next, then the index's own order.
+        const named = (r: { path: string }): number => {
+            const path = (r.path as string).toLowerCase()
+            const name = basename(path)
+            if (path === needle || name === needle) return 0
+            if (path.startsWith(needle) || name.startsWith(needle)) return 1
+            return 2
+        }
+        const results = this.index
+            .search(q, options.content === false ? { fields: PATH_FIELDS } : undefined)
+            .sort((a, b) => named(a as { path: string }) - named(b as { path: string }) || b.score - a.score)
+            .slice(0, limit)
         const terms = q.toLowerCase().split(/\s+/).filter(Boolean)
         return Promise.all(
             results.map(async (r): Promise<SearchHit> => {
