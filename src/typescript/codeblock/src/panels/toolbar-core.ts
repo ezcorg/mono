@@ -266,7 +266,13 @@ export function isFileResult(result: SearchResult): result is FileResult {
     return 'match' in result && 'path' in result;
 }
 
-// Nerd font injection (idempotent)
+// Nerd font injection (idempotent). The "Propo" build of the font: its
+// icons' advance widths are their drawn widths, so an icon centred or
+// right-aligned by its box lands where it looks. (The plain build keeps
+// every icon to one text cell and lets the drawing overhang to the right
+// by about another cell, which put every icon a few pixels right of where
+// its box was.) Letters and digits stay monospace in both builds, so `ch`
+// still measures a text cell.
 let nerdFontInjected = false;
 function injectNerdFontFace() {
     if (nerdFontInjected) return;
@@ -274,7 +280,7 @@ function injectNerdFontFace() {
     const style = document.createElement('style');
     style.textContent = `@font-face {
   font-family: 'UbuntuMono NF';
-  src: url('/fonts/UbuntuMonoNerdFont-Regular.ttf') format('truetype');
+  src: url('/fonts/UbuntuMonoNerdFontPropo-Regular.ttf') format('truetype');
   font-weight: normal;
   font-style: normal;
   font-display: swap;
@@ -327,11 +333,13 @@ const toolbarStyleModule = new StyleModule({
         minWidth: 'var(--cm-icon-col-width, 2em)',
         display: 'flex',
     },
+    // The icon's drawn right edge sits where the line numbers' does: 3px
+    // (CodeMirror's gutter padding) in from the column's edge.
     '.cm-toolbar-state-icon': {
         fontSize: FS,
         color: 'var(--cm-foreground)',
         fontFamily: 'var(--cm-icon-font-family)',
-        paddingRight: 'calc(1ch + 3px)',
+        paddingRight: '3px',
         textAlign: 'right',
         boxSizing: 'border-box',
         width: 'var(--cm-gutter-lineno-width, 2em)',
@@ -381,7 +389,7 @@ const toolbarStyleModule = new StyleModule({
             '& > .cm-search-result-icon': {
                 fontSize: FS,
                 textAlign: 'right',
-                paddingRight: 'calc(1ch + 3px)',
+                paddingRight: '3px',
                 boxSizing: 'border-box',
                 width: 'var(--cm-gutter-lineno-width, 2em)',
                 minWidth: 'var(--cm-icon-col-width, 2em)',
@@ -410,6 +418,12 @@ const toolbarStyleModule = new StyleModule({
             overflow: 'hidden',
             textOverflow: 'ellipsis',
         },
+    },
+    // A line between the list's sections (files, file commands, actions, settings).
+    '.cm-search-separator': {
+        height: '1px',
+        margin: '3px 0',
+        background: 'color-mix(in srgb, var(--cm-search-result-color) 18%, transparent)',
     },
 });
 
@@ -642,6 +656,16 @@ export class ToolbarCore {
         commands.push({ id: 'Import file(s)', type: 'import-local-files', icon: '\uf15b', query: '' });
         commands.push({ id: 'Import folder', type: 'import-local-folder', icon: FOLDER_ICON, query: '' });
 
+        // Delete, last of the file commands: the file the query names (the
+        // open one, when the field was only clicked into), asked about
+        // before it goes. The Delete key on a result does the same, less
+        // visibly. Never first: a bare Enter on an untouched field lands on
+        // "Save as".
+        if (hasExactFileMatch) {
+            const { file } = ToolbarCore.splitLines(query.trim());
+            commands.push({ id: `Delete "${file}"`, type: 'delete-file', icon: TRASH_ICON, query: file });
+        }
+
         // File actions
         if (hasValidFile && currentPath) {
             const ext = currentPath.split('.').pop()?.toLowerCase() || '';
@@ -660,22 +684,14 @@ export class ToolbarCore {
             commands.push({ id: 'Go forward', type: 'file-action', icon: '\uf061', query: '', action: () => this.host.goForward?.() });
         }
 
-        // Settings
-        if (this.host.buildSettingsEntries) {
-            commands.push({ id: 'Settings', type: 'settings', icon: COG_ICON, query: '' });
-        }
-
         // The host's own commands, matched against the query.
         for (const command of this.host.commands?.(query) ?? []) {
             commands.push({ id: command.id, type: 'host-command', icon: command.icon ?? '\uf120', query, action: () => command.run() });
         }
 
-        // Delete, last: the file the query names (the open one, when the field
-        // was only clicked into), asked about before it goes. The Delete key
-        // on a result does the same, less visibly.
-        if (hasExactFileMatch) {
-            const { file } = ToolbarCore.splitLines(query.trim());
-            commands.push({ id: `Delete "${file}"`, type: 'delete-file', icon: TRASH_ICON, query: file });
+        // Settings, last: not about the file or the note, and wanted least often.
+        if (this.host.buildSettingsEntries) {
+            commands.push({ id: 'Settings', type: 'settings', icon: COG_ICON, query: '' });
         }
 
         return commands;
@@ -699,14 +715,28 @@ export class ToolbarCore {
      * Analyze input query to detect user intent using heuristics.
      * Returns a confidence-weighted intent.
      */
-    /** True when `query` refers to a file that already exists — either the top
-     *  search hit is an exact path match, or it's literally the open file. Used
-     *  to tell "open/search this file" apart from "create this new file". */
+    /** True when `query` refers to a file that already exists — either the
+     *  search found a file at exactly that path, or it's literally the open
+     *  file. Used to tell "open/search this file" apart from "create this
+     *  new file". */
     private queryMatchesExistingFile(query: string, searchResults: SearchResult[]): boolean {
         const currentPath = this.getCurrentFilePath();
         const { file } = ToolbarCore.splitLines(query);
-        return (searchResults.length > 0 && searchResults[0].id === file) ||
+        return searchResults.some((r) => r.id === file) ||
             (currentPath !== null && currentPath === file);
+    }
+
+    /** The section of the list a result stands in, a line between one
+     *  section and the next: the files found, the commands about files
+     *  (save, create, rename, open, import, delete), what the file or the
+     *  host can do, and the settings. */
+    private static sectionOf(result: VisibleItem): string {
+        if (result === SHOW_MORE_SENTINEL || !isCommandResult(result)) return 'files';
+        switch (result.type) {
+            case 'settings': return 'settings';
+            case 'file-action': case 'host-command': return 'actions';
+            default: return 'file';
+        }
     }
 
     /** A complete filename with an extension, e.g. `readme.md`, `src/main.ts`. */
@@ -939,6 +969,14 @@ export class ToolbarCore {
         for (const cmd of trailingCommands) this.visibleItems.push(cmd);
 
         this.visibleItems.forEach((item, i) => {
+            // A line between one section and the next. Not a row: the arrows
+            // pass over it (`highlightSelection` counts `.cm-search-result`s).
+            if (i > 0 && ToolbarCore.sectionOf(this.visibleItems[i - 1]) !== ToolbarCore.sectionOf(item)) {
+                const line = document.createElement("li");
+                line.className = "cm-search-separator";
+                line.setAttribute("role", "separator");
+                children.push(line);
+            }
             if (item === SHOW_MORE_SENTINEL) {
                 const li = document.createElement("li");
                 li.className = "cm-search-result cm-show-more-result";
@@ -965,9 +1003,10 @@ export class ToolbarCore {
         if (sel) sel.scrollIntoView({ block: 'nearest' });
     }
 
+    /** The rest of the files shown. The selection stays where it was: on
+     *  the "Show more" row's index, which is now the first file it hid. */
     private expandResults() {
         this.resultsExpanded = true;
-        this.selectedIndex = 0;
         this.updateDropdown();
     }
 

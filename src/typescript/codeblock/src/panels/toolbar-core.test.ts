@@ -206,3 +206,91 @@ describe('Deleting a file from the field', () => {
         core.dom.remove();
     });
 });
+
+describe('The list, in sections', () => {
+    if (!Element.prototype.scrollIntoView) Element.prototype.scrollIntoView = () => {};
+    const press = (core: ToolbarCore, key: string) => core.input.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    const rows = (core: ToolbarCore) => [...core.dom.querySelectorAll<HTMLElement>('.cm-search-results > li')];
+    const labels = (core: ToolbarCore) => rows(core).map((li) => (li.matches('.cm-search-separator') ? '---' : li.querySelector('.cm-search-result-label')!.textContent));
+    const settle = () => new Promise((r) => setTimeout(r, 20));
+    const hit = (path: string) => ({ path, score: 1, match: 'path' as const });
+
+    it('divides the open file’s commands from the host’s and from the settings, Delete among the file’s and Settings last', async () => {
+        const core = new ToolbarCore({
+            fs: memoryVfs({ 'notes/a.md': '# A' }),
+            filepath: 'notes/a.md',
+            openFile() {},
+            getDocContent: () => '# A',
+            focusEditor() {},
+            persist: async () => {},
+            closeFile() {},
+            getCurrentFilePath: () => 'notes/a.md',
+            commands: () => [{ id: 'Toggle sidebar', run() {} }],
+            buildSettingsEntries: () => [],
+        });
+        document.body.append(core.dom);
+        core.input.focus();
+        core.input.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        await settle();
+        // The field names the open file, so there is nothing to save or create it as.
+        expect(labels(core)).toEqual([
+            'Open file', 'Import file(s)', 'Import folder', 'Delete "notes/a.md"',
+            '---', 'Toggle sidebar',
+            '---', 'Settings',
+        ]);
+        // The lines are passed over: the arrows go row to row.
+        for (let i = 0; i < 4; i++) press(core, 'ArrowDown');
+        expect(core.dom.querySelector('.cm-search-result.selected .cm-search-result-label')!.textContent).toBe('Toggle sidebar');
+        core.destroy();
+        core.dom.remove();
+    });
+
+    it('keeps the selection on the row "Show more" stood on, which is the first file it hid', async () => {
+        const hits = ['notes/one.md', 'notes/two.md', 'notes/three.md', 'notes/four.md', 'notes/five.md'].map(hit);
+        const core = new ToolbarCore({
+            fs: memoryVfs({}),
+            search: { search: async () => hits },
+            openFile() {},
+            getDocContent: () => '',
+            focusEditor() {},
+            persist: async () => {},
+            closeFile() {},
+        });
+        document.body.append(core.dom);
+        core.input.focus();
+        core.input.value = 'notes';
+        core.input.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle();
+        expect(labels(core).slice(0, 4)).toEqual(['notes/one.md', 'notes/two.md', 'Show 3 more results', '---']);
+        press(core, 'ArrowDown');
+        press(core, 'ArrowDown');
+        press(core, 'Enter');
+        await settle();
+        expect(labels(core).slice(0, 6)).toEqual(['notes/one.md', 'notes/two.md', 'notes/three.md', 'notes/four.md', 'notes/five.md', '---']);
+        expect(core.dom.querySelector('.cm-search-result.selected .cm-search-result-label')!.textContent).toBe('notes/three.md');
+        core.destroy();
+        core.dom.remove();
+    });
+
+    it('knows the file a query names wherever the search ranks it', async () => {
+        const core = new ToolbarCore({
+            fs: memoryVfs({}),
+            search: { search: async () => [hit('notes/testing.md'), hit('test.md')] },
+            openFile() {},
+            getDocContent: () => '',
+            focusEditor() {},
+            persist: async () => {},
+            closeFile() {},
+        });
+        document.body.append(core.dom);
+        core.input.focus();
+        core.input.value = 'test.md';
+        core.input.dispatchEvent(new Event('input', { bubbles: true }));
+        await settle();
+        const all = labels(core);
+        expect(all).toContain('Delete "test.md"');
+        expect(all.some((l) => l?.startsWith('Create new file'))).toBe(false);
+        core.destroy();
+        core.dom.remove();
+    });
+});
