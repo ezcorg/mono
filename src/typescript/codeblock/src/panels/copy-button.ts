@@ -26,11 +26,9 @@ import { CodeblockFacet } from "../editor";
 
 // The icons are drawn so their visible content fills the viewBox's
 // right edge (front rect → x=15, stroke half-extends to x=15.75, leaving
-// only ~0.25 units of fade-out). When the SVG is positioned in the
-// toolbar's gutter slot with `right: calc(1ch + 3px)` matching the
-// state-icon's padding-right, this puts the visible right edge of the
-// icon at the same column the right-aligned nerd-font glyph painted
-// to — no leftward offset between modes.
+// only ~0.25 units of fade-out). The SVG is centred in the toolbar's
+// gutter slot over the search glyph's drawing (themes/index.ts,
+// `.cm-copy-icon-overlay`), so the two modes' icons stand on one column.
 const COPY_SVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="5" y="5" width="10" height="10" rx="1.5"/><path d="M3 11V3.5A1.5 1.5 0 0 1 4.5 2H12"/></svg>`;
 const CHECK_SVG = `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2.5 8.5L7 13L14 4.5"/></svg>`;
 const COPY_TITLE = 'Copy file to clipboard';

@@ -56,7 +56,7 @@ export const codeblockTheme = EditorView.theme({
             '& > .cm-search-result-icon': {
                 fontSize: FS,
                 textAlign: 'right',
-                paddingRight: 'calc(1ch + 3px)',
+                paddingRight: '3px',
                 boxSizing: 'border-box',
                 width: 'var(--cm-gutter-lineno-width)',
                 minWidth: 'var(--cm-icon-col-width, 2ch)',
@@ -90,12 +90,13 @@ export const codeblockTheme = EditorView.theme({
         display: 'flex',
     },
     // Icon right-aligned to match CM's right-aligned line numbers.
-    // padding-right: 3px matches CM's .cm-gutterElement right padding.
+    // padding-right: 3px matches CM's .cm-gutterElement right padding (the
+    // icon font's drawn width is its advance width, so the drawing ends there).
     '.cm-toolbar-state-icon': {
         fontSize: FS,
         color: 'var(--cm-foreground)',
         fontFamily: 'var(--cm-icon-font-family)',
-        paddingRight: 'calc(1ch + 3px)',
+        paddingRight: '3px',
         textAlign: 'right',
         boxSizing: 'border-box',
         width: 'var(--cm-gutter-lineno-width)',
@@ -463,24 +464,14 @@ export const codeblockTheme = EditorView.theme({
         position: 'relative',
     },
     '.cm-copy-icon-overlay': {
-        // Center the SVG over the glyph's character cell rather than
-        // right-aligning the box. The glyph sits in a `1ch`-wide cell
-        // whose right edge is at `padding-right` (= `calc(1ch + 3px)`)
-        // from the container's right; the cell's *center* is therefore
-        // at `calc(1.5ch + 3px)` from the right. Anchor the SVG's
-        // center there with `right` + `translateX(50%)`. This matters
-        // because `1ch` is typically narrower than `1em` (nerd-font's
-        // monospace `ch` ≈ 0.6em), so right-aligning a 1em-wide SVG
-        // puts its visible *center* a few pixels left of the glyph's
-        // visible center — exactly the offset users notice.
+        // Center the SVG over the search glyph's drawing rather than
+        // right-aligning the box. The glyph is drawn 0.92em wide (the icon
+        // font's advance is its drawn width) ending at `padding-right`
+        // (3px) from the container's right, so its centre is 0.46em further
+        // in. Anchor the SVG's centre there with `right` + `translateX(50%)`.
         position: 'absolute',
         top: '50%',
-        // `calc(1.5ch + 3px)` puts the SVG center on the glyph cell's
-        // center mathematically; the subtracted `2px` nudges it
-        // slightly right to land on the nerd-font glyph's *visible*
-        // center (the search icon's ink isn't perfectly centered in
-        // its character cell — sits a touch left of geometric centre).
-        right: 'calc(1.5ch + 1px)',
+        right: 'calc(3px + 0.46em)',
         transform: 'translate(50%, -50%)',
         width: '1em',
         height: '1em',

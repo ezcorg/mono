@@ -450,7 +450,7 @@ function injectNerdFontFace() {
     const style = document.createElement('style');
     style.textContent = `@font-face {
   font-family: 'UbuntuMono NF';
-  src: url('/fonts/UbuntuMonoNerdFont-Regular.ttf') format('truetype');
+  src: url('/fonts/UbuntuMonoNerdFontPropo-Regular.ttf') format('truetype');
   font-weight: normal;
   font-style: normal;
   font-display: swap;

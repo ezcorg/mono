@@ -89,9 +89,9 @@ describe('MarkdownEditor layout alignment', () => {
                 cmEditor.querySelectorAll<HTMLElement>('.cm-lineNumbers .cm-gutterElement'),
             ).find(c => c.textContent?.trim().length! > 0)!
 
-            // Both elements use the same `padding-right` (1ch + 3px)
-            // and are right-aligned within their container, so their
-            // right edges should match column-for-column.
+            // Both elements use the same `padding-right` (3px) and are
+            // right-aligned within their container, so their right edges
+            // should match column-for-column.
             const stateRight = stateIcon.getBoundingClientRect().right
             const lineRight = firstNumberedCell.getBoundingClientRect().right
 
