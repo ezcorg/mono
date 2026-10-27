@@ -10,7 +10,7 @@
  * by SQLite FTS5 or the daemon. A note's title, headings and text come from
  * the one parse every index reads.
  */
-import MiniSearch from 'minisearch'
+import MiniSearch, { type SearchResult } from 'minisearch'
 import { basename, extname, normalizePath, type FileSearch, type SearchHit, type SearchOptions } from '@joinezco/storage'
 import { parseNote, type ParsedNote } from './parse.js'
 
@@ -95,8 +95,9 @@ export class SearchIndex {
         // note that says "test" in every line would stand above the file
         // called `test.md`. A path or name that is the query comes first, one
         // that starts with it next, then the index's own order.
-        const named = (r: { path: string }): number => {
-            const path = (r.path as string).toLowerCase()
+        const named = (r: SearchResult): number => {
+            // `path` is a stored field: MiniSearch types it through its index signature.
+            const path = String(r.path).toLowerCase()
             const name = basename(path)
             if (path === needle || name === needle) return 0
             if (path.startsWith(needle) || name.startsWith(needle)) return 1
@@ -104,7 +105,7 @@ export class SearchIndex {
         }
         const results = this.index
             .search(q, options.content === false ? { fields: PATH_FIELDS } : undefined)
-            .sort((a, b) => named(a as { path: string }) - named(b as { path: string }) || b.score - a.score)
+            .sort((a, b) => named(a) - named(b) || b.score - a.score)
             .slice(0, limit)
         const terms = q.toLowerCase().split(/\s+/).filter(Boolean)
         return Promise.all(
