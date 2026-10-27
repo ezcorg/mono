@@ -398,9 +398,20 @@ describe('Block actions', () => {
         const editor = await makeEditor('# Title\n\nA paragraph.\n\n* an item')
         const container = created[created.length - 1].container
         await frames()
-        // One per block (the editor may keep a paragraph after the list).
-        expect(glyphs(container).length).toBe(editor.state.doc.childCount)
+        // One per block, but none for a blank line (the editor may keep an
+        // empty paragraph after the list) unless it is the active block.
+        const blank = editor.state.doc.content.content.filter((n) => n.type.name === 'paragraph' && n.content.size === 0).length
+        expect(glyphs(container).length).toBe(editor.state.doc.childCount - blank)
         expect(glyphs(container).slice(0, 3).map((g) => g.querySelector('svg') ? 'drawn' : g.textContent)).toEqual(['H1', 'drawn', '•'])
+        if (blank) {
+            editor.commands.focus('end')
+            await frames()
+            expect(editor.state.selection.$from.parent.content.size).toBe(0)
+            expect(glyphs(container).length).toBe(editor.state.doc.childCount)
+            editor.commands.focus('start')
+            await frames()
+            expect(glyphs(container).length).toBe(editor.state.doc.childCount - blank)
+        }
         // Soft, all but the active block's (the note takes focus as it is made).
         expect(glyphs(container).filter((g) => !g.classList.contains('is-active')).every((g) => parseFloat(getComputedStyle(g).opacity) < 0.5)).toBe(true)
         // A glyph stays where its block is: nothing of it slides between lines.
@@ -625,7 +636,7 @@ describe('Block actions', () => {
         await frames()
         // The paragraph stays, its first line alone, nothing gone; the caret stays in it.
         const head = paragraphs()[0]
-        expect(head.classList.contains('ezco-mde-fold-head')).toBe(true)
+        expect(head.getAttribute('data-fold')).toBe('head')
         expect(getComputedStyle(head).overflow).toBe('hidden')
         expect(head.getBoundingClientRect().height).toBeLessThan(lineBox(head).height * 1.5)
         expect(editor.storage.markdown.getMarkdown()).toBe(markdown)
@@ -649,13 +660,13 @@ describe('Block actions', () => {
         await frames()
         expect(mark()).toBeNull()
         expect(menu()).toBeNull()
-        expect(paragraphs()[0].classList.contains('ezco-mde-fold-head')).toBe(false)
+        expect(paragraphs()[0].hasAttribute('data-fold')).toBe(false)
         runAction(editor, 'paragraph', 'Fold')
         await frames()
         ellipsis()!.click()
         await frames()
         expect(mark()).toBeNull()
-        expect(paragraphs()[0].classList.contains('ezco-mde-fold-head')).toBe(false)
+        expect(paragraphs()[0].hasAttribute('data-fold')).toBe(false)
         // Two blocks spanned, folded behind the first: the caret, in what is
         // hidden, is moved out; back in the head it is left alone; arrowed
         // into what is hidden, it opens the fold.

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { userEvent } from '@vitest/browser/context'
 import { EditorView } from '@codemirror/view'
+import { getFileIcon } from '@joinezco/codeblock'
 import { foldRangeFor } from './folding'
 import { codeRuns } from './code-runs'
 import type { MarkdownEditor } from '../index'
@@ -111,6 +112,73 @@ describe('Code tabs', () => {
         // The group folds as one block: its three fences.
         const run = codeRuns(editor.state.doc)[0]
         expect(foldRangeFor(editor.state.doc, run.blocks[1].pos)).toEqual({ from: run.from, to: run.to })
+    })
+
+    it('keeps the new tab shown once it is given a file, and a merged tab’s icon on the pointer', async () => {
+        const { editor, container } = await open()
+        ;(shown(container)[0].querySelector('.cm-toolbar-tab-add') as HTMLElement).click()
+        await waitFor(() => blocks(container).length === 4 && shown(container)[0] === blocks(container)[3], 3000)
+        await waitFor(() => document.activeElement === field(shown(container)[0]), 3000)
+        await waitFor(() => shown(container)[0].querySelectorAll('.cm-search-result').length > 0, 3000)
+        // "Create new file", named: the block is given the file, and stays the shown one.
+        const create = [...shown(container)[0].querySelectorAll<HTMLElement>('.cm-search-result')].find((r) => r.textContent?.includes('Create new file'))!
+        create.click()
+        await userEvent.keyboard('made.ts{Enter}')
+        await waitFor(() => getMarkdownContent(editor).includes('```made.ts'), 4000)
+        await waitFor(() => tabs(shown(container)[0]).join() === 'ts,css,json,+', 3000)
+        expect(blocks(container).map((b) => b.getAttribute('data-tab-hidden')).join()).toBe('true,true,true,false')
+        expect(field(shown(container)[0]).value).toBe('made.ts')
+        // Pointed at, a tab that joined a group keeps its icon (the search glyph while over the field).
+        const icon = shown(container)[0].querySelector('.cm-toolbar-state-icon') as HTMLElement
+        field(shown(container)[0]).blur()
+        await waitFor(() => icon.textContent === getFileIcon('made.ts').glyph, 2000)
+        const atRest = icon.textContent
+        shown(container)[0].querySelector('.cm-toolbar-tabs-before')!.dispatchEvent(new PointerEvent('pointerenter'))
+        expect(icon.textContent).toBe(atRest)
+        shown(container)[0].querySelector('.cm-toolbar-input-container')!.dispatchEvent(new PointerEvent('pointerenter'))
+        expect(icon.textContent).not.toBe('')
+        expect(icon.textContent).not.toBe(atRest)
+        shown(container)[0].querySelector('.cm-toolbar-input-container')!.dispatchEvent(new PointerEvent('pointerleave'))
+        expect(icon.textContent).toBe(atRest)
+    })
+
+    it('scrolls the tabs sideways once they outgrow the bar, bringing the shown tab into view, the wheel scrolling them', async () => {
+        const many = Array.from({ length: 14 }, (_, i) => `\`\`\`file-number-${i}.ts\nconst v${i} = ${i}\n\`\`\``).join('\n\n')
+        const made = make({ content: `# Many\n\n${many}\n\nAfter.`, size: { width: 560, height: 500, scroll: true } })
+        const { editor, container } = made
+        await waitFor(() => blocks(container).length === 14 && blocks(container).every((b) => !!b.querySelector('.cm-toolbar-input')), 8000)
+        await waitFor(() => shown(container).length === 1, 2000)
+        const strip = () => shown(container)[0].querySelector('.cm-toolbar-strip') as HTMLElement
+        await waitFor(() => strip().scrollWidth > strip().clientWidth, 2000)
+        await new Promise((r) => requestAnimationFrame(r))
+        // Nothing past the block: the strip clips and scrolls; more lies to the right.
+        const block = shown(container)[0].getBoundingClientRect()
+        expect(strip().getBoundingClientRect().right).toBeLessThanOrEqual(block.right + 1)
+        expect(strip().scrollWidth).toBeGreaterThan(strip().clientWidth + 200)
+        expect(strip().scrollLeft).toBe(0)
+        // The last tab shown: the strip scrolled to it, the field in view.
+        let at = 0
+        editor.state.doc.forEach((_n, o, i) => {
+            if (i === 2) at = o
+        })
+        editor.commands.activateCodeTab(at, 13)
+        await waitFor(() => shown(container)[0] === blocks(container)[13], 3000)
+        await waitFor(() => strip().scrollLeft > 0, 3000)
+        const f = field(shown(container)[0]).getBoundingClientRect()
+        const r = strip().getBoundingClientRect()
+        expect(f.left).toBeGreaterThanOrEqual(r.left)
+        expect(f.right).toBeLessThanOrEqual(r.right + 1)
+        // The dropdown hangs from the field where it is now shown.
+        field(shown(container)[0]).focus()
+        field(shown(container)[0]).click()
+        await waitFor(() => shown(container)[0].querySelectorAll('.cm-search-result').length > 0, 3000)
+        const drop = shown(container)[0].querySelector('.cm-search-results')!.getBoundingClientRect()
+        expect(Math.abs(drop.left - shown(container)[0].querySelector('.cm-toolbar-input-container')!.getBoundingClientRect().left)).toBeLessThanOrEqual(1)
+        await userEvent.keyboard('{Escape}')
+        // The wheel, turned down, scrolls the strip back.
+        const before = strip().scrollLeft
+        strip().dispatchEvent(new WheelEvent('wheel', { deltaY: -200, deltaX: 0, bubbles: true, cancelable: true }))
+        await waitFor(() => strip().scrollLeft < before, 2000)
     })
 
     it('keeps the slash command’s fence apart from a group too', async () => {

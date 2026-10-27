@@ -197,6 +197,14 @@ describe('ContextMenu, in sections', () => {
             items: sectioned(actions, (a) => ({ label: a.label, onSelect: () => ran.push(a.label) })),
         })
         document.body.append(menu.dom)
+        // The pointer parked in a far corner: the rows take the focus on
+        // `mouseenter`, and the menu stands at the page's top left, where an
+        // earlier test may have left the pointer, under the arrow keys.
+        const corner = document.createElement('div')
+        corner.style.cssText = 'position: fixed; right: 0; bottom: 0; width: 8px; height: 8px;'
+        document.body.append(corner)
+        await userEvent.hover(corner)
+        corner.remove()
         menu.enable()
         menu.focus()
         try {

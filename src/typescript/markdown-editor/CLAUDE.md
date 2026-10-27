@@ -268,3 +268,28 @@ demo. So, for any change that shows:
   so none goes stale.
 - Escape in a new empty fence's field gives the fence up (it becomes a
   paragraph): the same for a fence from "+" as for a typed one.
+- The shown block of a group is kept by position, mapped with assoc -1:
+  a block given a file is `setNodeMarkup`ed (replaced around its
+  content), and mapped by the token after it that reads as deleted, which
+  made the first tab the shown one whenever a new tab picked a file.
+- The code block's bar is sticky, so it stands on the note's surface
+  (`--ezco-mde-bg`), not transparent, or the code scrolls through it.
+  The tabs' icon columns use `max(gutter, icon-col-width)`: a folded
+  block has no scroller and its gutter measures 0.
+- Only the *first* tab of a group keeps the gutter's column (its glyph on
+  the line numbers, its text on the code), active or not: `.cm-toolbar-
+  tabs-before:empty + .cm-toolbar-state-icon-container` when it is the
+  field, `.cm-toolbar-tab:first-child` when it is a tab, and the dropdown
+  follows the field (`:empty ~ .cm-search-results`). Tabs after it take a
+  fixed 26px column with the glyph right-aligned. The bar is static, not
+  sticky.
+- The toolbar's tabs and field stand in `.cm-toolbar-strip`, which
+  scrolls sideways when they outgrow the bar; the dropdown stays the
+  panel's child (the strip's overflow would cut it off) and is placed by
+  `--cm-toolbar-tab-left`, the field's offset less the strip's scroll.
+  Everything in the strip is `flex: none`: flex items shrink before a
+  container overflows, and the icon column once shrank to nothing. The
+  panel carries `cm-toolbar-first-active` when the field is first in the
+  strip; the first-tab styles key off it, not off sibling order.
+- There is no copy button any more (`copyButton`, `panels/copy-button.ts`
+  are gone): its overlay inside the state icon fought the glyph.

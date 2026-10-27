@@ -294,7 +294,10 @@ export const Folding = Extension.create({
                             const headEnd = foldHeadEnd(state.doc, fold)
                             state.doc.nodesBetween(fold.from, fold.to, (node, pos) => {
                                 if (pos >= fold.from && pos < fold.to) {
-                                    decorations.push(Decoration.node(pos, pos + node.nodeSize, { class: pos === fold.from ? 'ezco-mde-fold-head' : 'ezco-mde-folded' }))
+                                    // An attribute, not a class: CodeMirror writes a code
+                                    // block's `class` whole whenever its own changes, and
+                                    // a class ProseMirror added would go with it.
+                                    decorations.push(Decoration.node(pos, pos + node.nodeSize, { 'data-fold': pos === fold.from ? 'head' : 'hidden' }))
                                 }
                                 return false
                             })

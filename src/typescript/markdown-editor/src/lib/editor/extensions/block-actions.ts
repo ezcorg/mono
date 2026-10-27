@@ -820,7 +820,11 @@ class BlockActionsView {
         const base = this.wrapper.scrollTop - wrapperRect.top
         type Entry = { glyph: string; top: number; height: number; font: string; pos: number; type: string; fold: Fold | null }
         const entries: Entry[] = []
+        const activeShown = this.btn.style.opacity === '1' && this.activePos >= 0
         doc.forEach((node, offset) => {
+            // An empty paragraph (a blank line) has no glyph unless it is the
+            // active block: a pilcrow on every blank line is noise.
+            if (node.type.name === 'paragraph' && node.content.size === 0 && !(activeShown && offset === this.activePos)) return
             const fold = folds.find((f) => offset >= f.from && offset < f.to)
             if (fold) {
                 // The chevron at the fold's head, on its first line (the one
@@ -845,7 +849,6 @@ class BlockActionsView {
             else entries.push({ glyph, top: rect.top + base + computeIconOffsetY(dom) - 3, height: 20, font: '', pos: offset, type, fold: null })
         })
         while (this.icons.length > entries.length) this.icons.pop()!.remove()
-        const activeShown = this.btn.style.opacity === '1' && this.activePos >= 0
         const span = this.btn.style.opacity === '1' ? this.span : null
         entries.forEach((entry, i) => {
             let icon = this.icons[i]

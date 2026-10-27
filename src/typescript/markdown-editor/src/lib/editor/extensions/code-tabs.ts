@@ -161,10 +161,15 @@ export const CodeTabs = Extension.create({
                     apply(tr, value) {
                         let active = value.active
                         if (tr.docChanged) {
+                            // Mapped by the token before the block (assoc -1): a
+                            // block given a file is replaced around its content
+                            // (`setNodeMarkup`), and by the token after, that
+                            // replacement reads as the position deleted. What is
+                            // at the mapped position must still be a code block.
                             active = active
                                 .map((pos) => {
-                                    const mapped = tr.mapping.mapResult(pos, 1)
-                                    return mapped.deleted ? -1 : mapped.pos
+                                    const mapped = tr.mapping.mapResult(pos, -1)
+                                    return mapped.deletedAfter && mapped.deletedBefore ? -1 : mapped.pos
                                 })
                                 .filter((pos) => pos >= 0 && tr.doc.nodeAt(pos)?.type.name === CODE_BLOCK)
                         }

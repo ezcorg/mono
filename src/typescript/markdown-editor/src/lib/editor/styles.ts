@@ -989,27 +989,27 @@ export const styleModule: StyleModule = new StyleModule({
     // an ellipsis after the line's end; the blocks behind it are only
     // hidden (the note still has them). A code block's first line is its
     // toolbar; a table's its first row.
-    '.ezco-mde-body > .ezco-mde-folded': {
+    '.ezco-mde-body > [data-fold="hidden"]': {
         display: 'none !important',
     },
-    '.ezco-mde-body > .ezco-mde-fold-head': {
+    '.ezco-mde-body > [data-fold="head"]': {
         'max-height': '1lh',
         overflow: 'hidden',
     },
     // Padded blocks are not cut by height (the cut falls inside the
     // padding, and a sliver of the second line shows in it): a code block
     // loses its scroller, a table its other rows, a callout its body.
-    '.ezco-mde-body > .cm-editor.ezco-mde-fold-head, .ezco-mde-body > .tableWrapper.ezco-mde-fold-head, .ezco-mde-body > .ezco-mde-callout.ezco-mde-fold-head': {
+    '.ezco-mde-body > .cm-editor[data-fold="head"], .ezco-mde-body > .tableWrapper[data-fold="head"], .ezco-mde-body > .ezco-mde-callout[data-fold="head"]': {
         'max-height': 'none',
     },
-    '.ezco-mde-body > .ezco-mde-callout.ezco-mde-fold-head > .ezco-mde-callout-content > :not(.ezco-mde-callout-title)': {
+    '.ezco-mde-body > .ezco-mde-callout[data-fold="head"] > .ezco-mde-callout-content > :not(.ezco-mde-callout-title)': {
         display: 'none',
     },
     // (`!important`: CodeMirror's own base theme makes the scroller a flex box with one.)
-    '.ezco-mde-body > .cm-editor.ezco-mde-fold-head .cm-scroller': {
+    '.ezco-mde-body > .cm-editor[data-fold="head"] .cm-scroller': {
         display: 'none !important',
     },
-    '.ezco-mde-body > .tableWrapper.ezco-mde-fold-head tr + tr': {
+    '.ezco-mde-body > .tableWrapper[data-fold="head"] tr + tr': {
         display: 'none',
     },
     // The ellipsis: placed by script at the end of the head's first line,
@@ -1071,25 +1071,48 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde .ezco-mde-body > .cm-editor': {
         '--ezco-mde-cb-tab-border': 'var(--ezco-mde-context-menu-border)',
         '--ezco-mde-cb-tab-tint': 'color-mix(in srgb, var(--cm-foreground) 6%, var(--cm-background))',
+        // The icon column of the tabs and the dropdown's rows. The first
+        // tab's is the gutter's (`-gcol`, with the glyph in the line
+        // numbers' column, `-glineno`): its glyph stands on the line
+        // numbers and its text on the code, whether it is the active tab
+        // or not. Any tab after it stands clear of the gutter, and takes a
+        // roomier fixed column (`-col`) with the glyph right-aligned in it.
+        // (A folded block has no scroller and its gutter measures 0: the
+        // toolbar's least column width is the floor.)
+        '--ezco-mde-cb-col': '26px',
+        '--ezco-mde-cb-lineno': '26px',
+        '--ezco-mde-cb-gcol': 'max(var(--cm-gutter-width, 2em), var(--cm-icon-col-width, 2em))',
+        '--ezco-mde-cb-glineno': 'max(var(--cm-gutter-lineno-width, 2em), var(--cm-icon-col-width, 2em))',
         background: 'transparent',
     },
     '.ezco-mde .ezco-mde-body > .cm-editor[data-tab-hidden="true"]': {
         display: 'none !important',
     },
+    // The bar scrolls with the block (not sticky, as codeblock's own is):
+    // a bar of tabs pinned over code it does not belong to read wrong. On
+    // the note's surface still, so the tabs stand on nothing else.
     '.ezco-mde .ezco-mde-body > .cm-editor > .cm-panels.cm-panels-top': {
-        background: 'transparent',
+        position: 'static',
+        background: 'var(--ezco-mde-bg)',
         border: 'none',
         overflow: 'visible',
     },
-    // The bar: bare (0,5,0: over the rule that blends the toolbar into the
-    // block, above), the tabs standing on its bottom edge.
+    // The bar: bare but for the tabs (0,5,0: over the rule that blends the
+    // toolbar into the block, above), the tabs standing on its bottom edge.
     '.ezco-mde .ezco-mde-body > .cm-editor[data-theme] .cm-toolbar-panel': {
-        '--cm-toolbar-background': 'transparent',
+        '--cm-toolbar-background': 'var(--ezco-mde-bg)',
         position: 'relative',
         'box-sizing': 'border-box',
-        'align-items': 'flex-end',
         'min-height': '30px',
         padding: '0 8px 0 0',
+    },
+    // The strip the tabs stand in, on its bottom edge; the active tab
+    // reaches a pixel below it onto the code area's border, so the strip
+    // (which clips, scrolling sideways) keeps that pixel inside itself.
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-strip': {
+        'align-items': 'flex-end',
+        'padding-bottom': '1px',
+        'margin-bottom': '-1px',
     },
     // The code area: the surface, square under the first tab.
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-scroller': {
@@ -1098,11 +1121,18 @@ export const styleModule: StyleModule = new StyleModule({
         'border-radius': '0 8px 8px 8px',
         padding: '6px 0 7px',
     },
-    // The icon column over the active tab's left end.
+    // The icon column over the active tab's left end: the fixed column, not
+    // the gutter's width the base rules give it.
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-state-icon-container': {
         position: 'relative',
         'z-index': 3,
         'align-self': 'center',
+        width: 'var(--ezco-mde-cb-col)',
+        'min-width': 0,
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-state-icon': {
+        width: 'var(--ezco-mde-cb-lineno)',
+        'min-width': 0,
     },
     // The active tab: the field, on the code's surface, a hairline round
     // its top and sides, standing a pixel over the code area's top edge so
@@ -1110,13 +1140,14 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-input-container': {
         position: 'relative',
         'z-index': 2,
-        flex: '0 1 auto',
+        // Never squeezed by the other tabs: the strip scrolls instead.
+        flex: 'none',
         'min-width': 0,
         'box-sizing': 'border-box',
         height: '31px',
         'margin-bottom': '-1px',
-        'margin-left': 'calc(0px - var(--cm-gutter-width, 2em))',
-        'padding-left': 'var(--cm-gutter-width, 2em)',
+        'margin-left': 'calc(0px - var(--ezco-mde-cb-col))',
+        'padding-left': 'var(--ezco-mde-cb-col)',
         'padding-right': '6px',
         border: '1px solid var(--ezco-mde-cb-tab-border)',
         'border-bottom': 'none',
@@ -1128,7 +1159,9 @@ export const styleModule: StyleModule = new StyleModule({
         width: 'auto',
         'min-width': '8ch',
         'max-width': 'min(40ch, 50vw)',
-        padding: '0 4px 0 6px',
+        // The gap after the glyph (16px with the glyph's own 3px): the
+        // first tab's is the code's 6px, set below.
+        padding: '0 4px 0 13px',
         'line-height': '30px',
     },
     // The other tabs: on a tint, a little shorter, muted until pointed at.
@@ -1142,9 +1175,13 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tabs-after': {
         'margin-left': '3px',
     },
+    // Each tab's icon stands in a column the active tab's wide, its name
+    // the same gap after it, so a tab's icon and name do not move as the
+    // tab becomes the active one.
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab': {
+        gap: 0,
         height: '28px',
-        padding: '0 6px 0 9px',
+        padding: '0 6px 0 0',
         border: '1px solid var(--ezco-mde-cb-tab-border)',
         'border-bottom': 'none',
         'border-radius': '7px 7px 0 0',
@@ -1158,6 +1195,18 @@ export const styleModule: StyleModule = new StyleModule({
         background: 'color-mix(in srgb, var(--cm-foreground) 10%, var(--cm-background))',
         outline: 'none',
     },
+    // As the active tab lays its glyph out: right-aligned in the line
+    // numbers' column, the fold gutter's width and the field's 6px between
+    // it and the name.
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab > .cm-toolbar-tab-icon': {
+        'box-sizing': 'border-box',
+        width: 'var(--ezco-mde-cb-lineno)',
+        'padding-right': '3px',
+        'text-align': 'right',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab > .cm-toolbar-tab-label': {
+        padding: '0 4px 0 calc(var(--ezco-mde-cb-col) - var(--ezco-mde-cb-lineno) + 13px)',
+    },
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab.cm-toolbar-tab-add': {
         padding: '0 8px',
         border: 'none',
@@ -1168,19 +1217,21 @@ export const styleModule: StyleModule = new StyleModule({
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tab.cm-toolbar-tab-add:hover': {
         background: 'var(--ezco-mde-cb-tab-tint)',
     },
-    // The dropdown: a menu hung from the active tab, no wider than the window.
+    // The dropdown: the active tab opened. It hangs from the tab's own
+    // edges with no gap, square at the corner the tab stands on, in the
+    // tab's own hairline, so tab and list read as one piece over the code.
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-results': {
-        left: 'calc(var(--cm-toolbar-tab-left, 0px) - 5px)',
+        left: 'var(--cm-toolbar-tab-left, 0px)',
         right: 'auto',
         width: 'max-content',
         'min-width': '260px',
-        'max-width': 'min(560px, calc(100% - var(--cm-toolbar-tab-left, 0px) + 5px))',
-        'margin-top': '2px',
+        'max-width': 'min(560px, calc(100% - var(--cm-toolbar-tab-left, 0px)))',
+        'margin-top': 0,
         padding: '4px',
         'box-sizing': 'border-box',
         background: 'var(--cm-background)',
         border: '1px solid var(--ezco-mde-cb-tab-border)',
-        'border-radius': '8px',
+        'border-radius': '0 8px 8px 8px',
         'box-shadow': 'var(--ezco-mde-chrome-shadow)',
         'max-height': `calc(1.4em * 12)`,
     },
@@ -1188,18 +1239,55 @@ export const styleModule: StyleModule = new StyleModule({
         'border-radius': '4px',
         padding: '2px 6px 2px 0',
     },
+    // The rows' icon columns: the tab's less the list's own hairline and
+    // padding (5px), so the icons end on the line numbers' column and the
+    // labels start where the code does.
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-result > .cm-search-result-icon-container': {
-        width: 'var(--cm-gutter-width, 2em)',
+        width: 'calc(var(--ezco-mde-cb-col) - 5px)',
         'min-width': 0,
     },
-    // The icon's right edge on the line numbers' (the container the whole
-    // gutter's, so the label starts where the code does).
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
-        width: 'var(--cm-gutter-lineno-width, 2em)',
+        width: 'calc(var(--ezco-mde-cb-lineno) - 5px)',
         'min-width': 0,
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-result > .cm-search-result-label': {
+        padding: '0 2px 0 13px',
     },
     '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel .cm-search-separator': {
         margin: '3px 6px',
+    },
+    // The first tab, on the gutter's column. The active tab is first when
+    // no tab stands before it (the toolbar marks its panel
+    // `cm-toolbar-first-active`); the dropdown then follows the gutter
+    // too, since it hangs from that tab.
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-first-active .cm-toolbar-state-icon-container': {
+        width: 'var(--ezco-mde-cb-gcol)',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-first-active .cm-toolbar-state-icon-container > .cm-toolbar-state-icon': {
+        width: 'var(--ezco-mde-cb-glineno)',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-first-active .cm-toolbar-state-icon-container + .cm-toolbar-input-container': {
+        'margin-left': 'calc(0px - var(--ezco-mde-cb-gcol))',
+        'padding-left': 'var(--ezco-mde-cb-gcol)',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-first-active .cm-toolbar-state-icon-container + .cm-toolbar-input-container > .cm-toolbar-input': {
+        'padding-left': '6px',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel.cm-toolbar-first-active .cm-search-results .cm-search-result > .cm-search-result-icon-container': {
+        width: 'calc(var(--ezco-mde-cb-gcol) - 5px)',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel.cm-toolbar-first-active .cm-search-results .cm-search-result > .cm-search-result-icon-container > .cm-search-result-icon': {
+        width: 'calc(var(--ezco-mde-cb-glineno) - 5px)',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-panel.cm-toolbar-first-active .cm-search-results .cm-search-result > .cm-search-result-label': {
+        'padding-left': '6px',
+    },
+    // The first tab when another is active: the same column, as a tab.
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tabs-before > .cm-toolbar-tab:first-child > .cm-toolbar-tab-icon': {
+        width: 'var(--ezco-mde-cb-glineno)',
+    },
+    '.ezco-mde .ezco-mde-body > .cm-editor .cm-toolbar-tabs-before > .cm-toolbar-tab:first-child > .cm-toolbar-tab-label': {
+        'padding-left': 'calc(var(--ezco-mde-cb-gcol) - var(--ezco-mde-cb-glineno) + 6px)',
     },
     // Codeblocks have their own sticky toolbar at the top of the
     // block. Align the indicator icon's stuck position with that
