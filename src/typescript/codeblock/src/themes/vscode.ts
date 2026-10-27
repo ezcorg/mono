@@ -140,6 +140,10 @@ export const vscodeStyleMod = new StyleModule({
         "--cm-font-family":
             'Menlo, Monaco, Consolas, "Andale Mono", "Ubuntu Mono", "Courier New", monospace',
         "--cm-icon-font-family": '"UbuntuMono NF", var(--cm-font-family)',
+        /* The toolbar (the field, its dropdown, the state icon) is set 3px
+           under the code, as a title bar is under a window's text; the icon
+           columns are sized by the gutter in px, so the columns keep. */
+        "--cm-toolbar-font-size": "calc(var(--cm-font-size, 16px) - 3px)",
 
         /* Defaults to light theme */
         "--cm-background": "#ffffff",
@@ -149,24 +153,28 @@ export const vscodeStyleMod = new StyleModule({
         "--cm-selection-match": "#a8ac94",
         "--cm-line-highlight": "#99999914",
         "--cm-gutter-background": "#ffffff",
-        "--cm-gutter-foreground": "#237893",
-        "--cm-gutter-active-foreground": "#0b216f",
+        "--cm-gutter-foreground": "#8c959f",
+        "--cm-gutter-active-foreground": "#24292f",
 
-        /* Syntax colors */
-        "--cm-keyword": "#0000ff",
-        "--cm-control": "#af00db",
-        "--cm-name": "#0070c1",
-        "--cm-heading": "#0070c1",
-        "--cm-type": "#267f99",
-        "--cm-function": "#795e26",
-        "--cm-number": "#098658",
-        "--cm-operator": "#383a42",
-        "--cm-regexp": "#af00db",
-        "--cm-string": "#a31515",
-        "--cm-angle-bracket": "#383a42",
-        "--cm-comment": "#008000",
-        "--cm-link": "#4078f2",
-        "--cm-invalid": "#e45649",
+        /* Syntax colors: a quieter light palette than VS Code's (whose pure
+           blue and magenta shout on a white page), in the manner of GitHub's:
+           names in the text's own ink, keywords a deep blue, the flow of
+           control red, types rust, calls violet, strings navy. The dark
+           palette below is VS Code's own, which reads well as it is. */
+        "--cm-keyword": "#0550ae",
+        "--cm-control": "#cf222e",
+        "--cm-name": "#383a42",
+        "--cm-heading": "#0550ae",
+        "--cm-type": "#953800",
+        "--cm-function": "#8250df",
+        "--cm-number": "#0550ae",
+        "--cm-operator": "#57606a",
+        "--cm-regexp": "#0a3069",
+        "--cm-string": "#0a3069",
+        "--cm-angle-bracket": "#57606a",
+        "--cm-comment": "#6e7781",
+        "--cm-link": "#0969da",
+        "--cm-invalid": "#cf222e",
 
         /* Additional UI colors */
         "--cm-search-result-color": "var(--cm-foreground)",

@@ -34,6 +34,11 @@ import { DOMParser, Slice } from '@tiptap/pm/model'
  *    the blank lines past the one between two paragraphs are kept, each
  *    an empty paragraph (Markdown alone would fold the run into one
  *    break, and the spacing someone typed in would be gone).
+ *  - Pasted `---\nkey: value\n---` at the very top of a note that has no
+ *    front matter → the note's front matter (front-matter.ts), and what
+ *    follows it the body. Anywhere else the dashes are what the file would
+ *    read them as (a divider; `key: value` over dashes a heading), since
+ *    front matter is only ever a file's first lines.
  */
 
 /** Recognise block-level markdown constructs at the start of any line. */
@@ -124,7 +129,15 @@ export const MarkdownBlockPaste = Extension.create({
                         const parser = (editor.storage as any).markdown?.parser
                         if (!parser) return false
 
-                        const parsedHtml = parser.parse(spaced(text))
+                        // Front matter only where a file's would be: at the
+                        // very top of a note without any. Elsewhere a blank
+                        // line goes first, so the parser's front matter rule
+                        // (which reads the first line alone) sees none.
+                        const { state } = view
+                        const frontMatter = state.schema.nodes.frontMatter
+                        const { $from } = state.selection
+                        const atTop = !!frontMatter && state.doc.firstChild?.type !== frontMatter && $from.depth === 1 && $from.index(0) === 0 && $from.parentOffset === 0
+                        const parsedHtml = parser.parse((atTop ? '' : '\n') + spaced(text))
                         const container = document.createElement('div')
                         container.innerHTML = parsedHtml
 
@@ -143,7 +156,28 @@ export const MarkdownBlockPaste = Extension.create({
                         // follows the caret becomes a paragraph of its own
                         // rather than the tail of the last block pasted (a
                         // list's last item, say).
-                        const slice = /\n[ \t]*\n[ \t]*$/.test(text.replace(/\r\n?/g, '\n')) ? new Slice(parsed.content, parsed.openStart, 0) : parsed
+                        let slice = /\n[ \t]*\n[ \t]*$/.test(text.replace(/\r\n?/g, '\n')) ? new Slice(parsed.content, parsed.openStart, 0) : parsed
+                        // A callout keeps its shape. The parser opens the slice
+                        // into the first block's text so a pasted line joins the
+                        // paragraph at the caret; opened into a callout, that
+                        // would put the title's words in the paragraph and the
+                        // body after it as plain blocks, and the callout would be
+                        // gone. Closed at a callout, the slice puts the callout in
+                        // whole (the paragraph at the caret split around it).
+                        const openStart = slice.content.firstChild?.type.name === 'callout' ? 0 : slice.openStart
+                        const openEnd = slice.content.lastChild?.type.name === 'callout' ? 0 : slice.openEnd
+                        if (openStart !== slice.openStart || openEnd !== slice.openEnd) slice = new Slice(slice.content, openStart, openEnd)
+                        const first = slice.content.firstChild
+                        if (atTop && frontMatter && first?.type === frontMatter) {
+                            // The front matter goes before the note's first
+                            // block (the only place the schema has for it);
+                            // the rest where the caret is.
+                            const rest = new Slice(slice.content.cut(first.nodeSize), 0, slice.openEnd)
+                            const tr = state.tr.insert(0, first)
+                            if (rest.content.size) tr.replaceSelection(rest)
+                            view.dispatch(tr.scrollIntoView())
+                            return true
+                        }
                         view.dispatch(view.state.tr.replaceSelection(slice).scrollIntoView())
                         return true
                     },

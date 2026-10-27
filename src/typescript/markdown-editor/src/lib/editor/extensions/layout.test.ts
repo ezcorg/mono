@@ -68,8 +68,8 @@ describe('MarkdownEditor layout alignment', () => {
         return container.querySelector<HTMLElement>('.cm-editor')!
     }
 
-    describe('Codeblock toolbar gutter alignment', () => {
-        it('right-aligns the state icon glyph with the first line-number gutter cell', async () => {
+    describe('Codeblock toolbar, in its window’s title bar', () => {
+        it('keeps the glyph on the line numbers’ column, the field’s text on the code’s', async () => {
             const cmEditor = await getCodeblockEditor()
             await waitForRect('.cm-toolbar-state-icon-container', cmEditor)
             await waitForRect('.cm-lineNumbers', cmEditor)
@@ -84,18 +84,33 @@ describe('MarkdownEditor layout alignment', () => {
             // layout settle for a frame before comparing edges.
             await new Promise(r => requestAnimationFrame(() => r(null)))
 
-            const stateIcon = find('.cm-toolbar-state-icon', cmEditor)!
+            const stateIcon = find<HTMLElement>('.cm-toolbar-state-icon', cmEditor)!
+            const input = find<HTMLInputElement>('.cm-toolbar-input', cmEditor)!
             const firstNumberedCell = Array.from(
                 cmEditor.querySelectorAll<HTMLElement>('.cm-lineNumbers .cm-gutterElement'),
             ).find(c => c.textContent?.trim().length! > 0)!
+            const line = find<HTMLElement>('.cm-line', cmEditor)!
 
-            // Both elements use the same `padding-right` (1ch + 3px)
-            // and are right-aligned within their container, so their
-            // right edges should match column-for-column.
-            const stateRight = stateIcon.getBoundingClientRect().right
-            const lineRight = firstNumberedCell.getBoundingClientRect().right
-
-            expect(Math.abs(stateRight - lineRight)).toBeLessThanOrEqual(1)
+            // The glyph's right edge on the line numbers' (both 3px in from
+            // their column's edge), whichever glyph it is: the file's icon at
+            // rest, the search's when the field is focused.
+            const numberRight = firstNumberedCell.getBoundingClientRect().right
+            expect(Math.abs(stateIcon.getBoundingClientRect().right - numberRight)).toBeLessThanOrEqual(1)
+            // At rest: the pointer (left over the bar by an earlier test,
+            // perhaps) off it, the field unfocused, so the glyph is the file's.
+            const panel = find<HTMLElement>('.cm-toolbar-panel', cmEditor)!
+            panel.dispatchEvent(new Event('pointerleave'))
+            if (document.activeElement === input) input.blur()
+            await new Promise(r => requestAnimationFrame(() => r(null)))
+            const atRest = stateIcon.textContent
+            input.focus()
+            await new Promise(r => requestAnimationFrame(() => r(null)))
+            expect(stateIcon.textContent).not.toBe(atRest)
+            expect(Math.abs(stateIcon.getBoundingClientRect().right - numberRight)).toBeLessThanOrEqual(1)
+            // The field's text starts where the code does.
+            const textLeft = (el: HTMLElement) => el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft)
+            expect(Math.abs(textLeft(input) - textLeft(line))).toBeLessThanOrEqual(1)
+            input.blur()
         })
 
         it('aligns the spinner right edge with the line-number column right edge', async () => {

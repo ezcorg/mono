@@ -203,32 +203,43 @@ documents; a ✅ resolves. `editor.storage.comments` has the comments and
 |---|---|
 | CommonMark + GFM | headings, lists (the marker kept: `-` or `*`, `1.` or `1)`), task lists (their marker and tightness kept too), tables (a cell's blocks on one line, a table without a header row under an empty one: never a marker in place of the table), quotes, code fences (CodeMirror, real LSP; a fence named by a file writes through to it). `<` and `>` are text, escaped only where `<` would open an autolink |
 | Lettered lists `a.`, `a)` | Pandoc's fancy lists: `a.` or `a)` (and `A)`, or `A.` with two spaces after it, so an initial is not a list), kept as written, numbered on from the letter typed. Lists of one kind nest in another; a marker typed at the start of an item (`1. `, `a) `, `- `, `* `, `- [ ] `) makes the item one of that kind, in a list of its own |
+| Fenced code | an embedded code editor drawn as a window with tabs, the code at 16px unless `codeblock.settings.fontSize` says otherwise, the toolbar's type 3px under it. Fences standing next to each other (nothing between them) are one window: a tab per fence (its icon and name, a × that deletes the fence), one shown at a time, a press on a tab showing its fence, "+" after the last adding an empty fence to the group with its field open to choose a file. The shown tab's name is the toolbar's field (a press on it opens the dropdown, which hangs from the tab's own edges as the tab opened); the search glyph stands in for the file's icon only while the field itself is used or pointed at. The first tab's glyph stands on the line numbers' column and its text on the code's, whichever tab is shown; the tabs after it keep their own, tighter column. Tabs that outgrow the bar scroll sideways (the wheel scrolls them), and the shown tab is brought into view. The caret never lands in a hidden fence: down out of the shown one leaves the group, up into the group enters the shown one. A fence typed or asked for by the slash command right after a group gets an empty paragraph before it (written as a non-breaking space), so only "+" joins a group; the same paragraph, typed, keeps two fences apart. A group folds, is copied (its fences as written) and is commented on as one (its icon the file's own at rest, the search glyph while the field is used or pointed at, on the line numbers' column either way), the code beneath, the field's dropdown a menu hung from the pill, its rows one line each. The light palette is a quiet one (names in the text's ink, keywords deep blue, control flow red, types rust, calls violet, strings navy); the dark one is VS Code's |
 | Unnamed fences ```` ```ts ```` | with `codeblock: { standIns: true }` (off by default: it writes into the host's filesystem), a fence of a language with language services (`ts`, `js`, `py`, `rs`, `go`) is opened as a hidden stand-in file beside the note (`.plan.1.ts` for the first `ts` fence of `plan.md`), so completions and diagnostics work without naming a file; the note stays as written, and the block's toolbar names the language, not the file |
 | File regions ```` ```src/lib.rs#L40-L80 ```` | some lines of a file, numbered as the file numbers them. A block's toolbar takes `path#L2-L3` to open those lines; its menu has "Show only these lines", "Show the whole file" and "Copy link to lines" (the `path#L…` a fence or an embed takes). The file is the source of truth: the fence's body is the lines as last seen, taken from the file when the note opens (found where they moved to, if they did); an edit goes back into the file where the lines are then, and the range follows the lines it holds. A save whose lines changed in the file meanwhile is kept as a conflict copy |
 | Wikilinks `[[note]]`, `[[note\|text]]`, `[[note#heading]]`, `[[#heading]]` | resolved by the host; a dangling link is dimmed and creates its note when followed; `[[` offers the vault's notes |
 | Embeds `![[target]]` | an image by name, a note or one of its sections (read-only), or a card that opens the file (`![[src/lib.rs#L40-L80]]` names its lines; to show and edit them, use a fence) |
 | Images `![alt](path)` | read from the vault as bytes; `\|200` in the alt sizes; pasted or dropped images are stored under `attachments/` |
-| Front matter | the YAML in a code block of its own (as the note's fences are, without the toolbar), folded to one small line at the top of the note ("2 properties · id, title") when it is not being edited; a click on the line, arrowing up into it, or "Edit properties" in its gutter menu opens it, and leaving it folds it again, unless "Collapse when not editing" in that menu is turned off (the choice is kept); `id:` assigned on first open when the host asks |
+| Front matter | the YAML in a code block of its own under a header drawn as the fences' toolbar is: the YAML glyph in the line numbers' column, "frontmatter" in the field over the code, and the properties summarized at its end ("2 properties · id, title"); folded to the header when it is not being edited, and the header then to next to nothing (the glyph and the summary, small and faint, above the note's title). The summary pressed, arrowing up into it, or "Edit properties" (in the field's dropdown and in the gutter menu, the same whether folded or open) opens it, and leaving it folds it again unless "Collapse when not editing" is turned off (the choice is kept). A note gets front matter by `---` typed on its first line (which asks: front matter, or a divider?), by pasting a `---` block at its top, or by the "Front matter" slash command; empty, the header says "No properties" and the YAML shows what one looks like. `id:` assigned on first open when the host asks (`assignId`); an empty block given to every note opened without one when it asks (`ensure`) |
 | Blank lines | blocks are spaced by the editor; a run of blank lines between two paragraphs, typed or pasted, is kept all the same, each past the first an empty paragraph (written as `&nbsp;`) |
 | Math `$…$`, `$$…$$` | KaTeX by default (loaded on first use), any `MathRenderer` otherwise; prices stay text |
 | Footnotes `[^1]` | numbered by first use, definitions kept where written |
 | Bracketed spans `[text]{#id .class key=value}` | Pandoc's and Djot's attributed text; a comment's pin |
-| Callouts `> [!note] Title` | kinds and aliases, fold markers, Obsidian's syntax |
+| Callouts `> [!note] Title` | kinds and aliases, fold markers, Obsidian's syntax. Drawn as a quote in the kind's colour (a rule down the left, a tint, no corners): the kind's icon, the title and, when it folds, a chevron on one line, the body under them across the box. The icon is a menu of every kind, each in its colour, typed to filter (`war` for a warning); the same menu opens under the caret after the "Callout" slash command and "Turn into → Callout", so the kind is chosen as the callout is made. The gutter shows the kind's icon, and the block's menu the common kinds (the one in force checked), "Other kind…", whether it is collapsible, and a plain quote or paragraphs instead. A pasted callout stays one |
 
 Every extension is exported on its own; `markdownSetup()` returns the default
 set (`minimalSetup()` a lean one) for `new Editor({ extensions })`, and
 `createEditor()` also builds the default layout (toolbar slot, left column,
 block-action gutter).
 
-In the gutter every block has its glyph (what it is: ¶, H2, •, </>, ---),
+In the gutter every block but a blank line has its glyph (what it is: ¶, H2, •, </>, ---; a blank line's only while it is the active block),
 soft until pointed at, the active block's at full strength beside the
 indicator's line, which alone follows the caret from block to block. A
-glyph opens the block's menu (⌘/ from the keyboard): what its type can
-become or do, then Comment (the block quoted, the composer by it) and Fold,
-which folds the block to one line of its first words and a count; the
-line, its glyph in the gutter, or the caret moving into it opens it again.
-Folds are the view's, not the note's. A selection spanning blocks folds, or
-is commented on, together.
+glyph opens the block's menu (⌘/ from the keyboard), in sections with a
+line between, by what an action is for: what the block can become, then
+what its own kind can do (a list's marker and lifting it to paragraphs;
+a task list's marking; a table's rows, columns and header; a code block's
+copy; the front matter's properties), then what any block can: Comment
+(the block quoted, the composer by it), Fold, and Delete. Fold folds as a
+code editor does: the block stays, cut to its first line, an ellipsis at
+the line's end, a chevron in the gutter; a heading folds its section (to
+the next heading of its level or above) behind itself, so an outline of
+folded sections reads as one. The ellipsis, the chevron, or the caret
+moving into what is hidden opens the fold; the first line stays the
+note's and can be edited. Folds are the view's, not the note's. A
+selection spanning blocks folds, or is commented on, together. The
+selection menu (the button at a selection's end, or Tab) is
+divided the same way: the text's (its marks, a link, clearing them), the
+block's (what it can become), the list's (its depth), the rest.
 
 The outline lights the section being read as the note scrolls, and scrolls
 itself to keep that entry in view when it is longer than its column.
@@ -246,6 +257,22 @@ in only when accepted.
 - ⌘P / Ctrl+P: the toolbar as a command palette (files by name, notes by
   text, opening at the match); ⇧⌘P, or `>` first: the editor's commands.
 - `/`: slash commands; `:` then two letters: emoji; `[[`: link to a note.
+- `---` on a note's first line: front matter, or a divider (it asks);
+  anywhere else a divider at once.
+- A path after a backtick (`` `./src/li ``, `~/`, `../`, `/`, or bare,
+  `` `src ``: the note's folder, else the root) or as a link's destination
+  (`[the file](./src/li`), three characters on: the vault's matching files
+  and folders, drawn as the toolbar's browser draws them; Tab or Enter
+  fills one in, a folder going on inside it, a file finishing the code
+  (naming the file, not linking it) or the link.
+- ⌘P / Ctrl+P, then the file's name (or nothing, for the open file):
+  "Delete …" asks, Enter deletes. The Delete key on a result does the same.
+  The list stands in sections, a line between: the files found (the one
+  the name is exactly first, whatever else mentions its words), the file's
+  commands (save, create, rename, open, import, delete), the editor's, and
+  Settings last. "Show more" keeps the selection where it was. Each row is
+  one line, a long path cut with an ellipsis and shown whole on the
+  selected row; the rows' icons stand in the field's own icon column.
 - ⌘/Ctrl+Enter or a click: follow a link. Backspace after a wikilink: edit its
   source. A link ends with its text: what is typed after a pasted URL is
   text; "Link" in the selection menu takes the link off what is selected.

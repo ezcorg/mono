@@ -53,6 +53,7 @@
     "@joinezco/vault": "workspace:*",
     "@tiptap/core": "^3.31.3",
     "@tiptap/extension-document": "^3.31.3",
+    "@tiptap/extension-horizontal-rule": "^3.31.3",
     "@tiptap/extension-link": "^3.31.3",
     "@tiptap/extension-table": "^3.31.3",
     "@tiptap/extension-task-item": "^3.31.3",

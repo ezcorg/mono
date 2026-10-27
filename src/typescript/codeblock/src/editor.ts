@@ -1,3 +1,4 @@
+import type { ToolbarTab } from "./panels/toolbar-core";
 import { Compartment, EditorState, Extension, Facet, StateEffect, StateField, Transaction, TransactionSpec } from "@codemirror/state";
 import { EditorView, ViewPlugin, ViewUpdate, keymap, KeyBinding, showPanel, tooltips, lineNumbers, highlightActiveLineGutter, highlightSpecialChars, drawSelection, dropCursor, rectangularSelection, crosshairCursor, highlightActiveLine } from "@codemirror/view";
 import { debounce } from "lodash";
@@ -18,7 +19,6 @@ import { highlightCode } from "@lezer/highlight";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/toolbar";
-import { copyButtonExtension } from "./panels/copy-button";
 import { settingsField, updateSettingsEffect, resolveThemeDark, InitialSettingsFacet } from "./panels/settings";
 import type { EditorSettings } from "./panels/settings";
 import { createAiExtension, reconfigureAi } from "./ai/extension";
@@ -150,12 +150,13 @@ export type CodeblockConfig = {
         /** Resolves a TypeScript lib name (e.g. "es5") to its `.d.ts` file content */
         resolveLib: (name: string) => Promise<string>;
     };
-    /** Show a hover-revealed copy-to-clipboard button in the top-right
-     *  of the editor. Particularly useful for short shell snippets where
-     *  the editor acts as a "code to run" rather than a workspace.
-     *  When unset, defaults to `true` for `.sh` files and `false`
-     *  otherwise. */
-    copyButton?: boolean;
+    /** The tabs of the group this editor's block stands in, drawn in its
+     *  toolbar beside the field (see `ToolbarHost.tabs`); the host
+     *  dispatches `refreshTabsEffect` when they change. */
+    tabs?: () => ToolbarTab[];
+    activateTab?: (id: string) => void;
+    closeTab?: (id: string) => void;
+    addTab?: () => void;
 };
 export type CreateCodeblockArgs = CodeblockConfig & {
     parent: HTMLElement;
@@ -182,6 +183,12 @@ export const fileLoadedEffect = StateEffect.define<{ path: string; content: stri
 /** Put the open file down without writing its unsaved edits (it is being
  *  deleted): the view is left empty, showing no file. */
 export const closeFileEffect = StateEffect.define<void>();
+/** An unnamed block made one of `language` (the toolbar's "Create new
+ *  file" with the naming step skipped): highlighted as that language, still
+ *  no file. */
+export const setLanguageEffect = StateEffect.define<ExtensionOrLanguage>();
+/** The toolbar's tabs changed (`CodeblockConfig.tabs`): drawn again. */
+export const refreshTabsEffect = StateEffect.define<null>();
 
 // Light mode/dark mode theme toggle
 export const setThemeEffect = StateEffect.define<{ dark: boolean }>();
@@ -218,6 +225,9 @@ export const currentFileField = StateField.define<{
             }
             if (e.is(closeFileEffect)) {
                 return { path: null, content: "", language: value.language, loading: false, preview: false };
+            }
+            if (e.is(setLanguageEffect)) {
+                return { ...value, language: e.value };
             }
         }
         return value;
@@ -382,7 +392,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, tabs, activateTab, closeTab, addTab }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -391,11 +401,9 @@ export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, langua
     const showLineNums = resolvedSettings.showLineNumbers !== false; // default true
     const showFold = resolvedSettings.showFoldGutter !== false; // default true
     const wrapLines = resolvedSettings.lineWrap === true; // default false
-    // Default-on for .sh; opt-in for everything else.
-    const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
-        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, range, anonymous, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript })),
+        configCompartment.of(CodeblockFacet.of({ content, fs, filepath, range, anonymous, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript, tabs, activateTab, closeTab, addTab })),
         InitialSettingsFacet.of(resolvedSettings),
         currentFileField,
         regionField,
@@ -430,7 +438,6 @@ export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, langua
         keymap.of(navigationKeymap.concat([indentWithTab])),
         vscodeLightDark,
         searchResultsField,
-        ...(wantsCopyButton ? [copyButtonExtension] : []),
     ];
 };
 
@@ -443,7 +450,7 @@ function injectNerdFontFace() {
     const style = document.createElement('style');
     style.textContent = `@font-face {
   font-family: 'UbuntuMono NF';
-  src: url('/fonts/UbuntuMonoNerdFont-Regular.ttf') format('truetype');
+  src: url('/fonts/UbuntuMonoNerdFontPropo-Regular.ttf') format('truetype');
   font-weight: normal;
   font-style: normal;
   font-display: swap;
@@ -1036,6 +1043,9 @@ const codeblockView = ViewPlugin.define((view) => {
                 if (e.is(setThemeEffect)) {
                     const dark = e.value.dark;
                     u.view.dom.setAttribute('data-theme', dark ? 'dark' : 'light');
+                }
+                if (e.is(setLanguageEffect)) {
+                    setLanguageSupport(e.value);
                 }
                 if (e.is(toggleSvgPreviewEffect)) {
                     const newMode = svgViewMode === 'preview' ? 'source' : 'preview';

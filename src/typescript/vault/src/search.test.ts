@@ -91,3 +91,15 @@ describe('file operations', () => {
         expect((await vault.links.backlinks('projects/road.md')).map((l) => l.source)).toEqual(['index.md', 'projects/plan.md'])
     })
 })
+
+describe('ranking', () => {
+    it('puts the file a query names first, above notes that only say its words', async () => {
+        const vault = await Vault.open(await fixtureCopy(), { watch: false })
+        await vault.files.create('test.md', '# T')
+        await vault.files.create('notes/testing.md', 'test test test test test md md md md')
+        await vault.files.create('notes/test-plan.md', 'test test test md md')
+        const hits = (await vault.search.search('test.md')).map((h) => h.path)
+        expect(hits[0]).toBe('test.md')
+        expect(hits).toContain('notes/testing.md')
+    })
+})

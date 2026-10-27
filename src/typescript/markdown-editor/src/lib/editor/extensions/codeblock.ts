@@ -2,7 +2,8 @@ import { Selection, TextSelection } from '@tiptap/pm/state';
 import { Node, mergeAttributes, InputRule } from '@tiptap/core';
 import type { NodeType, Node as PMNode } from '@tiptap/pm/model';
 import { fileReadMeta, persistenceOf } from './filesystem';
-import { basicSetup, codeblock, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, formatLineRange, lineRange, regionField, setThemeEffect, type FileVersions } from '@joinezco/codeblock'
+import { basicSetup, codeblock, currentFileField, ExtensionOrLanguage, extOrLanguageToLanguageId, formatLineRange, lineRange, refreshTabsEffect, regionField, setThemeEffect, type FileVersions } from '@joinezco/codeblock'
+import { codeTabsAt, keepApartFromCodeAbove } from './code-tabs';
 import { basename, dirname, joinPath, type FileOperations, type FileSearch, type VfsInterface } from '@joinezco/storage'
 import { browserVfs } from '@joinezco/storage/browser'
 import { EditorView, ViewUpdate, KeyBinding, keymap } from '@codemirror/view';
@@ -80,6 +81,9 @@ export function isDarkMode(reference?: Element | null): boolean {
  * same size — keeping prose and code at one scale unless a consumer
  * overrides it. Returns null if it can't be measured.
  */
+/** The code's size in a note's block unless the host sets `settings.fontSize`. */
+export const DEFAULT_CODE_FONT_PX = 16;
+
 export function measureBaseFontPx(near: HTMLElement | null): number | null {
     if (typeof document === 'undefined') return null;
     const probe = document.createElement('span');
@@ -409,6 +413,9 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
 
             if (canReplaceInPlace) {
                 tr.delete(range.from, range.to).setBlockType(range.from, range.from, type, attrs);
+                // Apart from a code block above it: the block's own "+"
+                // joins its group (code-tabs.ts).
+                keepApartFromCodeAbove(tr);
                 return;
             }
 
@@ -672,6 +679,18 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 });
                 // Where the lines are is the file's doing, not an edit to undo.
                 if (current.attrs.file === newFile && current.attrs.language === newLang) tr.setMeta('addToHistory', false);
+                // An unnamed block given a language with services (the
+                // toolbar's "Create new file", its naming skipped) is built
+                // again so it gets its stand-in file, as a fence of that
+                // language read from the note would: this view was made
+                // without one. The new view takes the focus (not the
+                // toolbar, as a fence just typed would).
+                const standIn = newFile === null && current.attrs.file === null && this.options.standIns && shadowPath(tr.doc, pos, tr.doc.nodeAt(pos)!, persistenceOf(editor)?.options.filepath) !== null;
+                if (standIn) {
+                    adoptingStandIn.add(tr.doc.nodeAt(pos)!);
+                    view.dispatch(tr);
+                    return;
+                }
                 updating = true;
                 try {
                     view.dispatch(tr);
@@ -777,7 +796,11 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
             }, true);
 
             // Track whether this codeblock was created empty (e.g. via ``` input rule)
-            const wasCreatedEmpty = !node.textContent && !node.attrs.file;
+            const adopting = adoptingStandIn.has(node);
+            const wasCreatedEmpty = !node.textContent && !node.attrs.file && !adopting;
+            // The group's tabs as last drawn (the decoration's `tabs`, code-tabs.ts).
+            let tabsDrawn: string | undefined;
+            let ready = false;
 
             // Use the editor's filesystem if available (so codeblocks can resolve
             // file references seeded into the same filesystem), otherwise fall back
@@ -808,16 +831,13 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     }
                     if (destroyed || editor.isDestroyed) return;
                 }
-                // Default the code font size to the editor's paragraph
-                // size MINUS 2px: an equal px value reads visually larger in
-                // the monospace code font (wider glyphs, tighter leading)
-                // than in the prose font, so we nudge it down to balance the
-                // two. An explicit `settings.fontSize` (configured on the
-                // extension) still wins.
-                const baseFontPx = measureBaseFontPx(editor.view.dom as HTMLElement);
-                const resolvedSettings = baseFontPx
-                    ? { fontSize: Math.max(baseFontPx - 2, 1), ...codeblockSettings }
-                    : codeblockSettings;
+                // The code is set at 16px unless the host says otherwise
+                // (`settings.fontSize`): smaller than the prose, as code in
+                // a note is, and the same whatever the prose's size, so a
+                // block reads as the embedded window it is drawn as (the
+                // toolbar in it 3px smaller still, codeblock's
+                // `--cm-toolbar-font-size`).
+                const resolvedSettings = { fontSize: DEFAULT_CODE_FONT_PX, ...codeblockSettings };
                 // Reconfigure with codeblock extension once fs is ready
                 cm.setState(EditorState.create({
                     doc: node.textContent || '',
@@ -838,6 +858,25 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                             versions: shadow ? undefined : versions,
                             search,
                             files,
+                            // The group's tabs in the toolbar (code-tabs.ts):
+                            // the ids are indexes in the group, read against
+                            // the block's position now, so none goes stale.
+                            tabs: () => {
+                                const pos = getPos();
+                                return pos === undefined ? [] : codeTabsAt(editor.state, pos);
+                            },
+                            activateTab: (id: string) => {
+                                const pos = getPos();
+                                if (pos !== undefined) editor.commands.activateCodeTab(pos, Number(id));
+                            },
+                            closeTab: (id: string) => {
+                                const pos = getPos();
+                                if (pos !== undefined) editor.commands.closeCodeTab(pos, Number(id));
+                            },
+                            addTab: () => {
+                                const pos = getPos();
+                                if (pos !== undefined) editor.commands.addCodeTab(pos);
+                            },
                             // Match the editor's light/dark mode rather
                             // than forcing dark; respects an explicit
                             // `data-theme`, else follows the OS.
@@ -849,6 +888,7 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                     ]
                 }));
 
+                ready = true;
                 // If created via input rule (empty), focus toolbar and open dropdown
                 if (wasCreatedEmpty) {
                     requestAnimationFrame(() => {
@@ -857,6 +897,12 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                             toolbarInput.focus();
                             toolbarInput.click();
                         }
+                    });
+                } else if (adopting) {
+                    // Built again for its stand-in: the code is where to type next.
+                    adoptingStandIn.delete(node);
+                    requestAnimationFrame(() => {
+                        if (!destroyed) cm.focus();
                     });
                 }
             }).catch(error => {
@@ -907,8 +953,14 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
                 },
                 selectNode() { cm.focus() },
                 stopEvent() { return true },
-                update(updated) {
+                update(updated, decorations) {
                     if (updated.type != node.type) return false
+                    // The group's tabs changed (code-tabs.ts): drawn again.
+                    const tabs = (decorations as readonly { spec?: { tabs?: string } }[]).find((d) => d.spec?.tabs !== undefined)?.spec?.tabs;
+                    if (tabs !== tabsDrawn) {
+                        tabsDrawn = tabs;
+                        if (ready && !destroyed) cm.dispatch({ effects: refreshTabsEffect.of(null) });
+                    }
                     // The embedded CodeMirror is configured for a specific
                     // language/file at creation and can't hot-swap them. When
                     // the whole document is replaced (the toolbar's open-file
@@ -987,6 +1039,9 @@ export const ExtendedCodeblock = Node.create<ExtendedCodeblockOptions>({
 });
 
 const standInCleanups = new WeakMap<object, () => void>();
+/** Blocks whose view is being built again to take a stand-in file (see
+ *  `syncFileAttrs`): the new view focuses the code, not the toolbar. */
+const adoptingStandIn = new WeakSet<PMNode>();
 
 declare module '@tiptap/core' {
     interface Commands<ReturnType> {

@@ -63,7 +63,10 @@ export class Composer {
             name: 'composerKeys',
             addKeyboardShortcuts() {
                 return {
+                    // Both, as the button says (⌘/Ctrl+Enter): `Mod` is ⌘ on a
+                    // Mac, and Ctrl+Enter is what the other hand reaches for.
                     'Mod-Enter': () => (submit(), true),
+                    'Ctrl-Enter': () => (submit(), true),
                     Escape: () => (options.onCancel(), true),
                 }
             },

@@ -27,6 +27,9 @@ export interface SuggestionItem {
     title: string
     /** The second, muted line; none without one. */
     description?: string
+    /** Data attributes on the row (`{ calloutType: 'warning' }` →
+     *  `data-callout-type`), for styles that tell the rows apart. */
+    data?: Record<string, string>
     /** Chosen, by Enter (Tab, where it chooses) or a press: the menu is closed before this runs. */
     onSelect: () => void
 }
@@ -38,6 +41,9 @@ export interface SuggestionMenuOptions {
     view: EditorView
     /** The typed trigger and query, read whenever the menu is placed. */
     range: () => Range | null
+    /** Placed by this rect instead of the range's (a button the menu opens
+     *  from), read whenever the menu is placed. */
+    rect?: () => DOMRect
     /** The listbox's root class (`ezco-mde-slash-menu` by default). */
     className?: string
     /** The listbox's `aria-label`. */
@@ -58,6 +64,8 @@ export interface SuggestionMenuOptions {
 interface PopoverUnderTypedOptions {
     /** The popover's theme; the list menus' by default. */
     theme?: string
+    /** Placed by this rect rather than the range's. */
+    rect?: () => DOMRect
     /** Closed by a press outside the popover and the editor (a press in
      *  the editor is the editor's: its selection then decides). */
     onPressOutside: () => void
@@ -71,7 +79,7 @@ interface PopoverUnderTypedOptions {
  */
 export function popoverUnderTyped(view: EditorView, range: () => Range | null, content: HTMLElement, opts: PopoverUnderTypedOptions): Popover {
     const p = popover(view.dom, content, {
-        rect: () => rangeRect(view, range() ?? { from: 0, to: 0 }),
+        rect: opts.rect ?? (() => rangeRect(view, range() ?? { from: 0, to: 0 })),
         theme: opts.theme ?? SUGGESTION_THEME,
         maxWidth: 'none',
         onPressOutside: opts.onPressOutside,
@@ -108,10 +116,10 @@ export class SuggestionMenu {
     }
 
     /** Draw `items` (or `empty`, the line shown without any), the first
-     *  selected; opened if not yet. */
-    show(items: SuggestionItem[], empty: string): void {
+     *  (or the `selected`th) selected; opened if not yet. */
+    show(items: SuggestionItem[], empty: string, selected = 0): void {
         this.items = items
-        this.selected = 0
+        this.selected = Math.min(Math.max(0, selected), Math.max(0, items.length - 1))
         const list = el('div', this.opts.className ?? 'ezco-mde-slash-menu')
         list.setAttribute('role', 'listbox')
         if (this.opts.label) list.setAttribute('aria-label', this.opts.label)
@@ -119,6 +127,7 @@ export class SuggestionMenu {
         items.forEach((item, i) => {
             const row = button('ezco-mde-slash-item')
             row.setAttribute('role', 'option')
+            for (const [key, value] of Object.entries(item.data ?? {})) row.dataset[key] = value
             if (item.icon) row.append(el('span', 'ezco-mde-slash-item-icon', item.icon))
             const body = el('span', 'ezco-mde-slash-item-body')
             body.append(el('span', 'ezco-mde-slash-item-title', item.title))
@@ -133,7 +142,7 @@ export class SuggestionMenu {
         this.list = list
         this.mark()
         if (this.popup) this.popup.instance.setContent(list)
-        else this.popup = popoverUnderTyped(this.opts.view, this.opts.range, list, { theme: this.opts.theme, onPressOutside: () => this.close() })
+        else this.popup = popoverUnderTyped(this.opts.view, this.opts.range, list, { theme: this.opts.theme, rect: this.opts.rect, onPressOutside: () => this.close() })
     }
 
     /** The editor's keys while open; true when the key was the menu's. */

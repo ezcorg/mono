@@ -220,6 +220,30 @@ describe('Block actions', () => {
         expect($from.parent.textContent).toBe('para two')
     })
 
+    // ── Callout ──────────────────────────────────────────────────
+    it('callout: the common kinds (its own checked), whether it folds, a plain quote or paragraphs instead', async () => {
+        const editor = await makeEditor('> [!warning] Mind\n> body')
+        const callout = () => findNode(editor, 'callout')!
+        const actions = actionsForNode(callout().node, editor)
+        expect(actions.filter((a) => a.section === 'Kind').map((a) => `${a.label}${a.selected ? '*' : ''}`)).toEqual(['Note', 'Info', 'Tip', 'Warning*', 'Danger', 'Example', 'Quote', 'Other kind…'])
+        expect(actions.find((a) => a.label === 'Collapsible')?.checked).toBe(false)
+        runAction(editor, 'callout', 'Danger')
+        expect(getMarkdownContent(editor)).toBe('> [!danger] Mind\n> body')
+        runAction(editor, 'callout', 'Collapsible')
+        expect(getMarkdownContent(editor)).toBe('> [!danger]+ Mind\n> body')
+        expect(actionsForNode(callout().node, editor).find((a) => a.label === 'Collapsible')?.checked).toBe(true)
+        runAction(editor, 'callout', 'Plain quote')
+        expect(getMarkdownContent(editor)).toBe('> Mind\n>\n> body')
+        // A quote becomes a callout again (its kind asked for in the menu under its title).
+        runAction(editor, 'blockquote', 'Callout')
+        await frames()
+        expect(getMarkdownContent(editor)).toBe('> [!note]\n> Mind\n>\n> body')
+        expect(document.querySelector('.ezco-mde-callout-menu')).not.toBeNull()
+        await userEvent.keyboard('{Escape}')
+        runAction(editor, 'callout', 'Paragraphs')
+        expect(getMarkdownContent(editor)).toBe('Mind\n\nbody')
+    })
+
     // ── Code block ───────────────────────────────────────────────
     it('code block: copy contents writes the source to the clipboard and keeps the block; delete removes it', async () => {
         let editor = await makeEditor('```js\nconst a = 1;\nconst b = 2;\n```')
@@ -374,9 +398,20 @@ describe('Block actions', () => {
         const editor = await makeEditor('# Title\n\nA paragraph.\n\n* an item')
         const container = created[created.length - 1].container
         await frames()
-        // One per block (the editor may keep a paragraph after the list).
-        expect(glyphs(container).length).toBe(editor.state.doc.childCount)
+        // One per block, but none for a blank line (the editor may keep an
+        // empty paragraph after the list) unless it is the active block.
+        const blank = editor.state.doc.content.content.filter((n) => n.type.name === 'paragraph' && n.content.size === 0).length
+        expect(glyphs(container).length).toBe(editor.state.doc.childCount - blank)
         expect(glyphs(container).slice(0, 3).map((g) => g.querySelector('svg') ? 'drawn' : g.textContent)).toEqual(['H1', 'drawn', '•'])
+        if (blank) {
+            editor.commands.focus('end')
+            await frames()
+            expect(editor.state.selection.$from.parent.content.size).toBe(0)
+            expect(glyphs(container).length).toBe(editor.state.doc.childCount)
+            editor.commands.focus('start')
+            await frames()
+            expect(glyphs(container).length).toBe(editor.state.doc.childCount - blank)
+        }
         // Soft, all but the active block's (the note takes focus as it is made).
         expect(glyphs(container).filter((g) => !g.classList.contains('is-active')).every((g) => parseFloat(getComputedStyle(g).opacity) < 0.5)).toBe(true)
         // A glyph stays where its block is: nothing of it slides between lines.
@@ -494,8 +529,12 @@ describe('Block actions', () => {
         const editor = await makeEditor('# Title\n\n* one\n* two')
         const container = created[created.length - 1].container
         const open = await openGlyph(container, 1)
-        expect(menuLabels(open)).toEqual(['Dashed list', 'Numbered list', 'Lettered list', 'Task list', 'Lift to paragraphs', 'Fold', 'Delete'])
-        expect(focused()).toBe('Dashed list')
+        // The items in sections by what they are for, a line between: what
+        // the list can become, what a list can do, what any block can.
+        expect(open.querySelectorAll('.ezco-mde-context-menu-separator').length).toBe(2)
+        expect(open.querySelector('.ezco-mde-context-menu-separator')?.nextElementSibling).toBe(menuItem('Dashed list', open))
+        expect(menuLabels(open)).toEqual(['Numbered list', 'Lettered list', 'Task list', 'Dashed list', 'Lift to paragraphs', 'Fold', 'Delete'])
+        expect(focused()).toBe('Numbered list')
         // Under the glyph, in its column.
         const glyph = glyphs(container)[1].getBoundingClientRect()
         expect(open.getBoundingClientRect().top).toBeGreaterThanOrEqual(glyph.bottom - 1)
@@ -511,7 +550,7 @@ describe('Block actions', () => {
         expect(glyphs(container)[1].textContent).toBe('1.')
         editor.commands.setTextSelection(findNode(editor, 'orderedList')!.pos + 3)
         const again = await openIndicator(container)
-        expect(menuLabels(again)).toEqual(['Lettered list', 'Bullet list', 'Dashed list', 'Task list', 'Lift to paragraphs', 'Fold', 'Delete'])
+        expect(menuLabels(again)).toEqual(['Bullet list', 'Dashed list', 'Task list', 'Lettered list', 'Lift to paragraphs', 'Fold', 'Delete'])
         await userEvent.click(menuItem('Task list', again)!)
         await waitFor(() => !menu(), 2000)
         // (A task list writes itself loose, `* [ ]`: lists.test.ts.)
@@ -580,44 +619,80 @@ describe('Block actions', () => {
         expect(editor.state.selection.$from.parent.textContent).toBe('XA paragraph.')
     })
 
-    it('folds a block to one line, and the blocks a selection spans; the line, the caret, or its glyph opens it again', async () => {
-        const editor = await makeEditor('# Title\n\nFirst paragraph here.\n\nSecond.\n\nThird.')
+    it('folds a block to its first line, and the blocks a selection spans behind the first; the ellipsis, the caret in what is hidden, or the chevron opens it again', async () => {
+        const editor = await makeEditor('# Title\n\nFirst paragraph here, long enough that it wraps onto a second line in the narrow note the tests are run in.\n\nSecond.\n\nThird.')
         const container = created[created.length - 1].container
         const markdown = editor.storage.markdown.getMarkdown()
         const paragraphs = () => [...editor.view.dom.querySelectorAll('p')]
+        const mark = () => editor.view.dom.querySelector('.ezco-mde-fold-mark') as HTMLElement | null
+        const ellipsis = () => mark()?.querySelector('.ezco-mde-fold-ellipsis') as HTMLElement | null
+        const lineBox = (p: Element) => {
+            const range = document.createRange()
+            range.selectNodeContents(p)
+            return range.getClientRects()[0]
+        }
         editor.commands.focus()
         runAction(editor, 'paragraph', 'Fold')
         await frames()
-        // Hidden, not gone; one line in its place; the caret out of it.
-        expect(getComputedStyle(paragraphs()[0]).display).toBe('none')
+        // The paragraph stays, its first line alone, nothing gone; the caret stays in it.
+        const head = paragraphs()[0]
+        expect(head.getAttribute('data-fold')).toBe('head')
+        expect(getComputedStyle(head).overflow).toBe('hidden')
+        expect(head.getBoundingClientRect().height).toBeLessThan(lineBox(head).height * 1.5)
         expect(editor.storage.markdown.getMarkdown()).toBe(markdown)
-        const fold = () => editor.view.dom.querySelector('.ezco-mde-fold') as HTMLElement | null
-        expect(fold()?.querySelector('.ezco-mde-fold-text')?.textContent).toBe('First paragraph here.')
-        expect(fold()?.querySelector('.ezco-mde-fold-count')?.textContent).toBe('1 block')
-        expect(editor.state.selection.$from.parent.textContent).toBe('Second.')
-        expect(glyphs(container).map((g) => (g.querySelector('svg') ? 'drawn' : g.textContent))).toEqual(['H1', '▸', 'drawn', 'drawn'])
-        fold()!.click()
+        expect(editor.state.selection.$from.parent).toBe(editor.state.doc.child(1))
+        // The ellipsis after the first line's end (or, where the line runs
+        // to the block's edge, over its last word rather than outside the
+        // note), centred on the line.
+        const box = ellipsis()!.getBoundingClientRect()
+        const line = lineBox(head)
+        expect(box.left).toBeGreaterThanOrEqual(Math.min(line.right, head.getBoundingClientRect().right - box.width) - 1)
+        expect(box.left).toBeLessThan(line.right + 20)
+        expect(Math.abs((box.top + box.bottom) / 2 - (line.top + line.bottom) / 2)).toBeLessThan(3)
+        expect(ellipsis()!.title).toBe('Unfold')
+        // The gutter marks the head with a chevron.
+        expect(glyphs(container).map((g) => (g.classList.contains('is-fold') ? 'chevron' : g.querySelector('svg') ? 'drawn' : g.textContent))).toEqual(['H1', 'chevron', 'drawn', 'drawn'])
+        // The head is the active block, so the indicator stands over its
+        // chevron: a press there opens the fold, not the block's menu.
+        const indicator = container.querySelector('.ezco-mde-block-action-btn') as HTMLButtonElement
+        await waitFor(() => indicator.style.opacity === '1', 2000)
+        indicator.click()
         await frames()
-        expect(fold()).toBeNull()
-        expect(getComputedStyle(paragraphs()[0]).display).not.toBe('none')
-        // Three blocks spanned, folded together; the caret arrowed into it opens it.
+        expect(mark()).toBeNull()
+        expect(menu()).toBeNull()
+        expect(paragraphs()[0].hasAttribute('data-fold')).toBe(false)
+        runAction(editor, 'paragraph', 'Fold')
+        await frames()
+        ellipsis()!.click()
+        await frames()
+        expect(mark()).toBeNull()
+        expect(paragraphs()[0].hasAttribute('data-fold')).toBe(false)
+        // Two blocks spanned, folded behind the first: the caret, in what is
+        // hidden, is moved out; back in the head it is left alone; arrowed
+        // into what is hidden, it opens the fold.
         const second = paragraphs()[1]
         editor.commands.setTextSelection({ from: editor.view.posAtDOM(paragraphs()[0], 0) + 1, to: editor.view.posAtDOM(second, 0) + 2 })
         expect(editor.commands.foldSelection()).toBe(true)
         await frames()
-        expect(fold()?.querySelector('.ezco-mde-fold-count')?.textContent).toBe('2 blocks')
-        expect(paragraphs().slice(0, 2).every((p) => getComputedStyle(p).display === 'none')).toBe(true)
+        expect(ellipsis()?.title).toBe('Unfold: 1 block hidden')
+        expect(getComputedStyle(paragraphs()[1]).display).toBe('none')
+        expect(getComputedStyle(paragraphs()[0]).display).not.toBe('none')
         expect(editor.state.selection.$from.parent.textContent).toBe('Third.')
         editor.commands.setTextSelection(editor.view.posAtDOM(paragraphs()[0], 0) + 1)
         await frames()
-        expect(fold()).toBeNull()
-        // A fold's glyph in the gutter opens it too.
+        expect(mark()).not.toBeNull()
+        editor.commands.setTextSelection(editor.view.posAtDOM(paragraphs()[1], 0) + 1)
+        await frames()
+        expect(mark()).toBeNull()
+        // A heading folds its section (the whole note here); the chevron in the gutter opens it.
         runAction(editor, 'heading', 'Fold')
         await frames()
-        expect(glyphs(container)[0].textContent).toBe('▸')
+        expect(ellipsis()?.title).toBe('Unfold: 3 blocks hidden')
+        expect(paragraphs().every((p) => getComputedStyle(p).display === 'none')).toBe(true)
+        expect(glyphs(container).map((g) => g.classList.contains('is-fold'))).toEqual([true])
         glyphs(container)[0].click()
         await frames()
-        expect(fold()).toBeNull()
+        expect(mark()).toBeNull()
         expect(editor.view.dom.querySelector('h1')).not.toBeNull()
     })
 

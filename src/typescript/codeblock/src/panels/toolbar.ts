@@ -7,7 +7,8 @@
  */
 import { EditorView, Panel } from "@codemirror/view";
 import { StateEffect, StateField } from "@codemirror/state";
-import { CodeblockFacet, openFileEffect, currentFileField, regionField, setRegionEffect, setThemeEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
+import { CodeblockFacet, openFileEffect, currentFileField, regionField, setRegionEffect, setThemeEffect, setLanguageEffect, refreshTabsEffect, lineWrappingCompartment, lineNumbersCompartment, foldGutterCompartment, persistFile, closeFile, numberedLines } from "../editor";
+import type { ExtensionOrLanguage } from "../lsps";
 import { formatLineRange, lineRange, type LineRange } from "../utils/region";
 import { foldGutter } from "@codemirror/language";
 import { LSP, LspLog } from "../utils/lsp";
@@ -183,7 +184,9 @@ export const toolbarPanel = (view: EditorView): Panel => {
      *  for a region; else the path. */
     const shownAs = (path: string | null, lang: string | null | undefined, region: LineRange | null) => {
         if (anonymous && path !== null && path === filepath) return lang ?? language ?? '';
-        return path !== null && region ? `${path}#${formatLineRange(region)}` : undefined;
+        // No file: the language, as the field names an unnamed block.
+        if (path === null) return lang ?? language ?? undefined;
+        return region ? `${path}#${formatLineRange(region)}` : undefined;
     };
 
     // --- Clear filesystem ---
@@ -252,6 +255,10 @@ export const toolbarPanel = (view: EditorView): Panel => {
             closeFile(view);
             return persistFile(view);
         },
+        setLanguage(language) {
+            // The block stays unnamed, highlighted as the language from here on.
+            safeDispatch(view, { effects: [setSearchResults.of([]), setLanguageEffect.of(language as ExtensionOrLanguage)] });
+        },
         focusEditor() { view.focus(); },
         notifyFileChanged(path, type) { LSP.notifyFileChanged(path, type); },
         getCurrentFilePath() { return view.state.field(currentFileField).path; },
@@ -259,6 +266,14 @@ export const toolbarPanel = (view: EditorView): Panel => {
         buildSettingsEntries(filter) { return buildCMSettingsEntries(view, filter); },
         handleSettingsEntry(entry) { handleCMSettingsEntry(view, entry); },
         confirmSettingsEdit(key, rawValue) { confirmCMSettingsEdit(view, key, rawValue); },
+        // The group's tabs, when the host keeps blocks in groups (the
+        // markdown editor's adjacent fences).
+        ...(view.state.facet(CodeblockFacet).tabs ? {
+            tabs: view.state.facet(CodeblockFacet).tabs,
+            activateTab: view.state.facet(CodeblockFacet).activateTab,
+            closeTab: view.state.facet(CodeblockFacet).closeTab,
+            addTab: view.state.facet(CodeblockFacet).addTab,
+        } : {}),
         fileActions: fileActionRegistry.map(fa => ({
             extensions: fa.extensions,
             label: fa.label,
@@ -375,8 +390,8 @@ export const toolbarPanel = (view: EditorView): Panel => {
         // Minimum width for the icon columns (search-result icons, toolbar
         // state icon) when the real gutter is narrower than them — e.g. a
         // 1-digit line-number gutter for a file under 10 lines. A right-aligned
-        // icon needs room for the glyph (~1ch) + its `padding-right` (1ch+3px)
-        // PLUS a few px of left breathing room, or it hugs the left border. The
+        // icon needs room for the glyph (up to 2ch wide) + its `padding-right`
+        // (3px) PLUS a few px of left breathing room, or it hugs the left border. The
         // line-number gutter is held to this same minimum (themes/index.ts) so
         // the line numbers and icons still share one left-aligned column.
         const iconColWidth = Math.ceil(2 * chWidth) + 8;
@@ -444,6 +459,7 @@ export const toolbarPanel = (view: EditorView): Panel => {
         dom,
         top: true,
         update(update) {
+            if (update.transactions.some((tr) => tr.effects.some((e) => e.is(refreshTabsEffect)))) core.refreshTabs();
             // Settings changes
             const prevSettings = update.startState.field(settingsField);
             const nextSettings = update.state.field(settingsField);
@@ -485,10 +501,11 @@ export const toolbarPanel = (view: EditorView): Panel => {
                 }
             }
 
-            // Sync file path (and the lines shown of it)
+            // Sync file path (and the lines shown of it), or the language of
+            // a block that has no file.
             const prevRegion = update.startState.field(regionField, false) ?? null;
             const nextRegion = update.state.field(regionField, false) ?? null;
-            if (prevFile.path !== nextFile.path || prevRegion !== nextRegion) {
+            if (prevFile.path !== nextFile.path || prevRegion !== nextRegion || (nextFile.path === null && prevFile.language !== nextFile.language)) {
                 if (prevFile.path !== nextFile.path) updateLspLogIcon();
                 if (!core.isNamingModeActive() && !lspLogOverlay && !core.isSettingsModeActive()) {
                     core.setFilePath(nextFile.path, shownAs(nextFile.path, nextFile.language, nextRegion));

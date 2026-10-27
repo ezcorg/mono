@@ -195,6 +195,16 @@ demo. So, for any change that shows:
   `marginTop`/`marginBottom` to 0 with the height (`shut()` in
   `comment-margin.ts`), and clip with `overflow: clip` plus an
   `overflow-clip-margin` for the bubble's shadow, not `hidden`.
+- ProseMirror hands a selection to a node view (`setSelection`, which the
+  front matter uses to open its YAML) only when the editable itself holds
+  the focus: `view.hasFocus()` is `activeElement === view.dom`, false with
+  the focus in the block's own header or a menu, though both are inside
+  `view.dom`. A command that sends the caret into such a node focuses the
+  view when `!view.hasFocus()`, not when `!view.dom.contains(activeElement)`.
+- The front matter's header is a CodeMirror panel (`showPanel`) with the
+  code block toolbar's classes, so the toolbar's rules draw it; its
+  dropdown is the toolbar's `cm-search-results` markup. Folded, the
+  `.cm-scroller` is hidden, not the `.cm-editor`, or the header would go too.
 - A style set straight on a block's element in the editable is a DOM
   change ProseMirror observes (a node with content ignores no mutation):
   it marks the block dirty and draws it again, without the style. A
@@ -204,3 +214,82 @@ demo. So, for any change that shows:
   Only a widget's own box may be styled directly (its mutations are
   ignored). WAAPI animations are no mutation, so a row can still be
   animated on the element.
+- The icon font is the Nerd Font's *Propo* build
+  (`public/fonts/UbuntuMonoNerdFontPropo-Regular.ttf`, the same file in
+  codeblock, eznote and ezco-web). Its icons' advance widths are their
+  drawn widths, so an icon centred or right-aligned by its box lands where
+  it looks; the plain build keeps every icon to one cell and overhangs the
+  next, which put every icon a few pixels right of centre. Letters stay
+  monospace, so `ch` still measures a cell. Icon columns are padded `3px`
+  (CodeMirror's gutter padding), no longer `1ch + 3px`.
+- CodeMirror's base theme makes `.cm-scroller` a flex box with
+  `!important`: hiding it (a folded code block, the folded front matter)
+  needs `display: none !important`.
+- The menus that filter by typing without a trigger in the text (the
+  callout kinds, `CalloutKindMenu`) take their keys on the document in the
+  capture phase, ahead of ProseMirror, so nothing lands in the note while
+  they stand; `SuggestionMenu` takes a `rect` to open by a button instead
+  of a range, and `show()` a selected index.
+- A fold's head keeps `max-height: 1lh` with `overflow: hidden`
+  (content-box, so a padded block's first line is whole); the ellipsis is
+  a widget *between* blocks, placed by script at the first line's end
+  (`FoldMarks` in folding.ts), since a mark inside the head would be cut
+  with the head's second line.
+- A gutter glyph is markup only when it opens a tag (`/^<[a-z]/i`):
+  `</>`, the code block's, starts with `<` too and was once taken for SVG
+  and drawn as nothing. `visible.test.ts` checks every drawn part of the
+  editor for a box, for being painted and for holding something, in the
+  browser; add to it when a new part is drawn.
+- Code blocks in the note are drawn as windows (styles.ts, "Code blocks as
+  embedded windows"): a card whose bar holds the field as a tab. The code
+  is 16px by default (`DEFAULT_CODE_FONT_PX`, no longer measured from the
+  prose), the toolbar 3px under it (codeblock's `--cm-toolbar-font-size`);
+  the icon columns are gutter-sized in px, so the sizes do not move them.
+  The toolbar keeps its *gutter* layout: the glyph, the rows' icons and
+  the line numbers share one column, the field's text, the labels and the
+  code another (`layout.test.ts` holds both, across the glyph's switch
+  from the file's icon to the search's). The pill's left end lies under
+  the icon column (a negative margin), and the rows' icon columns are the
+  gutter's less the pill's inset.
+- The toolbar's state icon is the open file's at rest and the search's
+  while the field is focused, has results, or is pointed at
+  (`updateStateIcon`); the copy button still takes it over on hover inside
+  a code block. A mode's own glyph (naming, settings, browse, delete) is
+  left alone.
+- Adjacent fences are one window with tabs (`extensions/code-tabs.ts`,
+  runs from `code-runs.ts`). Which fence is shown is view state like a
+  fold; the others carry `data-tab-hidden="true"` by node decoration. An
+  attribute, not a class: CodeMirror writes its editor's `class` whole
+  whenever its own changes (focus), and a class ProseMirror added would go
+  with it. The decoration's `spec.tabs` is the group's signature; the node
+  view dispatches codeblock's `refreshTabsEffect` when it changes, and
+  the toolbar asks the host (`ToolbarHost.tabs`) for the tabs again. Tab
+  ids are indexes in the group, resolved against `getPos()` at the press,
+  so none goes stale.
+- Escape in a new empty fence's field gives the fence up (it becomes a
+  paragraph): the same for a fence from "+" as for a typed one.
+- The shown block of a group is kept by position, mapped with assoc -1:
+  a block given a file is `setNodeMarkup`ed (replaced around its
+  content), and mapped by the token after it that reads as deleted, which
+  made the first tab the shown one whenever a new tab picked a file.
+- The code block's bar is sticky, so it stands on the note's surface
+  (`--ezco-mde-bg`), not transparent, or the code scrolls through it.
+  The tabs' icon columns use `max(gutter, icon-col-width)`: a folded
+  block has no scroller and its gutter measures 0.
+- Only the *first* tab of a group keeps the gutter's column (its glyph on
+  the line numbers, its text on the code), active or not: `.cm-toolbar-
+  tabs-before:empty + .cm-toolbar-state-icon-container` when it is the
+  field, `.cm-toolbar-tab:first-child` when it is a tab, and the dropdown
+  follows the field (`:empty ~ .cm-search-results`). Tabs after it take a
+  fixed 26px column with the glyph right-aligned. The bar is static, not
+  sticky.
+- The toolbar's tabs and field stand in `.cm-toolbar-strip`, which
+  scrolls sideways when they outgrow the bar; the dropdown stays the
+  panel's child (the strip's overflow would cut it off) and is placed by
+  `--cm-toolbar-tab-left`, the field's offset less the strip's scroll.
+  Everything in the strip is `flex: none`: flex items shrink before a
+  container overflows, and the icon column once shrank to nothing. The
+  panel carries `cm-toolbar-first-active` when the field is first in the
+  strip; the first-tab styles key off it, not off sibling order.
+- There is no copy button any more (`copyButton`, `panels/copy-button.ts`
+  are gone): its overlay inside the state icon fought the glyph.

@@ -20,7 +20,7 @@ type NerdIcon = { value: string; hexCode: number; color?: string };
 
 export interface CommandResult {
     id: string;
-    type: 'create-file' | 'save-as' | 'rename-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'file-action' | 'clear-filesystem' | 'host-command';
+    type: 'create-file' | 'save-as' | 'rename-file' | 'delete-file' | 'import-local-files' | 'import-local-folder' | 'open-file' | 'settings' | 'file-action' | 'clear-filesystem' | 'host-command';
     icon: string;
     iconColor?: string;
     query: string;
@@ -65,6 +65,18 @@ export interface HostCommand {
 }
 
 export type SearchResult = FileResult | CommandResult | BrowseEntry | SettingsEntry;
+
+/** A tab of the group the toolbar's block stands in (`ToolbarHost.tabs`).
+ *  The active one is the field itself; the others are drawn beside it,
+ *  each with its icon, its label and a close button, and "+" after the
+ *  last. `id` is the host's own (an index in the group, say). */
+export interface ToolbarTab {
+    id: string;
+    label: string;
+    icon: string;
+    iconColor?: string;
+    active: boolean;
+}
 
 export interface NamingMode {
     active: boolean;
@@ -141,8 +153,24 @@ export interface ToolbarHost {
     /** Put the open file down without writing its unsaved edits: it is about
      *  to be deleted. */
     closeFile(): void | Promise<void>;
+    /** Make the unnamed block one of `language` (an extension, `yml`):
+     *  "Create new file" for a language, with Enter on an empty name in
+     *  place of a name. The block keeps no file; a host that gives unnamed
+     *  blocks a stand-in file does so as it would for a fence of that
+     *  language. Without this, a name is required. */
+    setLanguage?(language: string): void;
     /** Commands the host offers, matched against the query. */
     commands?(query: string): HostCommand[];
+    /** The tabs of the group the block stands in, in order, this block's
+     *  `active`. Given, the field is drawn as a tab among them, with "+"
+     *  after the last; the host calls `refreshTabs()` when they change. */
+    tabs?(): ToolbarTab[];
+    /** A tab pressed: the host shows that block in the field's place. */
+    activateTab?(id: string): void;
+    /** A tab's close button pressed. */
+    closeTab?(id: string): void;
+    /** "+" pressed: the host adds a block to the group and opens its field. */
+    addTab?(): void;
     /** Get the current file path from host state (may differ from initial filepath). */
     getCurrentFilePath?(): string | null;
     /** Whether autosave is enabled. */
@@ -240,6 +268,9 @@ export const FOLDER_ICON = '\ue613';
 export const FOLDER_OPEN_ICON = '\uf07c';
 const PARENT_DIR_ICON = '\uf112';
 
+/** FontAwesome "trash" (U+F1F8): the delete command. */
+const TRASH_ICON = String.fromCharCode(0xf1f8);
+
 const FileChangeType = { Created: 1, Changed: 2, Deleted: 3 } as const;
 const mod = (n: number, m: number) => ((n % m) + m) % m;
 
@@ -257,7 +288,13 @@ export function isFileResult(result: SearchResult): result is FileResult {
     return 'match' in result && 'path' in result;
 }
 
-// Nerd font injection (idempotent)
+// Nerd font injection (idempotent). The "Propo" build of the font: its
+// icons' advance widths are their drawn widths, so an icon centred or
+// right-aligned by its box lands where it looks. (The plain build keeps
+// every icon to one text cell and lets the drawing overhang to the right
+// by about another cell, which put every icon a few pixels right of where
+// its box was.) Letters and digits stay monospace in both builds, so `ch`
+// still measures a text cell.
 let nerdFontInjected = false;
 function injectNerdFontFace() {
     if (nerdFontInjected) return;
@@ -265,7 +302,7 @@ function injectNerdFontFace() {
     const style = document.createElement('style');
     style.textContent = `@font-face {
   font-family: 'UbuntuMono NF';
-  src: url('/fonts/UbuntuMonoNerdFont-Regular.ttf') format('truetype');
+  src: url('/fonts/UbuntuMonoNerdFontPropo-Regular.ttf') format('truetype');
   font-weight: normal;
   font-style: normal;
   font-display: swap;
@@ -277,7 +314,8 @@ function injectNerdFontFace() {
 // ---------------------------------------------------------------------------
 // Standalone toolbar styles (not scoped to .cm-editor)
 // ---------------------------------------------------------------------------
-const FS = 'var(--cm-font-size, 16px)';
+/** The toolbar's type: 3px under the code's (`--cm-toolbar-font-size`, themes/vscode.ts). */
+const TFS = 'var(--cm-toolbar-font-size, var(--cm-font-size, 16px))';
 
 const toolbarStyleModule = new StyleModule({
     '.cm-toolbar-panel': {
@@ -293,17 +331,109 @@ const toolbarStyleModule = new StyleModule({
         border: 'none',
         background: 'transparent',
         outline: 'none',
-        fontSize: FS,
+        fontSize: TFS,
         color: 'var(--cm-toolbar-color)',
         padding: '0 2px 0 6px',
         width: '100%',
         flex: 1,
     },
+    // In the toolbar's colour, for what stands beside the field (the
+    // active tab's close button): the field sets its own, the container
+    // would otherwise inherit the page's.
     '.cm-toolbar-input-container': {
         position: 'relative',
         display: 'flex',
         alignItems: 'center',
         flex: 1,
+        color: 'var(--cm-toolbar-color)',
+    },
+    // The strip: the tabs and the field in one row that scrolls sideways
+    // when the tabs outgrow the bar (the scrollbar hidden; the wheel
+    // scrolls it; the active tab is brought into view). The dropdown stays
+    // outside it, hung from the panel, or the strip's overflow would cut
+    // it off.
+    '.cm-toolbar-strip': {
+        display: 'flex',
+        alignItems: 'center',
+        flex: '1 1 auto',
+        minWidth: 0,
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        scrollbarWidth: 'none',
+    },
+    '.cm-toolbar-strip::-webkit-scrollbar': {
+        display: 'none',
+    },
+    // The group's other tabs (`ToolbarHost.tabs`), before and after the
+    // field, and "+" after the last: plain here, shaped by the host's
+    // styles (the markdown editor draws them as a window's tabs).
+    '.cm-toolbar-tabs': {
+        display: 'flex',
+        alignItems: 'stretch',
+        gap: '2px',
+        flex: 'none',
+        minWidth: 0,
+    },
+    '.cm-toolbar-tabs:empty': {
+        display: 'none',
+    },
+    '.cm-toolbar-tab': {
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: '6px',
+        maxWidth: '28ch',
+        padding: '0 8px',
+        border: 'none',
+        background: 'transparent',
+        color: 'var(--cm-command-result-color)',
+        fontFamily: 'var(--cm-font-family)',
+        fontSize: TFS,
+        lineHeight: 1.4,
+        whiteSpace: 'nowrap',
+        cursor: 'pointer',
+        opacity: 0.7,
+    },
+    '.cm-toolbar-tab:hover, .cm-toolbar-tab:focus-visible': {
+        opacity: 1,
+    },
+    '.cm-toolbar-tab-icon': {
+        fontFamily: 'var(--cm-icon-font-family)',
+        flex: 'none',
+    },
+    '.cm-toolbar-tab-label': {
+        minWidth: 0,
+        overflow: 'hidden',
+        textOverflow: 'ellipsis',
+    },
+    '.cm-toolbar-tab-close': {
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flex: 'none',
+        width: '16px',
+        height: '16px',
+        margin: '0 0 0 2px',
+        padding: 0,
+        border: 'none',
+        borderRadius: '4px',
+        background: 'transparent',
+        color: 'inherit',
+        font: 'inherit',
+        fontSize: '13px',
+        lineHeight: 1,
+        cursor: 'pointer',
+        opacity: 0.6,
+    },
+    '.cm-toolbar-tab-close:hover, .cm-toolbar-tab-close:focus-visible': {
+        opacity: 1,
+        background: 'color-mix(in srgb, currentColor 15%, transparent)',
+    },
+    '.cm-toolbar-tab-close[hidden]': {
+        display: 'none',
+    },
+    '.cm-toolbar-tab-add': {
+        padding: '0 7px',
+        fontSize: '1.15em',
     },
     // Sized to the FULL gutter width (line numbers + fold gutter) —
     // matching `.cm-search-result-icon-container` below — so the toolbar
@@ -317,12 +447,16 @@ const toolbarStyleModule = new StyleModule({
         width: 'var(--cm-gutter-width, 2em)',
         minWidth: 'var(--cm-icon-col-width, 2em)',
         display: 'flex',
+        // Never squeezed when the strip's tabs outgrow the bar: the strip scrolls.
+        flex: 'none',
     },
+    // The icon's drawn right edge sits where the line numbers' does: 3px
+    // (CodeMirror's gutter padding) in from the column's edge.
     '.cm-toolbar-state-icon': {
-        fontSize: FS,
+        fontSize: TFS,
         color: 'var(--cm-foreground)',
         fontFamily: 'var(--cm-icon-font-family)',
-        paddingRight: 'calc(1ch + 3px)',
+        paddingRight: '3px',
         textAlign: 'right',
         boxSizing: 'border-box',
         width: 'var(--cm-gutter-lineno-width, 2em)',
@@ -348,10 +482,10 @@ const toolbarStyleModule = new StyleModule({
         padding: '0',
         background: 'var(--cm-toolbar-background)',
         fontFamily: 'var(--cm-font-family)',
-        fontSize: FS,
+        fontSize: TFS,
         listStyleType: 'none',
         width: '100%',
-        maxHeight: `calc(${FS} * 1.4 * 10)`,
+        maxHeight: `calc(${TFS} * 1.4 * 10)`,
         overflowY: 'auto',
         zIndex: '200',
         '&:empty': {
@@ -370,9 +504,9 @@ const toolbarStyleModule = new StyleModule({
             width: 'var(--cm-gutter-width, 2em)',
             minWidth: 'var(--cm-icon-col-width, 2em)',
             '& > .cm-search-result-icon': {
-                fontSize: FS,
+                fontSize: TFS,
                 textAlign: 'right',
-                paddingRight: 'calc(1ch + 3px)',
+                paddingRight: '3px',
                 boxSizing: 'border-box',
                 width: 'var(--cm-gutter-lineno-width, 2em)',
                 minWidth: 'var(--cm-icon-col-width, 2em)',
@@ -402,6 +536,12 @@ const toolbarStyleModule = new StyleModule({
             textOverflow: 'ellipsis',
         },
     },
+    // A line between the list's sections (files, file commands, actions, settings).
+    '.cm-search-separator': {
+        height: '1px',
+        margin: '3px 0',
+        background: 'color-mix(in srgb, var(--cm-search-result-color) 18%, transparent)',
+    },
 });
 
 let toolbarStylesMounted = false;
@@ -427,6 +567,14 @@ export class ToolbarCore {
     readonly inputContainer: HTMLElement;
     readonly input: HTMLInputElement;
     readonly resultsList: HTMLElement;
+    /** The row of the tabs and the field, scrolled sideways when they outgrow the bar. */
+    readonly strip: HTMLElement;
+    /** The group's tabs before and after the field, and the field's own close button (`ToolbarHost.tabs`). */
+    readonly tabsBefore: HTMLElement;
+    readonly tabsAfter: HTMLElement;
+    readonly closeButton: HTMLButtonElement;
+    private activeTabId: string | null = null;
+    private stripObserver: ResizeObserver | null = null;
 
     private host: ToolbarHost;
     private fileOps: FileOperations;
@@ -468,6 +616,8 @@ export class ToolbarCore {
     private results: SearchResult[] = [];
     private currentFilePath: string | null;
     private handleClickOutsideBound: (event: Event) => void;
+    /** The pointer over the toolbar: the state icon is the search's then. */
+    private hovered = false;
 
     // AI intent classification state
     private aiClassifyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -490,9 +640,12 @@ export class ToolbarCore {
         this.stateIconContainer.className = "cm-toolbar-state-icon-container";
         this.stateIcon = document.createElement("div");
         this.stateIcon.className = "cm-toolbar-state-icon";
-        this.stateIcon.textContent = SEARCH_ICON;
+        this.setGlyph(SEARCH_ICON);
         this.stateIconContainer.appendChild(this.stateIcon);
-        this.dom.appendChild(this.stateIconContainer);
+        this.strip = document.createElement("div");
+        this.strip.className = "cm-toolbar-strip";
+        this.dom.appendChild(this.strip);
+        this.strip.appendChild(this.stateIconContainer);
 
         this.inputContainer = document.createElement("div");
         this.inputContainer.className = "cm-toolbar-input-container";
@@ -507,7 +660,43 @@ export class ToolbarCore {
         this.input.setAttribute("autocapitalize", "off");
         this.input.setAttribute("autocorrect", "off");
         this.inputContainer.appendChild(this.input);
-        this.dom.appendChild(this.inputContainer);
+        this.strip.appendChild(this.inputContainer);
+
+        // The group's tabs: the ones before the field, the ones after it
+        // with "+", and the field's own close button. Empty, and hidden,
+        // for a host without tabs.
+        this.tabsBefore = document.createElement("div");
+        this.tabsBefore.className = "cm-toolbar-tabs cm-toolbar-tabs-before";
+        this.strip.insertBefore(this.tabsBefore, this.stateIconContainer);
+        this.closeButton = document.createElement("button");
+        this.closeButton.type = "button";
+        this.closeButton.className = "cm-toolbar-tab-close";
+        this.closeButton.textContent = "×";
+        this.closeButton.hidden = true;
+        this.closeButton.addEventListener("mousedown", (e) => e.preventDefault());
+        this.closeButton.addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (this.activeTabId !== null) this.host.closeTab?.(this.activeTabId);
+        });
+        this.inputContainer.appendChild(this.closeButton);
+        this.tabsAfter = document.createElement("div");
+        this.tabsAfter.className = "cm-toolbar-tabs cm-toolbar-tabs-after";
+        this.strip.appendChild(this.tabsAfter);
+        // The strip scrolled: the dropdown follows the field. The wheel's
+        // vertical turn scrolls it sideways, as a tab bar's does.
+        this.strip.addEventListener("scroll", () => this.placeTab());
+        this.strip.addEventListener("wheel", (e) => {
+            if (this.strip.scrollWidth <= this.strip.clientWidth || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+            e.preventDefault();
+            this.strip.scrollLeft += e.deltaY;
+        }, { passive: false });
+        if (typeof ResizeObserver !== "undefined") {
+            // The strip resized, or the field (grown to a name that arrived
+            // after the tabs were drawn): the field kept in view, the edges marked.
+            this.stripObserver = new ResizeObserver(() => this.settleStrip());
+            this.stripObserver.observe(this.strip);
+            this.stripObserver.observe(this.inputContainer);
+        }
 
         this.resultsList = document.createElement("ul");
         this.resultsList.className = "cm-search-results";
@@ -519,6 +708,118 @@ export class ToolbarCore {
         this.input.addEventListener("click", () => this.onInputClick());
         this.input.addEventListener("input", (e) => this.onInputChange(e));
         this.input.addEventListener("keydown", (e) => this.onInputKeydown(e));
+        // At rest the state icon is the open file's; the search's while the
+        // field is being used or pointed at.
+        this.input.addEventListener("focus", () => this.updateStateIcon());
+        this.input.addEventListener("blur", () => this.updateStateIcon());
+        // Pointed at: the field and its icon, not the whole bar (a group's
+        // other tabs are the bar's too, and pointing at one is not a search).
+        for (const part of [this.stateIconContainer, this.inputContainer]) {
+            part.addEventListener("pointerenter", () => { this.hovered = true; this.updateStateIcon(); });
+            part.addEventListener("pointerleave", () => { this.hovered = false; this.updateStateIcon(); });
+        }
+        this.updateStateIcon();
+        this.refreshTabs();
+    }
+
+    /** The group's tabs drawn again from the host (`ToolbarHost.tabs`):
+     *  the active one is the field, the others stand before and after it
+     *  in the group's order, "+" after the last. Where the field stands is
+     *  published as `--cm-toolbar-tab-left` for the dropdown to hang from. */
+    refreshTabs() {
+        const tabs = this.host.tabs?.() ?? [];
+        this.tabsBefore.replaceChildren();
+        this.tabsAfter.replaceChildren();
+        this.dom.classList.toggle("cm-toolbar-tabbed", tabs.length > 0);
+        this.closeButton.hidden = tabs.length === 0;
+        this.activeTabId = null;
+        // Whether the field is the first thing in the strip: a host's styles
+        // may lay the first tab out differently (on the gutter's column).
+        const active = Math.max(0, tabs.findIndex((tab) => tab.active));
+        this.dom.classList.toggle("cm-toolbar-first-active", tabs.length === 0 || active === 0);
+        if (tabs.length) {
+            this.activeTabId = tabs[active].id;
+            this.closeButton.title = `Close ${tabs[active].label}`;
+            this.closeButton.setAttribute("aria-label", `Close ${tabs[active].label}`);
+            tabs.forEach((tab, i) => {
+                if (i !== active) (i < active ? this.tabsBefore : this.tabsAfter).appendChild(this.renderTab(tab));
+            });
+            const add = document.createElement("button");
+            add.type = "button";
+            add.className = "cm-toolbar-tab cm-toolbar-tab-add";
+            add.textContent = "+";
+            add.title = "Open a file in a new tab";
+            add.setAttribute("aria-label", "Open a file in a new tab");
+            add.addEventListener("mousedown", (e) => e.preventDefault());
+            add.addEventListener("click", (e) => { e.stopPropagation(); this.host.addTab?.(); });
+            this.tabsAfter.appendChild(add);
+        }
+        this.placeTab();
+        this.settleStrip();
+    }
+
+    /** Once laid out, the active tab brought into view: in the next frame,
+     *  and once more a moment later, for what lays out after it (the field
+     *  grown to a name that arrives late, a block shown by its tab from
+     *  hidden). Reads happen outside the resize observer's own turn, so
+     *  they never queue it against itself. */
+    private settleTimer: ReturnType<typeof setTimeout> | null = null;
+    private settleStrip() {
+        requestAnimationFrame(() => {
+            if (this.strip.isConnected) this.revealActiveTab();
+        });
+        if (this.settleTimer) clearTimeout(this.settleTimer);
+        this.settleTimer = setTimeout(() => {
+            this.settleTimer = null;
+            if (this.strip.isConnected) this.revealActiveTab();
+        }, 80);
+    }
+
+    /** The strip scrolled so the field (the active tab) is in view. */
+    private revealActiveTab() {
+        const strip = this.strip;
+        if (strip.scrollWidth <= strip.clientWidth) return;
+        const left = this.stateIconContainer.offsetLeft - strip.offsetLeft;
+        const right = this.inputContainer.offsetLeft + this.inputContainer.offsetWidth - strip.offsetLeft;
+        // A little clear of the edge, not just inside it.
+        const clear = 16;
+        if (left < strip.scrollLeft + clear) strip.scrollLeft = Math.max(0, left - clear);
+        else if (right > strip.scrollLeft + strip.clientWidth - clear) strip.scrollLeft = right - strip.clientWidth + clear;
+    }
+
+
+    private renderTab(tab: ToolbarTab): HTMLElement {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "cm-toolbar-tab";
+        button.title = tab.label;
+        const icon = document.createElement("span");
+        icon.className = "cm-toolbar-tab-icon";
+        icon.textContent = tab.icon;
+        if (tab.iconColor) icon.style.color = tab.iconColor;
+        const label = document.createElement("span");
+        label.className = "cm-toolbar-tab-label";
+        label.textContent = tab.label;
+        // A close button inside a button is not allowed: a span with the role.
+        const close = document.createElement("span");
+        close.className = "cm-toolbar-tab-close";
+        close.setAttribute("role", "button");
+        close.setAttribute("aria-label", `Close ${tab.label}`);
+        close.tabIndex = 0;
+        close.textContent = "×";
+        close.addEventListener("click", (e) => { e.stopPropagation(); this.host.closeTab?.(tab.id); });
+        close.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); this.host.closeTab?.(tab.id); } });
+        button.append(icon, label, close);
+        button.addEventListener("mousedown", (e) => e.preventDefault());
+        button.addEventListener("click", (e) => { e.stopPropagation(); this.host.activateTab?.(tab.id); });
+        return button;
+    }
+
+    /** Where the field's icon column starts, within the panel (the strip's
+     *  scroll taken off: the dropdown is the panel's, not the strip's). */
+    private placeTab() {
+        const left = `${this.stateIconContainer.offsetLeft - this.strip.scrollLeft}px`;
+        if (this.dom.style.getPropertyValue("--cm-toolbar-tab-left") !== left) this.dom.style.setProperty("--cm-toolbar-tab-left", left);
     }
 
     // -----------------------------------------------------------------------
@@ -539,6 +840,15 @@ export class ToolbarCore {
         if (typing || this.namingMode.active || this.settingsMode.active) return;
         this.input.value = shownAs ?? path ?? '';
         this.inputTouched = false;
+        this.updateStateIcon();
+        this.fieldChanged();
+    }
+
+    /** The field's text changed, so its width may have (it is sized to its
+     *  content where the host says so): once laid out, the field is kept in
+     *  view in the strip and the strip's edges marked. */
+    private fieldChanged() {
+        this.settleStrip();
     }
 
     /** Ask the host for `path`: a file the toolbar opens is named in the field when it arrives. */
@@ -558,6 +868,8 @@ export class ToolbarCore {
 
     destroy() {
         this.cancelAiClassify();
+        this.stripObserver?.disconnect();
+        if (this.settleTimer) clearTimeout(this.settleTimer);
         document.removeEventListener("click", this.handleClickOutsideBound);
     }
 
@@ -570,6 +882,7 @@ export class ToolbarCore {
         if (results.length === 0) {
             document.removeEventListener("click", this.handleClickOutsideBound);
         }
+        this.updateStateIcon();
     }
 
     private getCurrentFilePath(): string | null {
@@ -633,6 +946,16 @@ export class ToolbarCore {
         commands.push({ id: 'Import file(s)', type: 'import-local-files', icon: '\uf15b', query: '' });
         commands.push({ id: 'Import folder', type: 'import-local-folder', icon: FOLDER_ICON, query: '' });
 
+        // Delete, last of the file commands: the file the query names (the
+        // open one, when the field was only clicked into), asked about
+        // before it goes. The Delete key on a result does the same, less
+        // visibly. Never first: a bare Enter on an untouched field lands on
+        // "Save as".
+        if (hasExactFileMatch) {
+            const { file } = ToolbarCore.splitLines(query.trim());
+            commands.push({ id: `Delete "${file}"`, type: 'delete-file', icon: TRASH_ICON, query: file });
+        }
+
         // File actions
         if (hasValidFile && currentPath) {
             const ext = currentPath.split('.').pop()?.toLowerCase() || '';
@@ -651,14 +974,14 @@ export class ToolbarCore {
             commands.push({ id: 'Go forward', type: 'file-action', icon: '\uf061', query: '', action: () => this.host.goForward?.() });
         }
 
-        // Settings
-        if (this.host.buildSettingsEntries) {
-            commands.push({ id: 'Settings', type: 'settings', icon: COG_ICON, query: '' });
-        }
-
         // The host's own commands, matched against the query.
         for (const command of this.host.commands?.(query) ?? []) {
             commands.push({ id: command.id, type: 'host-command', icon: command.icon ?? '\uf120', query, action: () => command.run() });
+        }
+
+        // Settings, last: not about the file or the note, and wanted least often.
+        if (this.host.buildSettingsEntries) {
+            commands.push({ id: 'Settings', type: 'settings', icon: COG_ICON, query: '' });
         }
 
         return commands;
@@ -682,14 +1005,28 @@ export class ToolbarCore {
      * Analyze input query to detect user intent using heuristics.
      * Returns a confidence-weighted intent.
      */
-    /** True when `query` refers to a file that already exists — either the top
-     *  search hit is an exact path match, or it's literally the open file. Used
-     *  to tell "open/search this file" apart from "create this new file". */
+    /** True when `query` refers to a file that already exists — either the
+     *  search found a file at exactly that path, or it's literally the open
+     *  file. Used to tell "open/search this file" apart from "create this
+     *  new file". */
     private queryMatchesExistingFile(query: string, searchResults: SearchResult[]): boolean {
         const currentPath = this.getCurrentFilePath();
         const { file } = ToolbarCore.splitLines(query);
-        return (searchResults.length > 0 && searchResults[0].id === file) ||
+        return searchResults.some((r) => r.id === file) ||
             (currentPath !== null && currentPath === file);
+    }
+
+    /** The section of the list a result stands in, a line between one
+     *  section and the next: the files found, the commands about files
+     *  (save, create, rename, open, import, delete), what the file or the
+     *  host can do, and the settings. */
+    private static sectionOf(result: VisibleItem): string {
+        if (result === SHOW_MORE_SENTINEL || !isCommandResult(result)) return 'files';
+        switch (result.type) {
+            case 'settings': return 'settings';
+            case 'file-action': case 'host-command': return 'actions';
+            default: return 'file';
+        }
     }
 
     /** A complete filename with an extension, e.g. `readme.md`, `src/main.ts`. */
@@ -922,6 +1259,14 @@ export class ToolbarCore {
         for (const cmd of trailingCommands) this.visibleItems.push(cmd);
 
         this.visibleItems.forEach((item, i) => {
+            // A line between one section and the next. Not a row: the arrows
+            // pass over it (`highlightSelection` counts `.cm-search-result`s).
+            if (i > 0 && ToolbarCore.sectionOf(this.visibleItems[i - 1]) !== ToolbarCore.sectionOf(item)) {
+                const line = document.createElement("li");
+                line.className = "cm-search-separator";
+                line.setAttribute("role", "separator");
+                children.push(line);
+            }
             if (item === SHOW_MORE_SENTINEL) {
                 const li = document.createElement("li");
                 li.className = "cm-search-result cm-show-more-result";
@@ -946,11 +1291,13 @@ export class ToolbarCore {
         this.resultsList.replaceChildren(...children);
         const sel = this.resultsList.querySelector('.selected') as HTMLElement;
         if (sel) sel.scrollIntoView({ block: 'nearest' });
+        this.placeTab();
     }
 
+    /** The rest of the files shown. The selection stays where it was: on
+     *  the "Show more" row's index, which is now the first file it hid. */
     private expandResults() {
         this.resultsExpanded = true;
-        this.selectedIndex = 0;
         this.updateDropdown();
     }
 
@@ -1003,6 +1350,8 @@ export class ToolbarCore {
                 this.input.value = p;
                 this.checkOverwriteAndExecute(p, 'create-file', () => this.createBlankFile(p));
             }
+        } else if (command.type === 'delete-file') {
+            this.enterDeleteMode(command.query);
         } else if (command.type === 'rename-file') {
             const currentPath = this.getCurrentFilePath();
             if (currentPath) {
@@ -1024,14 +1373,42 @@ export class ToolbarCore {
     // -----------------------------------------------------------------------
     // State icon
     // -----------------------------------------------------------------------
-    updateStateIcon() {
-        if (this.namingMode.active) {
-            this.stateIcon.textContent = (this.namingMode.type === 'create-file' || this.namingMode.type === 'save-as') ? DEFAULT_FILE_ICON : '\uf044';
-        } else if (this.settingsMode.active) {
-            this.stateIcon.textContent = COG_ICON;
-        } else {
-            this.stateIcon.textContent = SEARCH_ICON;
+    /** What the state icon shows: a mode's own glyph; otherwise, at rest, the
+     *  open file's icon in its colour (what the field names), and the search
+     *  glyph while the field is focused, has results, or is pointed at. The
+     *  colour is the file's own only for the file icon. */
+    /** The glyph in the state icon, written into its own text node, so
+     *  anything a host hangs inside the icon is left where it is. */
+    private glyphNode: Text | null = null;
+    private setGlyph(glyph: string) {
+        if (!this.glyphNode || this.glyphNode.parentNode !== this.stateIcon) {
+            this.glyphNode = document.createTextNode('');
+            this.stateIcon.textContent = '';
+            this.stateIcon.appendChild(this.glyphNode);
         }
+        if (this.glyphNode.data !== glyph) this.glyphNode.data = glyph;
+    }
+
+    updateStateIcon() {
+        let color = '';
+        if (this.namingMode.active) {
+            this.setGlyph((this.namingMode.type === 'create-file' || this.namingMode.type === 'save-as') ? DEFAULT_FILE_ICON : '\uf044');
+        } else if (this.settingsMode.active) {
+            this.setGlyph(COG_ICON);
+        } else if (this.browseMode.active || this.deleteMode.active || this.overwriteMode.active || this.clearFilesystemPending) {
+            return;
+        } else {
+            const path = this.getCurrentFilePath();
+            const searching = document.activeElement === this.input || this.results.length > 0 || this.hovered;
+            const named = this.shownAs ? getLanguageIcon(this.shownAs) : path ? getFileIcon(path) : this.host.language ? getLanguageIcon(this.host.language) : null;
+            if (!searching && named) {
+                this.setGlyph(named.glyph);
+                color = named.color;
+            } else {
+                this.setGlyph(SEARCH_ICON);
+            }
+        }
+        if (this.stateIcon.style.color !== color) this.stateIcon.style.color = color;
     }
 
     // -----------------------------------------------------------------------
@@ -1041,9 +1418,20 @@ export class ToolbarCore {
         this.namingMode = { active: true, type, originalQuery, languageExtension };
         this.updateStateIcon();
         this.input.value = '';
-        this.input.placeholder = languageExtension ? `filename.${languageExtension}` : 'filename';
+        // A name is optional for a new file of a language where the host
+        // keeps unnamed blocks: Enter alone makes the block one of that
+        // language and nothing on disk is named.
+        const optional = type === 'create-file' && !!languageExtension && this.canSkipNaming();
+        this.input.placeholder = languageExtension
+            ? optional ? `filename.${languageExtension} (or Enter for an unnamed ${languageExtension} block)` : `filename.${languageExtension}`
+            : 'filename';
         this.input.focus();
         this.setResults([]);
+    }
+
+    /** Whether "Create new file" for a language may go without a name. */
+    private canSkipNaming(): boolean {
+        return typeof this.host.setLanguage === 'function';
     }
 
     private exitNamingMode() {
@@ -1053,7 +1441,21 @@ export class ToolbarCore {
     }
 
     private executeNamingMode(filename: string) {
-        if (!this.namingMode.active || !filename.trim()) return;
+        if (!this.namingMode.active) return;
+        if (!filename.trim()) {
+            // No name given: for a new file of a language, the block becomes
+            // an unnamed one of that language (the host's affair: a stand-in
+            // file where it keeps them). A save or a rename needs a name.
+            const { type, languageExtension } = this.namingMode;
+            if (type !== 'create-file' || !languageExtension || !this.canSkipNaming()) return;
+            this.exitNamingMode();
+            this.setResults([]);
+            this.input.value = languageExtension;
+            this.inputTouched = false;
+            this.host.setLanguage!(languageExtension);
+            this.host.focusEditor();
+            return;
+        }
         const resolvePath = (fn: string) => this.namingMode.languageExtension && !fn.includes('.')
             ? `${fn}.${this.namingMode.languageExtension}` : fn;
 
@@ -1084,7 +1486,7 @@ export class ToolbarCore {
     private async enterBrowseMode(startPath?: string) {
         const browsePath = startPath || this.host.cwd || '/';
         this.browseMode = { active: true, currentPath: browsePath, filter: '' };
-        this.stateIcon.textContent = FOLDER_OPEN_ICON;
+        this.setGlyph(FOLDER_OPEN_ICON);
         this.input.value = browsePath.endsWith('/') ? browsePath : browsePath + '/';
         this.input.placeholder = '';
         this.input.focus();
@@ -1157,7 +1559,7 @@ export class ToolbarCore {
     private enterSettingsMode() {
         if (!this.host.buildSettingsEntries) return;
         this.settingsMode = { active: true, filter: '', editing: null };
-        this.stateIcon.textContent = COG_ICON;
+        this.setGlyph(COG_ICON);
         this.input.value = 'settings/';
         this.input.placeholder = '';
         this.input.focus();
@@ -1211,7 +1613,7 @@ export class ToolbarCore {
     // -----------------------------------------------------------------------
     private enterDeleteMode(filePath: string) {
         this.deleteMode = { active: true, filePath };
-        this.stateIcon.textContent = '\u2717';
+        this.setGlyph('\u2717');
         this.input.value = '';
         this.input.placeholder = `Delete "${filePath}"? (Enter to confirm, Esc to cancel)`;
         this.input.focus();
@@ -1252,7 +1654,7 @@ export class ToolbarCore {
 
     private enterClearFilesystemConfirm() {
         this.clearFilesystemPending = true;
-        this.stateIcon.textContent = '\u2717';
+        this.setGlyph('\u2717');
         this.input.value = '';
         this.input.placeholder = 'Delete every file here? (Enter to confirm, Esc to cancel)';
         this.input.focus();
@@ -1278,7 +1680,7 @@ export class ToolbarCore {
     // -----------------------------------------------------------------------
     private enterOverwriteMode(filePath: string, action: OverwriteMode['action'], oldPath?: string) {
         this.overwriteMode = { active: true, filePath, action, oldPath };
-        this.stateIcon.textContent = '\u26A0';
+        this.setGlyph('\u26A0');
         this.input.value = '';
         this.input.placeholder = `"${filePath}" exists. Overwrite? (Enter/Esc)`;
         this.input.focus();
@@ -1374,6 +1776,7 @@ export class ToolbarCore {
     resetInputToCurrentFile() {
         const currentPath = this.getCurrentFilePath();
         this.input.value = this.shownAs ?? (currentPath || this.host.language || '');
+        this.fieldChanged();
     }
 
     private handleClickOutside(event: Event) {

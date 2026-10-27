@@ -1,4 +1,6 @@
 import { SlashCommand } from '../extensions/slash-commands'
+import type { Transaction } from '@tiptap/pm/state'
+import { keepApartFromCodeAbove } from '../extensions/code-tabs'
 
 /**
  * Default slash-command palette for the markdown editor.
@@ -55,12 +57,18 @@ export const defaultSlashCommands: SlashCommand[] = [
         title: 'Code block',
         description: 'A formatted block of code',
         icon: '</>',
+        // Apart from a code block above it: the block's own "+" joins its
+        // group (code-tabs.ts).
         command: ({ editor, range }) =>
             editor
                 .chain()
                 .focus()
                 .deleteRange(range)
                 .insertContent({ type: 'ezcodeBlock', attrs: { language: '' } })
+                .command(({ tr }: { tr: Transaction }) => {
+                    keepApartFromCodeAbove(tr)
+                    return true
+                })
                 .run(),
     },
     {
@@ -72,10 +80,13 @@ export const defaultSlashCommands: SlashCommand[] = [
     },
     {
         title: 'Callout',
-        description: 'A highlighted note, tip or warning',
+        description: 'A note, tip, warning… of a kind you choose next',
         icon: '!',
+        // The kinds are asked for in a menu of their own under the caret
+        // (callout.ts, `chooseCalloutKind`), typed to filter: `/callout`,
+        // `war`, Enter writes a warning.
         command: ({ editor, range }) =>
-            editor.chain().focus().deleteRange(range).setCallout('note').run(),
+            editor.chain().focus().deleteRange(range).chooseCalloutKind().run(),
     },
     {
         title: 'Math block',
@@ -109,5 +120,18 @@ export const defaultSlashCommands: SlashCommand[] = [
         icon: '—',
         command: ({ editor, range }) =>
             editor.chain().focus().deleteRange(range).setHorizontalRule().run(),
+    },
+    {
+        title: 'Front matter',
+        description: 'The note’s properties, as YAML at its top',
+        icon: '---',
+        // Made at the top of the note (or opened, when the note has some
+        // already), wherever the slash was typed. Nothing, in an editor
+        // whose front matter is turned off (`frontMatter: false`).
+        command: ({ editor, range }) => {
+            const chain = editor.chain().focus().deleteRange(range)
+            if (editor.schema.nodes.frontMatter) chain.insertFrontMatter()
+            chain.run()
+        },
     },
 ]

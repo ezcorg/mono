@@ -25,10 +25,13 @@ import { WrapSelection } from './extensions/wrap-selection';
 import { MarkdownBlockPaste } from './extensions/markdown-paste';
 import { BlockActions, BlockActionsOptions } from './extensions/block-actions';
 import { Folding } from './extensions/folding';
+import { CodeTabs } from './extensions/code-tabs';
 import { SelectionMenu } from './extensions/selection-menu';
 import { Sidebar, SidebarOptions } from './extensions/sidebar';
 import { BulletList, OrderedList, OrderedListStart, DashListKeymap, ListItemBackspace, TaskList } from './extensions/lists';
 import { Paragraph } from './extensions/paragraph';
+import { ExtendedHorizontalRule } from './extensions/horizontal-rule';
+import { PathComplete } from './extensions/path-complete';
 import { HeadingAnchors } from './extensions/heading-anchors';
 import type { WikilinkOptions } from './extensions/wikilink';
 import { LinksPanel, LinksPanelOptions } from './extensions/links-panel';
@@ -121,6 +124,10 @@ export type MarkdownSetupOptions = {
     emoji?: boolean;
     /** Text-selection formatting menu. `false` omits it. */
     selectionMenu?: boolean;
+    /** Paths completed from the vault's files as they are typed after a
+     *  backtick (inline code) or as a Markdown link's destination. `false`
+     *  omits it. */
+    pathComplete?: boolean;
     /** Link hover/edit popover. `false` omits it. */
     linkMenu?: boolean;
     /** Links between notes. The editor parses and renders wikilinks on its
@@ -419,8 +426,12 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
             link: false,
             document: false,
             text: false,
+            // The divider (extensions/horizontal-rule.ts) leaves `---` on a
+            // note's first line to the front matter extension's question.
+            horizontalRule: false,
         }),
         Paragraph,
+        ExtendedHorizontalRule,
         BulletList,
         OrderedList,
         OrderedListStart,
@@ -430,6 +441,11 @@ export function markdownSetup(options: MarkdownSetupOptions = {}): AnyExtension[
         // decorations — never serialized), so an outline can link to `#id`.
         HeadingAnchors,
         InlineCodeExit,
+        // A path typed after a backtick, or as a link's destination, is
+        // completed from the vault's files.
+        ...(options.pathComplete !== false ? [PathComplete] : []),
+        // Adjacent fences as one window with tabs (extensions/code-tabs.ts).
+        CodeTabs,
         // Wrap a non-empty selection on ` (inline code) / [ (brackets).
         WrapSelection,
         // Must come before `Markdown` so our higher-priority clipboardTextParser
@@ -676,7 +692,7 @@ export type { CommentsOptions, CommentsStorage, CommentTarget, CommentInfo, WebA
 export { CommentMargin, type CommentMarginOptions } from './extensions/comment-margin';
 export { CommentMarks } from './extensions/comment-gutter';
 export { CommentInline } from './extensions/comment-inline';
-export { Callout, CalloutTitle, calloutType } from './extensions/callout';
+export { Callout, CalloutTitle, CalloutKindMenu, CALLOUT_KINDS, calloutIcon, calloutType, type CalloutKind } from './extensions/callout';
 export { SourceView } from './extensions/source-view';
 export { MarkdownText } from './extensions/text';
 export { Image, attachImages } from './extensions/image';
@@ -692,6 +708,8 @@ export type { ExtendedCodeblockOptions } from './extensions/codeblock';
 export { ExtendedTaskItem } from './extensions/taskitem';
 export type { ExtendedTaskItemOptions } from './extensions/taskitem';
 export { Paragraph } from './extensions/paragraph';
+export { ExtendedHorizontalRule } from './extensions/horizontal-rule';
+export { PathComplete, completions as pathCompletions, type PathCompletion } from './extensions/path-complete';
 export { BulletList, OrderedList, OrderedListStart, DashListKeymap, retypeListItem, orderedLabel, letterIndex, ListItemBackspace } from './extensions/lists';
 export type { ListTarget } from './extensions/lists';
 export { HeadingAnchors } from './extensions/heading-anchors';
@@ -710,6 +728,8 @@ export { Sidebar } from './extensions/sidebar';
 export type { SidebarOptions, SidebarMount } from './extensions/sidebar';
 export { BlockActions } from './extensions/block-actions';
 export { Folding, foldsOf, foldAt, type Fold } from './extensions/folding';
+export { CodeTabs, codeTabsAt, activeBlockOf, isHiddenCodeTab, keepApartFromCodeAbove } from './extensions/code-tabs';
+export { codeRuns, codeRunAt, type CodeRun } from './extensions/code-runs';
 export type { BlockActionsOptions, BlockActionsMount } from './extensions/block-actions';
 export { defaultSlashCommands } from './commands';
 export { slugify, computeHeadingSlugs } from './extensions/slug-utils';
