@@ -337,11 +337,32 @@ const toolbarStyleModule = new StyleModule({
         width: '100%',
         flex: 1,
     },
+    // In the toolbar's colour, for what stands beside the field (the
+    // active tab's close button): the field sets its own, the container
+    // would otherwise inherit the page's.
     '.cm-toolbar-input-container': {
         position: 'relative',
         display: 'flex',
         alignItems: 'center',
         flex: 1,
+        color: 'var(--cm-toolbar-color)',
+    },
+    // The strip: the tabs and the field in one row that scrolls sideways
+    // when the tabs outgrow the bar (the scrollbar hidden; the wheel
+    // scrolls it; the active tab is brought into view). The dropdown stays
+    // outside it, hung from the panel, or the strip's overflow would cut
+    // it off.
+    '.cm-toolbar-strip': {
+        display: 'flex',
+        alignItems: 'center',
+        flex: '1 1 auto',
+        minWidth: 0,
+        overflowX: 'auto',
+        overflowY: 'hidden',
+        scrollbarWidth: 'none',
+    },
+    '.cm-toolbar-strip::-webkit-scrollbar': {
+        display: 'none',
     },
     // The group's other tabs (`ToolbarHost.tabs`), before and after the
     // field, and "+" after the last: plain here, shaped by the host's
@@ -426,6 +447,8 @@ const toolbarStyleModule = new StyleModule({
         width: 'var(--cm-gutter-width, 2em)',
         minWidth: 'var(--cm-icon-col-width, 2em)',
         display: 'flex',
+        // Never squeezed when the strip's tabs outgrow the bar: the strip scrolls.
+        flex: 'none',
     },
     // The icon's drawn right edge sits where the line numbers' does: 3px
     // (CodeMirror's gutter padding) in from the column's edge.
@@ -544,11 +567,14 @@ export class ToolbarCore {
     readonly inputContainer: HTMLElement;
     readonly input: HTMLInputElement;
     readonly resultsList: HTMLElement;
+    /** The row of the tabs and the field, scrolled sideways when they outgrow the bar. */
+    readonly strip: HTMLElement;
     /** The group's tabs before and after the field, and the field's own close button (`ToolbarHost.tabs`). */
     readonly tabsBefore: HTMLElement;
     readonly tabsAfter: HTMLElement;
     readonly closeButton: HTMLButtonElement;
     private activeTabId: string | null = null;
+    private stripObserver: ResizeObserver | null = null;
 
     private host: ToolbarHost;
     private fileOps: FileOperations;
@@ -614,9 +640,12 @@ export class ToolbarCore {
         this.stateIconContainer.className = "cm-toolbar-state-icon-container";
         this.stateIcon = document.createElement("div");
         this.stateIcon.className = "cm-toolbar-state-icon";
-        this.stateIcon.textContent = SEARCH_ICON;
+        this.setGlyph(SEARCH_ICON);
         this.stateIconContainer.appendChild(this.stateIcon);
-        this.dom.appendChild(this.stateIconContainer);
+        this.strip = document.createElement("div");
+        this.strip.className = "cm-toolbar-strip";
+        this.dom.appendChild(this.strip);
+        this.strip.appendChild(this.stateIconContainer);
 
         this.inputContainer = document.createElement("div");
         this.inputContainer.className = "cm-toolbar-input-container";
@@ -631,14 +660,14 @@ export class ToolbarCore {
         this.input.setAttribute("autocapitalize", "off");
         this.input.setAttribute("autocorrect", "off");
         this.inputContainer.appendChild(this.input);
-        this.dom.appendChild(this.inputContainer);
+        this.strip.appendChild(this.inputContainer);
 
         // The group's tabs: the ones before the field, the ones after it
         // with "+", and the field's own close button. Empty, and hidden,
         // for a host without tabs.
         this.tabsBefore = document.createElement("div");
         this.tabsBefore.className = "cm-toolbar-tabs cm-toolbar-tabs-before";
-        this.dom.insertBefore(this.tabsBefore, this.stateIconContainer);
+        this.strip.insertBefore(this.tabsBefore, this.stateIconContainer);
         this.closeButton = document.createElement("button");
         this.closeButton.type = "button";
         this.closeButton.className = "cm-toolbar-tab-close";
@@ -652,7 +681,22 @@ export class ToolbarCore {
         this.inputContainer.appendChild(this.closeButton);
         this.tabsAfter = document.createElement("div");
         this.tabsAfter.className = "cm-toolbar-tabs cm-toolbar-tabs-after";
-        this.dom.appendChild(this.tabsAfter);
+        this.strip.appendChild(this.tabsAfter);
+        // The strip scrolled: the dropdown follows the field. The wheel's
+        // vertical turn scrolls it sideways, as a tab bar's does.
+        this.strip.addEventListener("scroll", () => this.placeTab());
+        this.strip.addEventListener("wheel", (e) => {
+            if (this.strip.scrollWidth <= this.strip.clientWidth || Math.abs(e.deltaY) <= Math.abs(e.deltaX)) return;
+            e.preventDefault();
+            this.strip.scrollLeft += e.deltaY;
+        }, { passive: false });
+        if (typeof ResizeObserver !== "undefined") {
+            // The strip resized, or the field (grown to a name that arrived
+            // after the tabs were drawn): the field kept in view, the edges marked.
+            this.stripObserver = new ResizeObserver(() => this.settleStrip());
+            this.stripObserver.observe(this.strip);
+            this.stripObserver.observe(this.inputContainer);
+        }
 
         this.resultsList = document.createElement("ul");
         this.resultsList.className = "cm-search-results";
@@ -668,8 +712,12 @@ export class ToolbarCore {
         // field is being used or pointed at.
         this.input.addEventListener("focus", () => this.updateStateIcon());
         this.input.addEventListener("blur", () => this.updateStateIcon());
-        this.dom.addEventListener("pointerenter", () => { this.hovered = true; this.updateStateIcon(); });
-        this.dom.addEventListener("pointerleave", () => { this.hovered = false; this.updateStateIcon(); });
+        // Pointed at: the field and its icon, not the whole bar (a group's
+        // other tabs are the bar's too, and pointing at one is not a search).
+        for (const part of [this.stateIconContainer, this.inputContainer]) {
+            part.addEventListener("pointerenter", () => { this.hovered = true; this.updateStateIcon(); });
+            part.addEventListener("pointerleave", () => { this.hovered = false; this.updateStateIcon(); });
+        }
         this.updateStateIcon();
         this.refreshTabs();
     }
@@ -685,8 +733,11 @@ export class ToolbarCore {
         this.dom.classList.toggle("cm-toolbar-tabbed", tabs.length > 0);
         this.closeButton.hidden = tabs.length === 0;
         this.activeTabId = null;
+        // Whether the field is the first thing in the strip: a host's styles
+        // may lay the first tab out differently (on the gutter's column).
+        const active = Math.max(0, tabs.findIndex((tab) => tab.active));
+        this.dom.classList.toggle("cm-toolbar-first-active", tabs.length === 0 || active === 0);
         if (tabs.length) {
-            const active = Math.max(0, tabs.findIndex((tab) => tab.active));
             this.activeTabId = tabs[active].id;
             this.closeButton.title = `Close ${tabs[active].label}`;
             this.closeButton.setAttribute("aria-label", `Close ${tabs[active].label}`);
@@ -704,7 +755,38 @@ export class ToolbarCore {
             this.tabsAfter.appendChild(add);
         }
         this.placeTab();
+        this.settleStrip();
     }
+
+    /** Once laid out, the active tab brought into view: in the next frame,
+     *  and once more a moment later, for what lays out after it (the field
+     *  grown to a name that arrives late, a block shown by its tab from
+     *  hidden). Reads happen outside the resize observer's own turn, so
+     *  they never queue it against itself. */
+    private settleTimer: ReturnType<typeof setTimeout> | null = null;
+    private settleStrip() {
+        requestAnimationFrame(() => {
+            if (this.strip.isConnected) this.revealActiveTab();
+        });
+        if (this.settleTimer) clearTimeout(this.settleTimer);
+        this.settleTimer = setTimeout(() => {
+            this.settleTimer = null;
+            if (this.strip.isConnected) this.revealActiveTab();
+        }, 80);
+    }
+
+    /** The strip scrolled so the field (the active tab) is in view. */
+    private revealActiveTab() {
+        const strip = this.strip;
+        if (strip.scrollWidth <= strip.clientWidth) return;
+        const left = this.stateIconContainer.offsetLeft - strip.offsetLeft;
+        const right = this.inputContainer.offsetLeft + this.inputContainer.offsetWidth - strip.offsetLeft;
+        // A little clear of the edge, not just inside it.
+        const clear = 16;
+        if (left < strip.scrollLeft + clear) strip.scrollLeft = Math.max(0, left - clear);
+        else if (right > strip.scrollLeft + strip.clientWidth - clear) strip.scrollLeft = right - strip.clientWidth + clear;
+    }
+
 
     private renderTab(tab: ToolbarTab): HTMLElement {
         const button = document.createElement("button");
@@ -733,9 +815,10 @@ export class ToolbarCore {
         return button;
     }
 
-    /** Where the field's icon column starts, within the panel. */
+    /** Where the field's icon column starts, within the panel (the strip's
+     *  scroll taken off: the dropdown is the panel's, not the strip's). */
     private placeTab() {
-        const left = `${this.stateIconContainer.offsetLeft}px`;
+        const left = `${this.stateIconContainer.offsetLeft - this.strip.scrollLeft}px`;
         if (this.dom.style.getPropertyValue("--cm-toolbar-tab-left") !== left) this.dom.style.setProperty("--cm-toolbar-tab-left", left);
     }
 
@@ -758,6 +841,14 @@ export class ToolbarCore {
         this.input.value = shownAs ?? path ?? '';
         this.inputTouched = false;
         this.updateStateIcon();
+        this.fieldChanged();
+    }
+
+    /** The field's text changed, so its width may have (it is sized to its
+     *  content where the host says so): once laid out, the field is kept in
+     *  view in the strip and the strip's edges marked. */
+    private fieldChanged() {
+        this.settleStrip();
     }
 
     /** Ask the host for `path`: a file the toolbar opens is named in the field when it arrives. */
@@ -777,6 +868,8 @@ export class ToolbarCore {
 
     destroy() {
         this.cancelAiClassify();
+        this.stripObserver?.disconnect();
+        if (this.settleTimer) clearTimeout(this.settleTimer);
         document.removeEventListener("click", this.handleClickOutsideBound);
     }
 
@@ -1284,12 +1377,24 @@ export class ToolbarCore {
      *  open file's icon in its colour (what the field names), and the search
      *  glyph while the field is focused, has results, or is pointed at. The
      *  colour is the file's own only for the file icon. */
+    /** The glyph in the state icon, written into its own text node, so
+     *  anything a host hangs inside the icon is left where it is. */
+    private glyphNode: Text | null = null;
+    private setGlyph(glyph: string) {
+        if (!this.glyphNode || this.glyphNode.parentNode !== this.stateIcon) {
+            this.glyphNode = document.createTextNode('');
+            this.stateIcon.textContent = '';
+            this.stateIcon.appendChild(this.glyphNode);
+        }
+        if (this.glyphNode.data !== glyph) this.glyphNode.data = glyph;
+    }
+
     updateStateIcon() {
         let color = '';
         if (this.namingMode.active) {
-            this.stateIcon.textContent = (this.namingMode.type === 'create-file' || this.namingMode.type === 'save-as') ? DEFAULT_FILE_ICON : '\uf044';
+            this.setGlyph((this.namingMode.type === 'create-file' || this.namingMode.type === 'save-as') ? DEFAULT_FILE_ICON : '\uf044');
         } else if (this.settingsMode.active) {
-            this.stateIcon.textContent = COG_ICON;
+            this.setGlyph(COG_ICON);
         } else if (this.browseMode.active || this.deleteMode.active || this.overwriteMode.active || this.clearFilesystemPending) {
             return;
         } else {
@@ -1297,10 +1402,10 @@ export class ToolbarCore {
             const searching = document.activeElement === this.input || this.results.length > 0 || this.hovered;
             const named = this.shownAs ? getLanguageIcon(this.shownAs) : path ? getFileIcon(path) : this.host.language ? getLanguageIcon(this.host.language) : null;
             if (!searching && named) {
-                this.stateIcon.textContent = named.glyph;
+                this.setGlyph(named.glyph);
                 color = named.color;
             } else {
-                this.stateIcon.textContent = SEARCH_ICON;
+                this.setGlyph(SEARCH_ICON);
             }
         }
         if (this.stateIcon.style.color !== color) this.stateIcon.style.color = color;
@@ -1381,7 +1486,7 @@ export class ToolbarCore {
     private async enterBrowseMode(startPath?: string) {
         const browsePath = startPath || this.host.cwd || '/';
         this.browseMode = { active: true, currentPath: browsePath, filter: '' };
-        this.stateIcon.textContent = FOLDER_OPEN_ICON;
+        this.setGlyph(FOLDER_OPEN_ICON);
         this.input.value = browsePath.endsWith('/') ? browsePath : browsePath + '/';
         this.input.placeholder = '';
         this.input.focus();
@@ -1454,7 +1559,7 @@ export class ToolbarCore {
     private enterSettingsMode() {
         if (!this.host.buildSettingsEntries) return;
         this.settingsMode = { active: true, filter: '', editing: null };
-        this.stateIcon.textContent = COG_ICON;
+        this.setGlyph(COG_ICON);
         this.input.value = 'settings/';
         this.input.placeholder = '';
         this.input.focus();
@@ -1508,7 +1613,7 @@ export class ToolbarCore {
     // -----------------------------------------------------------------------
     private enterDeleteMode(filePath: string) {
         this.deleteMode = { active: true, filePath };
-        this.stateIcon.textContent = '\u2717';
+        this.setGlyph('\u2717');
         this.input.value = '';
         this.input.placeholder = `Delete "${filePath}"? (Enter to confirm, Esc to cancel)`;
         this.input.focus();
@@ -1549,7 +1654,7 @@ export class ToolbarCore {
 
     private enterClearFilesystemConfirm() {
         this.clearFilesystemPending = true;
-        this.stateIcon.textContent = '\u2717';
+        this.setGlyph('\u2717');
         this.input.value = '';
         this.input.placeholder = 'Delete every file here? (Enter to confirm, Esc to cancel)';
         this.input.focus();
@@ -1575,7 +1680,7 @@ export class ToolbarCore {
     // -----------------------------------------------------------------------
     private enterOverwriteMode(filePath: string, action: OverwriteMode['action'], oldPath?: string) {
         this.overwriteMode = { active: true, filePath, action, oldPath };
-        this.stateIcon.textContent = '\u26A0';
+        this.setGlyph('\u26A0');
         this.input.value = '';
         this.input.placeholder = `"${filePath}" exists. Overwrite? (Enter/Esc)`;
         this.input.focus();
@@ -1671,6 +1776,7 @@ export class ToolbarCore {
     resetInputToCurrentFile() {
         const currentPath = this.getCurrentFilePath();
         this.input.value = this.shownAs ?? (currentPath || this.host.language || '');
+        this.fieldChanged();
     }
 
     private handleClickOutside(event: Event) {

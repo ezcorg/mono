@@ -19,7 +19,6 @@ import { highlightCode } from "@lezer/highlight";
 import { LSP, FileChangeType } from "./utils/lsp";
 import { prefillTypescriptDefaults, getCachedLibFiles, TypescriptDefaultsConfig } from "./utils/typescript-defaults";
 import { toolbarPanel, searchResultsField, registerFileAction } from "./panels/toolbar";
-import { copyButtonExtension } from "./panels/copy-button";
 import { settingsField, updateSettingsEffect, resolveThemeDark, InitialSettingsFacet } from "./panels/settings";
 import type { EditorSettings } from "./panels/settings";
 import { createAiExtension, reconfigureAi } from "./ai/extension";
@@ -151,12 +150,6 @@ export type CodeblockConfig = {
         /** Resolves a TypeScript lib name (e.g. "es5") to its `.d.ts` file content */
         resolveLib: (name: string) => Promise<string>;
     };
-    /** Show a hover-revealed copy-to-clipboard button in the top-right
-     *  of the editor. Particularly useful for short shell snippets where
-     *  the editor acts as a "code to run" rather than a workspace.
-     *  When unset, defaults to `true` for `.sh` files and `false`
-     *  otherwise. */
-    copyButton?: boolean;
     /** The tabs of the group this editor's block stands in, drawn in its
      *  toolbar beside the field (see `ToolbarHost.tabs`); the host
      *  dispatches `refreshTabsEffect` when they change. */
@@ -399,7 +392,7 @@ export const renderMarkdownCode = (code: any, parser: any, highlighter: Highligh
 };
 
 // Main codeblock factory
-export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, copyButton, tabs, activateTab, closeTab, addTab }: CodeblockConfig) => {
+export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, language, toolbar = true, toolbarLayout, search, files, versions, dark, settings, typescript, tabs, activateTab, closeTab, addTab }: CodeblockConfig) => {
     // Merge dark flag into initial settings for backward compat
     const resolvedSettings: Partial<EditorSettings> = { ...settings };
     if (dark !== undefined && !('theme' in resolvedSettings)) {
@@ -408,8 +401,6 @@ export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, langua
     const showLineNums = resolvedSettings.showLineNumbers !== false; // default true
     const showFold = resolvedSettings.showFoldGutter !== false; // default true
     const wrapLines = resolvedSettings.lineWrap === true; // default false
-    // Default-on for .sh; opt-in for everything else.
-    const wantsCopyButton = copyButton ?? /\.sh$/i.test(filepath ?? '');
 
     return [
         configCompartment.of(CodeblockFacet.of({ content, fs, filepath, range, anonymous, cwd, language, toolbar, toolbarLayout, search, files, versions, dark, settings, typescript, tabs, activateTab, closeTab, addTab })),
@@ -447,7 +438,6 @@ export const codeblock = ({ content, fs, cwd, filepath, range, anonymous, langua
         keymap.of(navigationKeymap.concat([indentWithTab])),
         vscodeLightDark,
         searchResultsField,
-        ...(wantsCopyButton ? [copyButtonExtension] : []),
     ];
 };
 

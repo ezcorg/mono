@@ -319,10 +319,22 @@ describe('The state icon', () => {
         core.input.blur();
         core.input.dispatchEvent(new Event('blur'));
         expect(core.stateIcon.textContent).toBe(md);
+        // Pointed at: the field (not the bar, which holds a group's other tabs too).
         core.dom.dispatchEvent(new Event('pointerenter'));
-        expect(core.stateIcon.textContent).toBe(search);
-        core.dom.dispatchEvent(new Event('pointerleave'));
         expect(core.stateIcon.textContent).toBe(md);
+        core.inputContainer.dispatchEvent(new Event('pointerenter'));
+        expect(core.stateIcon.textContent).toBe(search);
+        core.inputContainer.dispatchEvent(new Event('pointerleave'));
+        expect(core.stateIcon.textContent).toBe(md);
+        // Something hung inside the icon stays through a glyph change.
+        const overlay = document.createElement('span');
+        core.stateIcon.appendChild(overlay);
+        core.inputContainer.dispatchEvent(new Event('pointerenter'));
+        expect(core.stateIcon.textContent).toBe(search);
+        expect(core.stateIcon.contains(overlay)).toBe(true);
+        core.inputContainer.dispatchEvent(new Event('pointerleave'));
+        expect(core.stateIcon.contains(overlay)).toBe(true);
+        overlay.remove();
         // Another file opened: its icon.
         core.setFilePath('src/lib.ts');
         expect(core.stateIcon.textContent).toBe(getFileIcon('src/lib.ts').glyph);
