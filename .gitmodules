@@ -1,6 +1,3 @@
-[submodule "src/rust/hello-wasip3-http"]
-	path = src/rust/hello-wasip3-http
-	url = https://github.com/ezcorg/hello-wasip3-http
 [submodule "src/typescript/tiptap-markdown"]
 	path = src/typescript/tiptap-markdown
 	url = https://github.com/ezcorg/tiptap-markdown
