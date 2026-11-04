@@ -41,3 +41,13 @@ Incidental findings, deferred (see AGENTS.md).
 - The "compact" toolbar layout pads icons `1ch` on the left-aligned side;
   with the Propo icon font that gap is now a real `1ch` rather than a
   near-touch. Untested against any host.
+
+- `cargo build` from a non-package dir (e.g. `src/apps/eznote`) builds
+  every workspace member, including the witmproxy wasm plugin cdylibs,
+  which fail to link natively ("Undefined symbols:
+  _witmproxy:plugin/witm-plugin@0.0.8"). Consider a
+  `[workspace] default-members` list of host crates, or excluding the
+  plugin crates like the icanhaz capabilities already are.
+- Tauri crate/npm minors drift apart silently (shared Cargo.lock and
+  pnpm-lock across eznote, ezfilter, icanhaz). `pnpm tauri build` then
+  fails the version check. Worth a CI check or a single pinned pair.

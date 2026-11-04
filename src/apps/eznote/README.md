@@ -27,6 +27,19 @@ If the editor's chrome looks out of date, rebuild the library it consumes:
 pnpm --filter @joinezco/markdown-editor build
 ```
 
+## Build
+
+```sh
+pnpm --filter eznote tauri build   # .app + .dmg under target/release/bundle/
+```
+
+Run it through `pnpm tauri`, not `cargo`: there is no `cargo tauri`
+subcommand installed, and a bare `cargo build` from this directory builds
+the whole mono workspace, including the witmproxy wasm plugin crates,
+which fail to link for a native target. The Tauri CLI also refuses to
+build when the `tauri`/`tauri-plugin-*` crate minors don't match the
+`@tauri-apps/*` npm packages; bump both sides together.
+
 ## Scratch-pad shortcut
 
 While eznote is running (it stays resident — closing the window hides it rather
